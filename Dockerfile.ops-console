@@ -1,0 +1,70 @@
+FROM node:20-bookworm-slim AS build
+
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+
+RUN corepack enable \
+    && corepack prepare pnpm@9.15.0 --activate
+
+WORKDIR /app
+
+# Copy the workspace manifests before installing so pnpm discovers the
+# ops-console workspace and installs its React, Vite, and TypeScript packages.
+COPY package.json pnpm-workspace.yaml ./
+COPY packages/ops-console/package.json ./packages/ops-console/package.json
+
+RUN pnpm install --no-frozen-lockfile
+
+COPY packages/ops-console ./packages/ops-console
+
+# Vite substitutes these public, non-secret values during the image build.
+ARG VITE_RUNTIME_API_BASE
+ARG VITE_EVIDENCE_API_BASE
+ARG VITE_JWKS_URL
+ARG VITE_STUB_IES_ISSUER
+ARG VITE_STUB_IES_LOGIN_URL
+ARG VITE_ALLOWED_API_ORIGINS
+ARG VITE_ENVIRONMENT_LABEL
+
+ENV VITE_RUNTIME_API_BASE=${VITE_RUNTIME_API_BASE}
+ENV VITE_EVIDENCE_API_BASE=${VITE_EVIDENCE_API_BASE}
+ENV VITE_JWKS_URL=${VITE_JWKS_URL}
+ENV VITE_STUB_IES_ISSUER=${VITE_STUB_IES_ISSUER}
+ENV VITE_STUB_IES_LOGIN_URL=${VITE_STUB_IES_LOGIN_URL}
+ENV VITE_ALLOWED_API_ORIGINS=${VITE_ALLOWED_API_ORIGINS}
+ENV VITE_ENVIRONMENT_LABEL=${VITE_ENVIRONMENT_LABEL}
+
+# Railway deployment of this image is expressly limited to non-production.
+RUN test "${VITE_ENVIRONMENT_LABEL}" = "RAILWAY-NON-PROD"
+
+RUN pnpm --filter ops-console build
+
+FROM nginx:1.27-alpine AS runtime
+
+RUN rm /etc/nginx/conf.d/default.conf \
+    && printf '%s\n' \
+        'server {' \
+        '    listen 8080;' \
+        '    listen [::]:8080;' \
+        '    server_name _;' \
+        '' \
+        '    root /usr/share/nginx/html;' \
+        '    index index.html;' \
+        '' \
+        '    location = /health {' \
+        '        access_log off;' \
+        '        default_type application/json;' \
+        '        return 200 "{\"status\":\"ok\"}";' \
+        '    }' \
+        '' \
+        '    location / {' \
+        '        try_files $uri $uri/ /index.html;' \
+        '    }' \
+        '}' \
+        > /etc/nginx/conf.d/ops-console.conf
+
+COPY --from=build /app/packages/ops-console/dist /usr/share/nginx/html
+
+EXPOSE 8080
+
+CMD ["nginx", "-g", "daemon off;"]
