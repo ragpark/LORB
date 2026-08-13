@@ -1,0 +1,2 @@
+import { postMessageSchema } from "../../contracts/src/index.js"; import { originAllowed } from "./postmessage.js";
+const frame=document.querySelector<HTMLIFrameElement>("#module")!;const allowed="http://localhost:3300";window.addEventListener("message",event=>{if(!originAllowed(event.origin,allowed,new URL(frame.src).origin,event.source,frame.contentWindow))return;const message=postMessageSchema.safeParse(event.data);if(!message.success)return;/* Routing uses only the six LORB-001 message types. */});
