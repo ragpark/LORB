@@ -1,0 +1,10 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: lorb
+      POSTGRES_PASSWORD: lorb
+      POSTGRES_DB: lorb_mvp
+    ports: ["5432:5432"]
+    volumes:
+      - ./packages/runtime-api/src/db/migrations:/docker-entrypoint-initdb.d:ro
