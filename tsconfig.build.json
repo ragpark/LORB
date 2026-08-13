@@ -5,10 +5,5 @@
     "rootDir": ".",
     "sourceMap": true
   },
-  "exclude": [
-    "tests",
-    "dist",
-    "node_modules",
-    "packages/ops-console"
-  ]
+  "exclude": ["tests", "dist", "node_modules"]
 }
