@@ -1,0 +1,3 @@
+# Console anti-requirements
+
+The 15 automated controls map to LORB-001 as follows: (1) DRAFT banner (§4.3); (2) environment label (§3.3); (3) identifying-field rejection (§5.5); (4) subject/secret redaction (§5.5); (5) correlation header (§9); (6) idempotency key (§5.3/§7.7); (7) fixed launch mode and locale (§7.7); (8) explicit provenance-preserving replay (§5.3/§7.6); (9) session redirect (§8); (10) no unsafe HTML (§11); (11) no wildcard origin (§11); (12) session-only tokens (§6); (13) diagnostics redaction (§9); (14) first-tab-stop skip link (§4.1); and (15) Radix dialog focus, restoration and Escape behaviour (§4.1).
