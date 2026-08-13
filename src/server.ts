@@ -11,6 +11,16 @@ function pseudonymSecret(): Buffer | undefined {
 }
 
 const { app } = await buildRuntime({ secret: pseudonymSecret() });
+app.get("/", async () => ({
+  name: "LORB Runtime API",
+  status: "ok",
+  documentation: "/api/v1/runtime/jwks",
+  endpoints: {
+    health: "/health",
+    jwks: "/api/v1/runtime/jwks",
+    launches: "/api/v1/runtime/launches",
+  },
+}));
 app.get("/health", async () => ({ status: "ok" }));
 
 const port = Number.parseInt(process.env.PORT ?? process.env.RUNTIME_API_PORT ?? "3000", 10);

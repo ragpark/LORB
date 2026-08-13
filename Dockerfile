@@ -18,6 +18,8 @@ WORKDIR /app
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/packages/runtime-api/src/db/migrations ./dist/packages/runtime-api/src/db/migrations
+COPY --from=build /app/packages/runtime-api/src/db/seed.sql ./dist/packages/runtime-api/src/db/seed.sql
 USER node
 EXPOSE 3000
 CMD ["node", "dist/src/server.js"]
