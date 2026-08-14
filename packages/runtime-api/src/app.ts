@@ -16,7 +16,7 @@ import { registerAdminAuditRoutes } from "./routes/admin/audit.js";
 import { correlationOf, requireAdmin } from "./routes/admin/shared.js";
 
 const problem=(code:string,status:number,correlation_id:string)=>({type:`https://lorb.example/errors/${code}`,title:code==="AUTHENTICATION_EXPIRED"?"Your session has expired":"We could not complete that request",status,code,detail:code==="AUTHENTICATION_EXPIRED"?"Sign in again to continue":"Please check the request and try again",correlation_id,retryable:status>=500,field_errors:[]});
-const defaultConsumerOrigins=["http://localhost:3300","http://localhost:5176","https://lorb-production-consumer.up.railway.app","https://lorb-production-console.up.railway.app","https://lorb-production-admin.up.railway.app"];
+const defaultConsumerOrigins=["http://localhost:3300","http://localhost:5176","https://lorb-production-consumer.up.railway.app","https://lorb-production-console.up.railway.app","https://lorb-production-beda.up.railway.app"];
 function allowedConsumerOrigins(){
  const configured=process.env.ALLOWED_CONSUMER_ORIGINS;
  return new Set([...defaultConsumerOrigins,...(configured?.split(",")??[])].map(origin=>origin.trim()).filter(Boolean));
