@@ -30,6 +30,12 @@ describe("mock consumer non-production deployment", () => {
     expect(dockerfile).toContain('test "${VITE_ALLOWED_SHELL_ORIGINS}" != "*"');
   });
 
+  it("does not require or inject a separate Runtime issuer build argument", () => {
+    expect(dockerfile).not.toContain("ARG VITE_RUNTIME_ISSUER");
+    expect(dockerfile).not.toContain("ENV VITE_RUNTIME_ISSUER");
+    expect(dockerfile).not.toContain('test -n "${VITE_RUNTIME_ISSUER}"');
+  });
+
   it("serves static output with health and SPA fallback routes", () => {
     expect(dockerfile).toContain("COPY --from=build /app/packages/mock-consumer/dist /usr/share/nginx/html");
     expect(dockerfile).toContain("location = /health");
