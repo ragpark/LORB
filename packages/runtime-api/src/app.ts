@@ -27,9 +27,9 @@ export async function buildRuntime(options:RuntimeOptions={}){
  await app.register(helmet); await app.register(cors,{origin:(origin,cb)=>cb(null,!origin||browserOrigins.has(origin))});
  app.get("/api/v1/runtime/jwks",async()=>({keys:[keys.publicJwk]}));
  // STUB — NOT PRODUCTION — BLOCKED BY BLK-03. These synthetic projections stand in for the unresolved Postgres repository layer.
- const repository={repository_id:"repo-mvp",slug:"maths-foundations",display_name:"Maths foundations",status:"ACTIVE",created_at:"2026-08-12T09:14:00.000Z"};
- const learningObject={object_id:"object-mvp",repository_id:repository.repository_id,status:"PUBLISHED",active_object_version_id:"object-version-mvp",active_package_version_id:"package-version-mvp",created_at:"2026-08-12T09:22:00.000Z"};
- const packageVersion={package_version_id:"package-version-mvp",object_id:learningObject.object_id,semver:"1.4.0",sha256:"4f3c9a182fd1b953",delivery_profile:"native-web-package",status:"PUBLISHED",published_at:"2026-08-12T10:04:00.000Z"};
+ const repository={repository_id:"b6f1c9d2-6e3a-4f1b-9a7d-1e2f3a4b5c6d",slug:"maths-foundations",display_name:"Maths foundations",status:"ACTIVE",created_at:"2026-08-12T09:14:00.000Z"};
+ const learningObject={object_id:"c8a2d3e4-7f4b-4a2c-8b6e-2f3a4b5c6d7e",repository_id:repository.repository_id,status:"PUBLISHED",active_object_version_id:"d9b3e4f5-8a5c-4b3d-9c7f-3a4b5c6d7e8f",active_package_version_id:"eaa4f506-9b6d-4c4e-ad80-4b5c6d7e8f90",created_at:"2026-08-12T09:22:00.000Z"};
+ const packageVersion={package_version_id:"eaa4f506-9b6d-4c4e-ad80-4b5c6d7e8f90",object_id:learningObject.object_id,semver:"1.4.0",sha256:"4f3c9a182fd1b953",delivery_profile:"native-web-package",status:"PUBLISHED",published_at:"2026-08-12T10:04:00.000Z"};
  const envelope=(items:unknown[],req:any)=>({items,next_cursor:null,correlation_id:typeof req.headers["x-correlation-id"]==="string"?req.headers["x-correlation-id"]:randomUUID()});
  app.get("/api/v1/runtime/repositories",async req=>envelope([repository],req));
  app.get("/api/v1/runtime/repositories/:repositoryId",async(req:any,reply)=>req.params.repositoryId===repository.repository_id?repository:reply.code(404).send(problem("OBJECT_NOT_FOUND",404,randomUUID())));
