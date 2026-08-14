@@ -10,6 +10,7 @@
     "dist",
     "node_modules",
     "packages/ops-console",
-    "packages/mock-consumer"
+    "packages/mock-consumer",
+    "packages/admin-ui"
   ]
 }
