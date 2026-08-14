@@ -31,3 +31,9 @@ The automated suite enforces all 15 MVP controls: descriptor PII rejection; pinn
 This work cannot progress beyond local development while BLK-02 (portfolio reuse), BLK-03 (accountable owner), BLK-07 (privacy), BLK-08 (security), BLK-09 (accessibility), and BLK-11 (operational design) remain open. Stubs additionally document their removal blockers.
 
 Any material change to the launch descriptor, pseudonymisation function, error envelope, or anti-requirement enforcement requires human re-review against LORB-001.
+
+## Deployed launch services
+
+The deployed-equivalent launch is split into independently HTTPS-terminated services: Runtime API (`Dockerfile`), synthetic non-production IES (`Dockerfile.stub-ies`), Player Shell (`Dockerfile.player-shell`), Evidence API, and the consumer. Configure Runtime with `IES_ISSUER`, `IES_JWKS_URL`, `RUNTIME_PUBLIC_ISSUER`, `PLAYER_SHELL_ORIGIN`, `EVIDENCE_API_ENDPOINT`, and `PACKAGE_PUBLIC_URL`. All values are public absolute HTTPS URLs in shared environments. Configure the consumer with the matching `VITE_RUNTIME_ISSUER`; descriptor trust is rooted in the Runtime JWKS, while the IES issuer is used only for Runtime access tokens.
+
+The synthetic IES accepts only `synthetic-*` subjects at `POST /dev-login`, issues ten-minute ES256 tokens with audience `lorb-runtime`, and publishes its key at `/.well-known/jwks.json`. It is strictly a non-production identity simulator.

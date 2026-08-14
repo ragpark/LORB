@@ -1,0 +1,16 @@
+FROM node:20-bookworm-slim AS build
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+WORKDIR /app
+COPY package.json pnpm-workspace.yaml ./
+COPY packages/player-shell/package.json ./packages/player-shell/package.json
+RUN pnpm install --no-frozen-lockfile
+COPY packages/player-shell ./packages/player-shell
+COPY packages/contracts ./packages/contracts
+COPY packages/example-module ./packages/example-module
+COPY tsconfig.json ./
+RUN pnpm --filter player-shell build
+FROM nginx:1.27-alpine
+RUN printf 'server { listen 8080; root /usr/share/nginx/html; location = /health { default_type application/json; return 200 "{\"status\":\"ok\"}"; } location / { try_files $uri $uri/ /index.html; } }' >/etc/nginx/conf.d/default.conf
+COPY --from=build /app/packages/player-shell/dist /usr/share/nginx/html
+COPY --from=build /app/packages/example-module/src /usr/share/nginx/html/module
+EXPOSE 8080
