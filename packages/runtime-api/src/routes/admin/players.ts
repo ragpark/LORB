@@ -68,6 +68,10 @@ export function registerAdminPlayerRoutes(app: FastifyInstance, ctx: AdminRouteC
     if (!parsed.success) return sendAdminError(reply, "ADMIN_REQUEST_INVALID", correlation);
     if (WEAK_ALGORITHMS.has(parsed.data.integrity_algorithm)) return sendAdminError(reply, "PLAYER_INTEGRITY_WEAK", correlation);
     if (!ctx.playerModuleOriginAllowlist.includes(parsed.data.module_origin)) return sendAdminError(reply, "PLAYER_ORIGIN_NOT_ALLOWED", correlation);
+    // module_origin being allow-listed is meaningless if module_url can point somewhere else — the
+    // launch-policy resolver later hands module_url straight to the player shell as the trusted
+    // package URL, so the two must actually agree.
+    if (new URL(parsed.data.module_url).origin !== parsed.data.module_origin) return sendAdminError(reply, "PLAYER_ORIGIN_NOT_ALLOWED", correlation);
     try {
       const playerVersionId = await withAdminTransaction(async (client) => {
         const player = await client.query("select player_id from player where player_id = $1", [req.params.playerId]);

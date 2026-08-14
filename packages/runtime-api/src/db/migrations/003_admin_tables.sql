@@ -3,9 +3,13 @@ alter table repository add column if not exists suspended_at timestamptz;
 alter table repository add column if not exists retiring_at timestamptz;
 alter table repository add column if not exists retired_at timestamptz;
 
-create table repository_membership (membership_id uuid primary key, repository_id uuid not null references repository(repository_id), principal_subject_pseudonym text not null, principal_role text not null check (principal_role in ('repository_owner','repository_operator','repository_reader')), granted_by_pseudonym text not null, granted_at timestamptz not null default now(), revoked_at timestamptz, revoked_by_pseudonym text, correlation_id text not null, unique (repository_id, principal_subject_pseudonym, principal_role, revoked_at));
+create table repository_membership (membership_id uuid primary key, repository_id uuid not null references repository(repository_id), principal_subject_pseudonym text not null, principal_role text not null check (principal_role in ('repository_owner','repository_operator','repository_reader')), granted_by_pseudonym text not null, granted_at timestamptz not null default now(), revoked_at timestamptz, revoked_by_pseudonym text, correlation_id text not null);
 create index repository_membership_repo_idx on repository_membership(repository_id);
 create index repository_membership_principal_idx on repository_membership(principal_subject_pseudonym);
+-- A plain unique(..., revoked_at) constraint would not stop duplicate ACTIVE grants: Postgres treats
+-- every NULL revoked_at as distinct, so two rows for the same principal/role could both stay
+-- un-revoked. Only one active (non-revoked) grant per repository/principal/role is meaningful.
+create unique index repository_membership_active_uniq on repository_membership(repository_id, principal_subject_pseudonym, principal_role) where revoked_at is null;
 
 create table player (player_id uuid primary key, display_name text not null, owner_pseudonym text not null, status text not null check (status in ('REGISTERED','TESTING','APPROVED','ACTIVE','DEPRECATED','SUSPENDED','RETIRED')), active_player_version_id uuid, created_at timestamptz not null default now(), updated_at timestamptz not null default now());
 

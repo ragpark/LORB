@@ -27,8 +27,11 @@ async function applyApprovedTransition(client: QueryableClient, approval: Approv
       await client.query("update player_version set status='SUSPENDED', suspended_at=now(), suspended_by_pseudonym=$2 where player_version_id=$1", [approval.target_id, executorPseudonym]);
       return { status: "SUSPENDED" };
     case "launch_policy_version.publish":
+      // Publishing a version must never itself make it live — that is what the separate
+      // launch_policy_version.activate approval is for. If this policy is already ACTIVE with a
+      // different version live, setting active_launch_policy_version_id here would let a publish
+      // bypass activation governance and immediately change what launches are being routed to.
       await client.query("update launch_policy_version set status='PUBLISHED', published_at=now(), published_by_pseudonym=$2 where launch_policy_version_id=$1", [approval.target_id, executorPseudonym]);
-      if (detail.launch_policy_id) await client.query("update launch_policy set active_launch_policy_version_id=$1, updated_at=now() where launch_policy_id=$2", [approval.target_id, detail.launch_policy_id]);
       return { status: "PUBLISHED" };
     case "launch_policy_version.activate":
       if (detail.launch_policy_id) await client.query("update launch_policy set status='ACTIVE', active_launch_policy_version_id=$1, updated_at=now() where launch_policy_id=$2", [approval.target_id, detail.launch_policy_id]);
