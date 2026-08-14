@@ -14,7 +14,7 @@ const ENVIRONMENT = import.meta.env.VITE_ENVIRONMENT_LABEL ?? 'LOCAL-DEV';
 
 export const DRAFT_BANNER = 'DRAFT — LORB-001 ADMINISTRATION WORKSPACE — NOT PRODUCTION. Synthetic identities only. Not a certified administrative surface.';
 
-type Page = 'signin' | 'overview' | 'repositories' | 'repository-detail' | 'players' | 'player-detail' | 'launch-policies' | 'launch-policy-detail' | 'audit' | 'approvals';
+type Page = 'signin' | 'overview' | 'repositories' | 'repository-detail' | 'learning-objects' | 'players' | 'player-detail' | 'launch-policies' | 'launch-policy-detail' | 'audit' | 'approvals';
 type Row = Record<string, unknown>;
 
 function admin<T>(path: string, options?: Parameters<typeof adminApiRequest>[2]) {
@@ -292,6 +292,38 @@ function RepositoryDetail({ repositoryId, onRequested }: { repositoryId: string;
           <AuditTab targetType="repository" targetId={repositoryId} />
         </Tabs.Content>
       </Tabs.Root>
+    </section>
+  );
+}
+
+function LearningObjectsView() {
+  const objects = useQuery({ queryKey: ['learning-objects'], queryFn: () => admin<{ items: Row[] }>('learning-objects') });
+  return (
+    <section>
+      <h1>Learning objects</h1>
+      <p className="governance-note">Read-only projection of the non-production content catalogue. Content authoring is out of scope for this administration workspace.</p>
+      <ul className="list">
+        {(objects.data?.items ?? []).map((row) => {
+          const pkg = row.package_version as Row | undefined;
+          return (
+            <li key={String(row.object_id)} className="version-card">
+              <p>
+                <strong>{String(row.title ?? 'Untitled learning activity')}</strong> <span className="status-badge">{String(row.status)}</span>
+              </p>
+              <p className="mono small">
+                {String(row.kind)} · {String(row.duration ?? 'duration not stated')}
+              </p>
+              <p>{String(row.description ?? '')}</p>
+              {pkg && (
+                <p className="mono small">
+                  Active package: <span className="mono">{String(pkg.semver)}</span> — <span className="status-badge">{String(pkg.status)}</span>
+                </p>
+              )}
+            </li>
+          );
+        })}
+        {!objects.data?.items.length && <li>No learning objects returned.</li>}
+      </ul>
     </section>
   );
 }
@@ -787,6 +819,7 @@ function DiagnosticsDrawer() {
 const nav: [Page, string][] = [
   ['overview', 'Overview'],
   ['repositories', 'Repositories'],
+  ['learning-objects', 'Learning objects'],
   ['players', 'Players'],
   ['launch-policies', 'Launch policies'],
   ['approvals', 'Approvals'],
@@ -871,6 +904,7 @@ export function App() {
             {page === 'overview' && <Overview navigate={setPage} />}
             {page === 'repositories' && <RepositoriesView onOpen={(id) => navigateAndOpen('repository-detail', id)} />}
             {page === 'repository-detail' && <RepositoryDetail repositoryId={selectedId} onRequested={setLastApprovalRequestId} />}
+            {page === 'learning-objects' && <LearningObjectsView />}
             {page === 'players' && <PlayersView onOpen={(id) => navigateAndOpen('player-detail', id)} />}
             {page === 'player-detail' && <PlayerDetail playerId={selectedId} onRequested={setLastApprovalRequestId} />}
             {page === 'launch-policies' && <LaunchPoliciesView onOpen={(id) => navigateAndOpen('launch-policy-detail', id)} />}

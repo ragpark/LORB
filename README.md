@@ -4,6 +4,16 @@
 
 This repository demonstrates one native-web-package launch, an embedded sandboxed player, attempt state/completion, evidence outboxing, and forwarding to test-only stubs. Attempt-scoped state is embedded as JSON in the `attempt` row so the fixed five-table model is retained.
 
+## Learning content examples
+
+Three synthetic learning objects are seeded in the Runtime API's non-production catalogue for presentation in the Player Shell, and are discoverable in the Mock Consumer catalogue, the Ops Console (Learning objects, Package versions, Test launcher), and the Administration workspace (Learning objects):
+
+- **Maths foundations: ratios and proportion** (`packages/example-module`) — the original native-web-package activity with a single completion checkpoint.
+- **Reflective Practice Studio** (`packages/example-react-xapi-experience`) — a React web experience. On completion it emits an xAPI statement over the Player Shell's `evidence.emit` channel; the Runtime API queues it in the evidence outbox for the Evidence Forwarder to deliver to the LORB learning record store (`stub-lrs` locally).
+- **Career Coach Check-in** (`packages/example-coaching-chatbot`) — a chatbot-like coaching tool that guides a learner through a short scripted, reflective conversation before completing the activity.
+
+Each learning object routes to its own content package at launch (`POST /api/v1/runtime/launches` resolves `package_url` from the requested `object_id`); an unrecognised object falls back to the default package, unchanged from prior behaviour.
+
 ## How to run
 
 Use Node.js 20 and pnpm 9. Copy `.env.example` to `.env`, replace the pseudonym placeholder with 32 random bytes encoded as hex, and create the configured P-256 private key. Then run `docker compose up -d`, `pnpm install`, `pnpm build`, `pnpm test`, and `pnpm dev`. This starts the Runtime API, Evidence API, player shell, evidence forwarder, stub IES, and stub LRS for local development only.
