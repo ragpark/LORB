@@ -23,7 +23,8 @@ export async function buildRuntime(options:RuntimeOptions={}){
  const packageUrl=options.packageUrl??process.env.PACKAGE_PUBLIC_URL??`${playerOrigin}/module/index.html`;
  const iesKey:any=options.iesKey??createRemoteJWKSet(new URL(options.iesJwksUrl??process.env.IES_JWKS_URL??`${iesIssuer.replace(/\/$/,"")}/.well-known/jwks.json`)); const secret=options.secret??Buffer.alloc(32,1);
  const consumerOrigins=allowedConsumerOrigins();
- await app.register(helmet); await app.register(cors,{origin:(origin,cb)=>cb(null,!origin||consumerOrigins.has(origin))});
+ const browserOrigins=new Set([...consumerOrigins,playerOrigin]);
+ await app.register(helmet); await app.register(cors,{origin:(origin,cb)=>cb(null,!origin||browserOrigins.has(origin))});
  app.get("/api/v1/runtime/jwks",async()=>({keys:[keys.publicJwk]}));
  // STUB — NOT PRODUCTION — BLOCKED BY BLK-03. These synthetic projections stand in for the unresolved Postgres repository layer.
  const repository={repository_id:"repo-mvp",slug:"maths-foundations",display_name:"Maths foundations",status:"ACTIVE",created_at:"2026-08-12T09:14:00.000Z"};
