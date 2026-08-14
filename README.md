@@ -14,6 +14,14 @@ Three synthetic learning objects are seeded in the Runtime API's non-production 
 
 Each learning object routes to its own content package at launch (`POST /api/v1/runtime/launches` resolves `package_url` from the requested `object_id`); an unrecognised object falls back to the default package, unchanged from prior behaviour.
 
+## Smart links
+
+Each PUBLISHED learning object can have a durable, revocable "smart link" — a shareable URL that opens straight into the Player Shell without a consumer app or IES login. From the Administration workspace's **Learning objects** page, an admin can create/copy or revoke the link for any published object.
+
+Opening the link (`GET /api/v1/runtime/smart-links/:token` on the Runtime API) mints a fresh attempt and launch descriptor and 302-redirects to the same `${playerOrigin}/#descriptor=...` shape `/launches` already produces, so the Player Shell itself is unchanged. The learner is identified by a random pseudonymous ID stored in a long-lived cookie set on first visit (not a real identity) — the same browser gets the same pseudonym, and therefore consistent evidence actor binding, on every subsequent open, but a new attempt each time. Revoking a link disables both the admin record and future redemptions immediately; a new "Create smart link" click after revocation mints a fresh, unrelated token.
+
+This intentionally lets a learner reach the Player Shell without an IES-issued token, which is a **material change to the launch surface** under this repository's own governance rule below, and needs the same human LORB-001 re-review as any other change to the launch descriptor or pseudonymisation function. It does not add a new identity provider or entitlement engine — it reuses the existing descriptor issuance and HMAC pseudonym derivation unchanged, only skipping the IES login step — but the tradeoff (anyone holding the link can launch the object, indefinitely, anonymously) should be named explicitly rather than treated as a detail.
+
 ## How to run
 
 Use Node.js 20 and pnpm 9. Copy `.env.example` to `.env`, replace the pseudonym placeholder with 32 random bytes encoded as hex, and create the configured P-256 private key. Then run `docker compose up -d`, `pnpm install`, `pnpm build`, `pnpm test`, and `pnpm dev`. This starts the Runtime API, Evidence API, player shell, evidence forwarder, stub IES, and stub LRS for local development only.

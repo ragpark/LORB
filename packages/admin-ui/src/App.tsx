@@ -296,12 +296,68 @@ function RepositoryDetail({ repositoryId, onRequested }: { repositoryId: string;
   );
 }
 
+type SmartLink = { smart_link_id: string; object_id: string; token: string; url: string; created_at: string; revoked_at: string | null };
+
+function LearningObjectSmartLink({ objectId }: { objectId: string }) {
+  const queryClient = useQueryClient();
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState('');
+  const link = useQuery({
+    queryKey: ['smart-link', objectId],
+    queryFn: async (): Promise<SmartLink | null> => {
+      try {
+        return await admin<SmartLink>(`learning-objects/${objectId}/smart-link`);
+      } catch (e) {
+        if (e instanceof AdminApiError && e.problem.code === 'SMART_LINK_NOT_FOUND') return null;
+        throw e;
+      }
+    },
+  });
+  const copy = async () => {
+    setError('');
+    setCopied(false);
+    try {
+      const result = await admin<SmartLink>(`learning-objects/${objectId}/smart-link`, { method: 'POST' });
+      await navigator.clipboard.writeText(result.url);
+      setCopied(true);
+      void queryClient.invalidateQueries({ queryKey: ['smart-link', objectId] });
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  };
+  const revoke = async () => {
+    setError('');
+    setCopied(false);
+    try {
+      await admin(`learning-objects/${objectId}/smart-link/revoke`, { method: 'POST' });
+      void queryClient.invalidateQueries({ queryKey: ['smart-link', objectId] });
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  };
+  return (
+    <p className="mono small">
+      <button onClick={() => void copy()}>{link.data ? 'Copy smart link' : 'Create smart link'}</button>{' '}
+      {link.data && (
+        <button onClick={() => void revoke()}>Revoke</button>
+      )}
+      {link.data && <span> {link.data.url}</span>}
+      {copied && <span role="status"> Copied to clipboard.</span>}
+      {error && <span role="alert" className="error-text"> {error}</span>}
+    </p>
+  );
+}
+
 function LearningObjectsView() {
   const objects = useQuery({ queryKey: ['learning-objects'], queryFn: () => admin<{ items: Row[] }>('learning-objects') });
   return (
     <section>
       <h1>Learning objects</h1>
-      <p className="governance-note">Read-only projection of the non-production content catalogue. Content authoring is out of scope for this administration workspace.</p>
+      <p className="governance-note">
+        Read-only projection of the non-production content catalogue. Content authoring is out of scope for this administration workspace. A smart link lets a
+        learner open a published learning object directly in the Player Shell without a consumer or IES login — it is pseudonymous per browser, not tied to a
+        real identity, so it must not be used where a real identity is required downstream.
+      </p>
       <ul className="list">
         {(objects.data?.items ?? []).map((row) => {
           const pkg = row.package_version as Row | undefined;
@@ -319,6 +375,7 @@ function LearningObjectsView() {
                   Active package: <span className="mono">{String(pkg.semver)}</span> — <span className="status-badge">{String(pkg.status)}</span>
                 </p>
               )}
+              {row.status === 'PUBLISHED' && <LearningObjectSmartLink objectId={String(row.object_id)} />}
             </li>
           );
         })}

@@ -1,7 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify, type KeyLike } from "jose";
 import { launchRequestSchema } from "../../contracts/src/index.js";
 import { computePseudonym } from "./services/pseudonym-service.js";
@@ -13,7 +13,7 @@ import { registerAdminPlayerRoutes } from "./routes/admin/players.js";
 import { registerAdminLaunchPolicyRoutes } from "./routes/admin/launch-policies.js";
 import { registerAdminApprovalRoutes } from "./routes/admin/approvals.js";
 import { registerAdminAuditRoutes } from "./routes/admin/audit.js";
-import { correlationOf, requireAdmin } from "./routes/admin/shared.js";
+import { correlationOf, requireAdmin, requireIdempotencyKey, sendAdminError } from "./routes/admin/shared.js";
 
 const problem=(code:string,status:number,correlation_id:string)=>({type:`https://lorb.example/errors/${code}`,title:code==="AUTHENTICATION_EXPIRED"?"Your session has expired":"We could not complete that request",status,code,detail:code==="AUTHENTICATION_EXPIRED"?"Sign in again to continue":"Please check the request and try again",correlation_id,retryable:status>=500,field_errors:[]});
 const defaultConsumerOrigins=["http://localhost:3300","http://localhost:5176","https://lorb-production-consumer.up.railway.app","https://lorb-production-console.up.railway.app","https://lorb-production-beda.up.railway.app"];
@@ -56,6 +56,17 @@ export async function buildRuntime(options:RuntimeOptions={}){
  ];
  const learningObjectById=new Map(learningObjects.map(o=>[o.object_id,o]));
  const packageVersionById=new Map(packageVersions.map(p=>[p.package_version_id,p]));
+ // Smart links: a durable, revocable, pseudonymous deep link into the Player Shell for one PUBLISHED
+ // learning object, so it can be shared outside the consumer + IES login flow. Redemption below reuses
+ // issueDescriptor/computePseudonym unchanged — it does not stand up a new identity provider — but it
+ // does let a learner reach the Player Shell without an IES-issued token, which is a material change to
+ // the launch surface and needs the human LORB-001 re-review the README calls for.
+ type SmartLink={smart_link_id:string;object_id:string;token:string;created_at:string;revoked_at:string|null};
+ const smartLinksByToken=new Map<string,SmartLink>();
+ const smartLinksByObject=new Map<string,SmartLink>();
+ const smartLinkUrl=(token:string)=>`${publicIssuer}/api/v1/runtime/smart-links/${token}`;
+ const smartLinkResponse=(link:SmartLink,correlation:string)=>({smart_link_id:link.smart_link_id,object_id:link.object_id,token:link.token,url:smartLinkUrl(link.token),created_at:link.created_at,revoked_at:link.revoked_at,correlation_id:correlation});
+ function readCookie(req:any,name:string):string|undefined{const header=req.headers.cookie;if(typeof header!=="string")return undefined;const match=header.split(";").map((s:string)=>s.trim()).find((s:string)=>s.startsWith(`${name}=`));return match?decodeURIComponent(match.slice(name.length+1)):undefined;}
  const envelope=(items:unknown[],req:any)=>({items,next_cursor:null,correlation_id:typeof req.headers["x-correlation-id"]==="string"?req.headers["x-correlation-id"]:randomUUID()});
  app.get("/api/v1/runtime/repositories",async req=>envelope([repository],req));
  app.get("/api/v1/runtime/repositories/:repositoryId",async(req:any,reply)=>req.params.repositoryId===repository.repository_id?repository:reply.code(404).send(problem("OBJECT_NOT_FOUND",404,randomUUID())));
@@ -65,6 +76,29 @@ export async function buildRuntime(options:RuntimeOptions={}){
  app.get("/api/v1/runtime/package-versions/:packageVersionId",async(req:any,reply)=>packageVersionById.get(req.params.packageVersionId)??reply.code(404).send(problem("OBJECT_NOT_FOUND",404,randomUUID())));
  app.get("/api/v1/runtime/attempts",async(req:any)=>envelope([...store.attempts.values()].filter(a=>!req.query.repository_id||a.repository_id===req.query.repository_id).map(a=>({...a,pseudonymous_subject_id:a.pseudonym,correlation_id:null})),req));
  app.get("/api/v1/runtime/attempts/:attemptId",async(req:any,reply)=>store.attempts.get(req.params.attemptId)??reply.code(404).send(problem("OBJECT_NOT_FOUND",404,randomUUID())));
+ // Public redemption: mints a fresh attempt + descriptor per visit (never the same attempt twice) and
+ // 302s to the same "${playerOrigin}/#descriptor=..." shape /launches already produces, so the Player
+ // Shell needs no changes. A top-level browser navigation avoids CORS entirely — see the 15 enforced
+ // anti-requirements' "no wildcard CORS" rule, which this route sidesteps rather than relaxes.
+ app.get("/api/v1/runtime/smart-links/:token",async(req:any,reply:any)=>{
+  const correlation=typeof req.headers["x-correlation-id"]==="string"?req.headers["x-correlation-id"]:randomUUID();
+  const link=smartLinksByToken.get(req.params.token);
+  if(!link||link.revoked_at)return reply.code(404).type("application/problem+json").send(problem("SMART_LINK_NOT_FOUND",404,correlation));
+  const object=learningObjectById.get(link.object_id);
+  if(!object||object.status!=="PUBLISHED")return reply.code(410).type("application/problem+json").send(problem("LEARNING_OBJECT_NOT_AVAILABLE",410,correlation));
+  let subject=readCookie(req,"lorb_smart_link_subject");
+  if(!subject||!/^[a-f0-9-]{36}$/i.test(subject))subject=randomUUID();
+  const isHttps=req.protocol==="https"||req.headers["x-forwarded-proto"]==="https";
+  reply.header("set-cookie",`lorb_smart_link_subject=${subject}; Max-Age=31536000; Path=/; SameSite=Lax${isHttps?"; Secure":""}`);
+  const attempt_id=randomUUID(),object_version_id=randomUUID(),package_version_id=randomUUID();
+  // Namespaced by a fixed "smart-link" issuer (distinct from any real IES issuer string) so these
+  // pseudonyms can never collide with a pseudonym derived from a genuine IES login.
+  const pseudonym=computePseudonym(secret,"smart-link",subject,"launch");
+  store.attempts.set(attempt_id,{attempt_id,repository_id:object.repository_id,object_version_id,package_version_id,pseudonym,status:"CREATED",revision:1});
+  const expires=new Date(Date.now()+600000).toISOString();
+  const descriptor=await issueDescriptor(keys.privateKey,{sub:pseudonym,repository_id:object.repository_id,consumer_id:"smart-link",object_id:object.object_id,object_version_id,package_version_id,correlation_id:randomUUID(),locale:"en-GB",attempt_id,state_endpoint:`${publicIssuer}/api/v1/runtime/attempts/${attempt_id}/state`,package_url:`${playerOrigin}${object.module_path}`,session_config:{expires_at:expires}},{issuer:publicIssuer,evidenceEndpoint});
+  return reply.redirect(`${playerOrigin}/#descriptor=${encodeURIComponent(descriptor)}`,302);
+ });
  app.post("/api/v1/runtime/launches",async(req,reply)=>{const correlation=typeof req.headers["x-correlation-id"]==="string"?req.headers["x-correlation-id"]:randomUUID();const idem=req.headers["idempotency-key"];if(typeof idem!=="string")return reply.code(400).type("application/problem+json").send(problem("LAUNCH_CONTEXT_INVALID",400,correlation));if(store.idempotency.has(idem))return reply.code(201).send(store.idempotency.get(idem));let body;try{body=launchRequestSchema.parse(req.body);}catch{return reply.code(400).type("application/problem+json").send(problem("LAUNCH_CONTEXT_INVALID",400,correlation));}let claims;try{const token=req.headers.authorization?.replace(/^Bearer /,"");if(!token)throw 0;claims=(await jwtVerify(token,iesKey,{issuer:iesIssuer,audience:"lorb-runtime",algorithms:["ES256"]})).payload;if(!claims.sub)throw 0;}catch{return reply.code(401).type("application/problem+json").send(problem("AUTHENTICATION_EXPIRED",401,correlation));}const attempt_id=randomUUID(),launch_id=randomUUID(),object_version_id=randomUUID(),package_version_id=randomUUID();const pseudonym=computePseudonym(secret,iesIssuer,claims.sub as string,"launch");const policyResolution=await resolveLaunchPolicy({consumerId:body.consumer_id,repositoryId:body.repository_id,deliveryProfile:"native-web-package",launchMode:body.requested_launch_mode});const requestedObject=learningObjectById.get(body.object_id);const requestedPackageUrl=requestedObject?`${playerOrigin}${requestedObject.module_path}`:packageUrl;const resolvedPackageUrl=policyResolution?.packageUrl??requestedPackageUrl;store.attempts.set(attempt_id,{attempt_id,repository_id:body.repository_id,object_version_id,package_version_id,pseudonym,status:"CREATED",revision:1,...(policyResolution?{governed_by_launch_policy:{launch_policy_id:policyResolution.governedBy.launchPolicyId,launch_policy_version_id:policyResolution.governedBy.launchPolicyVersionId,display_name:policyResolution.governedBy.displayName,semver:policyResolution.governedBy.semver}}:{})});const expires=new Date(Date.now()+600000).toISOString();const descriptor=await issueDescriptor(keys.privateKey,{sub:pseudonym,repository_id:body.repository_id,consumer_id:body.consumer_id,object_id:body.object_id,object_version_id,package_version_id,correlation_id:randomUUID(),locale:body.locale,attempt_id,state_endpoint:`${publicIssuer}/api/v1/runtime/attempts/${attempt_id}/state`,package_url:resolvedPackageUrl,session_config:{expires_at:expires}},{issuer:publicIssuer,evidenceEndpoint});const response={launch_id,attempt_id,signed_descriptor:descriptor,player_url:`${playerOrigin}/#descriptor=${encodeURIComponent(descriptor)}`,expires_at:expires,correlation_id:correlation};store.launches.set(launch_id,response);store.idempotency.set(idem,response);return reply.code(201).send(response)});
  async function auth(req:any,reply:any){try{const token=req.headers.authorization?.replace(/^Bearer /,"");if(!token)throw 0;return await verifyDescriptor(token,keys.privateKey as KeyLike,publicIssuer);}catch{reply.code(401).type("application/problem+json").send(problem("SESSION_EXPIRED",401,randomUUID()));}}
  app.put("/api/v1/runtime/attempts/:attemptId/state",async(req:any,reply)=>{if(!req.headers["idempotency-key"])return reply.code(400).send(problem("LAUNCH_CONTEXT_INVALID",400,randomUUID()));const d=await auth(req,reply);if(!d)return;const attempt=store.attempts.get(req.params.attemptId);const body=req.body as any;if(!attempt||d.attempt_id!==attempt.attempt_id||body?.revision!==attempt.revision)return reply.code(409).send(problem("ATTEMPT_CONFLICT",409,d.correlation_id));if(JSON.stringify(body.state_payload).length>65536||/(email|name|dob|date_of_birth|address)/i.test(JSON.stringify(Object.keys(body.state_payload??{}))))return reply.code(400).send(problem("LAUNCH_CONTEXT_INVALID",400,d.correlation_id));attempt.state=body.state_payload;attempt.revision++;if(attempt.status==="CREATED")transition(attempt,"STARTED");return reply.send({revision:attempt.revision,correlation_id:d.correlation_id});});
@@ -77,6 +111,39 @@ export async function buildRuntime(options:RuntimeOptions={}){
  // catalogue exposed at /api/v1/runtime/learning-objects, so learning content examples are discoverable from
  // the Administration workspace without requiring the unresolved Postgres content-authoring flow.
  app.get("/api/v1/admin/learning-objects",async(req:any,reply:any)=>{const principal=await requireAdmin(req,reply,adminCtx,"learning_object.list","learning_object");if(!principal)return;return {items:learningObjects.map(o=>({...o,package_version:packageVersionById.get(o.active_package_version_id)})),next_cursor:null,correlation_id:correlationOf(req)};});
+ // Smart link management. Kept in-memory alongside the learning-object catalogue above (also a stub
+ // blocked by BLK-03) rather than the Postgres-backed admin tables, since it governs that same
+ // non-production catalogue and has no repository to bind a membership check to.
+ app.post("/api/v1/admin/learning-objects/:objectId/smart-link",async(req:any,reply:any)=>{
+  const principal=await requireAdmin(req,reply,adminCtx,"smart_link.create","smart_link");if(!principal)return;
+  const correlation=correlationOf(req);
+  if(!requireIdempotencyKey(req,reply))return;
+  const object=learningObjectById.get(req.params.objectId);
+  if(!object)return sendAdminError(reply,"LEARNING_OBJECT_NOT_FOUND",correlation);
+  if(object.status!=="PUBLISHED")return sendAdminError(reply,"LEARNING_OBJECT_NOT_PUBLISHED",correlation);
+  const existing=smartLinksByObject.get(object.object_id);
+  if(existing&&!existing.revoked_at)return reply.code(200).send(smartLinkResponse(existing,correlation));
+  const link:SmartLink={smart_link_id:randomUUID(),object_id:object.object_id,token:randomBytes(24).toString("base64url"),created_at:new Date().toISOString(),revoked_at:null};
+  smartLinksByObject.set(object.object_id,link);smartLinksByToken.set(link.token,link);
+  return reply.code(201).send(smartLinkResponse(link,correlation));
+ });
+ app.get("/api/v1/admin/learning-objects/:objectId/smart-link",async(req:any,reply:any)=>{
+  const principal=await requireAdmin(req,reply,adminCtx,"smart_link.get","smart_link");if(!principal)return;
+  const correlation=correlationOf(req);
+  const link=smartLinksByObject.get(req.params.objectId);
+  if(!link||link.revoked_at)return sendAdminError(reply,"SMART_LINK_NOT_FOUND",correlation);
+  return smartLinkResponse(link,correlation);
+ });
+ app.post("/api/v1/admin/learning-objects/:objectId/smart-link/revoke",async(req:any,reply:any)=>{
+  const principal=await requireAdmin(req,reply,adminCtx,"smart_link.revoke","smart_link");if(!principal)return;
+  const correlation=correlationOf(req);
+  if(!requireIdempotencyKey(req,reply))return;
+  const link=smartLinksByObject.get(req.params.objectId);
+  if(!link||link.revoked_at)return sendAdminError(reply,"SMART_LINK_NOT_FOUND",correlation);
+  link.revoked_at=new Date().toISOString();
+  smartLinksByToken.delete(link.token);
+  return smartLinkResponse(link,correlation);
+ });
  registerAdminRepositoryRoutes(app,adminCtx);
  registerAdminMembershipRoutes(app,adminCtx);
  registerAdminPlayerRoutes(app,adminCtx);
