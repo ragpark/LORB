@@ -1,5 +1,6 @@
 import {describe,expect,it} from 'vitest';
 import {containsSensitiveField,redactHeaders,sanitise} from '../../src/security.js';
+import {apiUrl} from '../../src/api.js';
 import {readFileSync} from 'node:fs';
 const app=readFileSync(new URL('../../src/App.tsx',import.meta.url),'utf8');
 const api=readFileSync(new URL('../../src/api.ts',import.meta.url),'utf8');
@@ -19,4 +20,7 @@ describe('LORB-001 console enforcement controls',()=>{
  it('13 redacts authorisation in diagnostics',()=>expect(redactHeaders({Authorization:'Bearer secret'}).Authorization).toBe('Bearer …redacted…'));
  it('14 exposes skip-to-content as the first tabbable element',()=>expect(app.indexOf('className="skip"')).toBeLessThan(app.indexOf('<header>')));
  it('15 delegates focus trapping, restoration and Escape to Radix Dialog',()=>{expect(app).toContain('<Dialog.Content');expect(app).toContain('<Dialog.Close>')});
+ it('joins resource paths without dropping the runtime path segment',()=>expect(apiUrl('https://runtime.example/api/v1/runtime','repositories').href).toBe('https://runtime.example/api/v1/runtime/repositories'));
+ it('permits approved display and pseudonym projections but blocks identifying fields',()=>{expect(containsSensitiveField({display_name:'Synthetic repository',pseudonymous_subject_id:'psn_123'})).toBe(false);expect(containsSensitiveField({name:'Person',subject:'raw'})).toBe(true)});
+ it('loads live projections rather than bundled seed records',()=>{expect(app).toContain("useProjection('repositories','repositories')");expect(app).not.toContain('repo_01HZX6T8N9')});
 });

@@ -1,9 +1,11 @@
 export const sensitiveKey = /(^|_)(email|name|dob|date_of_birth|address|subject|tenant_secret|private_key|token|signed_descriptor)($|_)/i;
+const approvedProjectionKeys=new Set(['display_name','pseudonymous_subject_id']);
+const isSensitiveKey=(key:string)=>!approvedProjectionKeys.has(key)&&sensitiveKey.test(key);
 export class SuspectedLeakError extends Error { constructor(){ super('SUSPECTED_LEAK'); this.name='SuspectedLeakError'; } }
 export function sanitise<T>(value:T):T {
   const visit=(item:unknown):unknown=>{
     if(Array.isArray(item)) return item.map(visit);
-    if(item && typeof item==='object') return Object.fromEntries(Object.entries(item).flatMap(([key,val])=>sensitiveKey.test(key)?[]:[[key,visit(val)]]));
+    if(item && typeof item==='object') return Object.fromEntries(Object.entries(item).flatMap(([key,val])=>isSensitiveKey(key)?[]:[[key,visit(val)]]));
     return item;
   };
   const text=JSON.stringify(value);
@@ -12,6 +14,6 @@ export function sanitise<T>(value:T):T {
 }
 export function containsSensitiveField(value:unknown):boolean {
   if(!value || typeof value!=='object') return false;
-  return Object.entries(value).some(([key,val])=>sensitiveKey.test(key)||containsSensitiveField(val));
+  return Object.entries(value).some(([key,val])=>isSensitiveKey(key)||containsSensitiveField(val));
 }
 export function redactHeaders(headers:Record<string,string>):Record<string,string>{return Object.fromEntries(Object.entries(headers).map(([k,v])=>[k,k.toLowerCase()==='authorization'?'Bearer …redacted…':v]));}
