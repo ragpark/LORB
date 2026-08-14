@@ -7,9 +7,10 @@ RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 WORKDIR /app
 COPY package.json pnpm-workspace.yaml ./
 # pnpm resolves workspace dependencies from each package manifest at install
-# time. Copy the console manifest before installing so its build-only React,
-# Vite, and type packages are present when the later workspace build runs.
+# time. Copy every frontend manifest before installing so their build-only
+# React, Vite, and type packages are present when the workspace build runs.
 COPY packages/ops-console/package.json ./packages/ops-console/package.json
+COPY packages/mock-consumer/package.json ./packages/mock-consumer/package.json
 RUN pnpm install --no-frozen-lockfile
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
