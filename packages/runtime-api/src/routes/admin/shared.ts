@@ -33,6 +33,9 @@ const ADMIN_ERROR_STATUS: Record<string, number> = {
   LAUNCH_POLICY_RULES_INVALID: 400,
   ADMIN_REQUEST_INVALID: 400,
   IDEMPOTENCY_KEY_REQUIRED: 400,
+  LEARNING_OBJECT_NOT_FOUND: 404,
+  LEARNING_OBJECT_NOT_PUBLISHED: 409,
+  SMART_LINK_NOT_FOUND: 404,
 };
 
 const ADMIN_ERROR_TITLE: Record<string, string> = {
@@ -44,6 +47,9 @@ const ADMIN_ERROR_TITLE: Record<string, string> = {
   APPROVAL_NOT_FOUND: "Approval request not found",
   PLAYER_VERSION_IMMUTABLE: "This player version is immutable",
   LAUNCH_POLICY_VERSION_IMMUTABLE: "This launch policy version is immutable",
+  LEARNING_OBJECT_NOT_FOUND: "Learning object not found",
+  LEARNING_OBJECT_NOT_PUBLISHED: "Only published learning objects can have a smart link",
+  SMART_LINK_NOT_FOUND: "Smart link not found",
 };
 
 export function adminProblem(code: string, correlation_id: string, status = ADMIN_ERROR_STATUS[code] ?? 400) {
