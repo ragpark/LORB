@@ -10,7 +10,7 @@ Use Node.js 20 and pnpm 9. Copy `.env.example` to `.env`, replace the pseudonym 
 
 ## Railway deployment (review environments only)
 
-The included `Dockerfile` and `railway.json` deploy the Runtime API as one Railway service. This does **not** remove the draft status or open blockers above, and it must not be treated as a production or shared-environment approval. The Evidence API, player shell, forwarder, and test-only IES/LRS stubs remain local components and are not started by this deployment.
+The included `Dockerfile` and `railway.json` deploy the Runtime API as one Railway service. This does **not** remove the draft status or open blockers above, and it must not be treated as a production or shared-environment approval. A review launch additionally requires separate Mock Consumer, Player Shell, and synthetic IES services; use the complete variable matrix and connectivity checklist in [`packages/mock-consumer/README-deploy.md`](packages/mock-consumer/README-deploy.md).
 
 1. Push the repository to a Git provider and create a Railway project using **Deploy from GitHub repo** (or run `railway up` from the repository root).
 2. Add a **PostgreSQL** service from the project canvas (**+ New → Database → Add PostgreSQL**). In the Runtime API service's **Variables** tab, add `DATABASE_URL=${{Postgres.DATABASE_URL}}` (change `Postgres` if you renamed the database service). Railway's pre-deploy command applies the SQL migration and idempotently seeds a demo repository, learning object, and package version on each deploy.
