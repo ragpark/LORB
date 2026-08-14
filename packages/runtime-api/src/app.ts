@@ -33,7 +33,11 @@ export async function buildRuntime(options:RuntimeOptions={}){
  const iesKey:any=options.iesKey??createRemoteJWKSet(new URL(options.iesJwksUrl??process.env.IES_JWKS_URL??`${iesIssuer.replace(/\/$/,"")}/.well-known/jwks.json`)); const secret=options.secret??Buffer.alloc(32,1);
  const consumerOrigins=allowedConsumerOrigins();
  const browserOrigins=new Set([...consumerOrigins,playerOrigin]);
- await app.register(helmet); await app.register(cors,{origin:(origin,cb)=>cb(null,!origin||browserOrigins.has(origin))});
+ // The Player Shell iframe is sandboxed without allow-same-origin (see anti-requirements), so its own
+ // fetches to these routes (JWKS verification, state, completion) arrive with an opaque "null" Origin.
+ const playerShellRoute=(url:string)=>{const path=url.split("?")[0]??url;return path==="/api/v1/runtime/jwks"||/^\/api\/v1\/runtime\/attempts\/[^/]+\/(state|complete)$/.test(path)};
+ await app.register(helmet);
+ await app.register(cors,{delegator:(req,cb)=>{const allowOpaqueShellOrigin=playerShellRoute(req.url);cb(null,{origin:(origin,originCb)=>originCb(null,!origin||browserOrigins.has(origin)||(allowOpaqueShellOrigin&&origin==="null"))});}});
  app.get("/api/v1/runtime/jwks",async()=>({keys:[keys.publicJwk]}));
  // STUB — NOT PRODUCTION — BLOCKED BY BLK-03. These synthetic projections stand in for the unresolved Postgres repository layer.
  const repository={repository_id:"b6f1c9d2-6e3a-4f1b-9a7d-1e2f3a4b5c6d",slug:"maths-foundations",display_name:"Maths foundations",status:"ACTIVE",created_at:"2026-08-12T09:14:00.000Z"};
