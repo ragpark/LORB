@@ -12,6 +12,8 @@ COPY packages/mock-consumer/package.json ./packages/mock-consumer/package.json
 RUN pnpm install --no-frozen-lockfile
 
 COPY packages/mock-consumer ./packages/mock-consumer
+# The shared UI design-system foundation that mock-consumer's styles.css imports by relative path.
+COPY packages/design-system ./packages/design-system
 
 # Vite substitutes these public, non-secret integration values at build time.
 ARG VITE_RUNTIME_API_BASE
