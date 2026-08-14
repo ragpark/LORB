@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LORB Administration player version registration — Wave 1",
+  "type": "object",
+  "required": [
+    "semver",
+    "module_url",
+    "module_origin",
+    "integrity_algorithm",
+    "integrity_hash",
+    "supported_descriptor_versions",
+    "supported_protocol_versions",
+    "supported_delivery_profiles",
+    "supported_launch_modes"
+  ],
+  "properties": {
+    "semver": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "module_url": { "type": "string", "format": "uri" },
+    "module_origin": { "type": "string", "format": "uri" },
+    "integrity_algorithm": { "type": "string", "enum": ["sha384", "sha256"] },
+    "integrity_hash": { "type": "string", "pattern": "^[0-9a-fA-F]+$" },
+    "supported_descriptor_versions": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "supported_protocol_versions": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "supported_delivery_profiles": { "type": "array", "items": { "type": "string", "enum": ["native-web-package"] }, "minItems": 1 },
+    "supported_launch_modes": { "type": "array", "items": { "type": "string", "enum": ["embedded-iframe"] }, "minItems": 1 }
+  },
+  "additionalProperties": false
+}

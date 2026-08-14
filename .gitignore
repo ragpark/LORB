@@ -3,3 +3,5 @@ dist/
 .env
 keys/
 coverage/
+test-results/
+playwright-report/
