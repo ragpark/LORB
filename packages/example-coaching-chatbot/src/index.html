@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Career Coach Check-in</title>
+<style>
+  :root{color-scheme:light}
+  *{box-sizing:border-box}
+  body{margin:0;font:16px/1.5 system-ui,sans-serif;background:#f7f7f5;color:#1f2933}
+  main{max-width:640px;margin:0 auto;padding:1.5rem;display:flex;flex-direction:column;min-height:100vh}
+  h1{font-size:1.1rem;margin:0 0 .25rem}
+  p.lede{margin:0 0 1rem;color:#52606d;font-size:.9rem}
+  #transcript{flex:1;display:flex;flex-direction:column;gap:.6rem;overflow-y:auto;padding-bottom:1rem}
+  .bubble{max-width:80%;padding:.6rem .85rem;border-radius:.9rem;font-size:.95rem;white-space:pre-wrap}
+  .coach{align-self:flex-start;background:#eef2f6;border-bottom-left-radius:.2rem}
+  .learner{align-self:flex-end;background:#3b5b92;color:#fff;border-bottom-right-radius:.2rem}
+  #choices{display:flex;flex-wrap:wrap;gap:.5rem;padding:.75rem 0}
+  #choices button{border:1px solid #3b5b92;background:#fff;color:#3b5b92;border-radius:999px;padding:.5rem 1rem;font:inherit;cursor:pointer}
+  #choices button:hover,#choices button:focus-visible{background:#3b5b92;color:#fff}
+  #finish{margin-top:.5rem;padding:.75rem 1.25rem;border:0;border-radius:.5rem;background:#1f6f4a;color:#fff;font:inherit;font-weight:600;cursor:pointer;align-self:flex-start}
+  #finish:disabled{background:#9aa5b1;cursor:not-allowed}
+  .status{font-size:.8rem;color:#7b8794;margin-top:.75rem}
+</style>
+</head>
+<body>
+<main>
+  <h1>Career Coach Check-in</h1>
+  <p class="lede">A short, scripted coaching conversation. This is a chatbot-like coaching tool learning content example — replies below are pre-written, not generated.</p>
+  <div id="transcript" aria-live="polite"></div>
+  <div id="choices"></div>
+  <button id="finish" type="button" disabled>Finish coaching session</button>
+  <p class="status" id="status"></p>
+</main>
+<script>
+(function () {
+  "use strict";
+  var shellOrigin = document.referrer ? new URL(document.referrer).origin : null;
+  var statusEl = document.getElementById("status");
+
+  function emit(type, payload) {
+    if (!shellOrigin) {
+      statusEl.textContent = "This activity must be opened inside the LORB Player Shell.";
+      return;
+    }
+    parent.postMessage({
+      protocol: "lorb-player",
+      version: "1.0",
+      type: type,
+      message_id: crypto.randomUUID(),
+      correlation_id: crypto.randomUUID(),
+      reply_to: null,
+      sent_at: new Date().toISOString(),
+      payload: payload
+    }, shellOrigin);
+  }
+
+  var transcript = document.getElementById("transcript");
+  var choicesEl = document.getElementById("choices");
+  var finishButton = document.getElementById("finish");
+
+  function say(who, text) {
+    var bubble = document.createElement("p");
+    bubble.className = "bubble " + who;
+    bubble.textContent = text;
+    transcript.appendChild(bubble);
+    transcript.scrollTop = transcript.scrollHeight;
+  }
+
+  // A short, fixed coaching script. Each step is a coach prompt plus a small
+  // set of canned learner replies; picking one advances to the next step.
+  var script = [
+    {
+      coach: "Hi, I'm your check-in coach. What would you like to focus on today?",
+      choices: [
+        { label: "Managing my workload", next: 1 },
+        { label: "Preparing for a difficult conversation", next: 1 },
+        { label: "Building confidence in a new skill", next: 1 }
+      ]
+    },
+    {
+      coach: "Thanks for sharing that. On a scale of “not at all” to “very”, how confident do you feel about it right now?",
+      choices: [
+        { label: "Not very confident", next: 2 },
+        { label: "Somewhat confident", next: 2 },
+        { label: "Very confident", next: 2 }
+      ]
+    },
+    {
+      coach: "That's useful to know. What is one small step you could take this week?",
+      choices: [
+        { label: "Talk to my manager", next: 3 },
+        { label: "Block focus time in my calendar", next: 3 },
+        { label: "Ask a colleague for feedback", next: 3 }
+      ]
+    },
+    {
+      coach: "Good — that's a concrete next step. Thanks for checking in today. When you're ready, finish the session below.",
+      choices: []
+    }
+  ];
+
+  function render(stepIndex) {
+    var step = script[stepIndex];
+    say("coach", step.coach);
+    choicesEl.innerHTML = "";
+    if (step.choices.length === 0) {
+      finishButton.disabled = false;
+      finishButton.focus();
+      return;
+    }
+    step.choices.forEach(function (choice) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.textContent = choice.label;
+      button.addEventListener("click", function () {
+        say("learner", choice.label);
+        choicesEl.innerHTML = "";
+        window.setTimeout(function () { render(choice.next); }, 250);
+      });
+      choicesEl.appendChild(button);
+    });
+  }
+
+  finishButton.addEventListener("click", function () {
+    finishButton.disabled = true;
+    emit("experience.complete", {});
+  });
+
+  render(0);
+})();
+</script>
+</body>
+</html>
