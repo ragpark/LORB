@@ -1,0 +1,417 @@
+/*
+ * LORB shared UI foundation.
+ *
+ * Structural tokens and interaction patterns common to LORB-owned surfaces, extracted from the
+ * Ops Console (the reference implementation). This file governs shape, spacing, type scale,
+ * motion and focus behaviour only — it never sets colour.
+ *
+ * Colour is deliberately out of scope here: each surface defines its own palette as custom
+ * properties (see that surface's README-design-system.md). Ops Console and the Admin workspace
+ * are visually distinct by requirement — the Admin workspace's palette is a tested
+ * anti-requirement (no blue-and-white Pearson-style palette) — so unifying colour is not a goal.
+ *
+ * Two kinds of rule live here:
+ *  - Universal component shapes (skip link, focus ring, overlay, drawer/dialog, card, badge,
+ *    tooltip, form field chrome, base button chrome): safe on every surface, self-contained.
+ *  - `.app`-scoped console shell rules (fixed draft banner, fixed header, fixed sidebar, grid
+ *    layout): only apply inside a `<div class="app">` root, i.e. the console-shaped surfaces
+ *    (Ops Console, Admin workspace). Surfaces without that wrapper (e.g. the Mock Consumer, which
+ *    is intentionally a simple flowing page simulating a third-party integrator) are unaffected.
+ */
+
+:root {
+  --lorb-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --lorb-font-mono: ui-monospace, SFMono-Regular, monospace;
+
+  --lorb-space-1: 4px;
+  --lorb-space-2: 8px;
+  --lorb-space-3: 12px;
+  --lorb-space-4: 16px;
+  --lorb-space-5: 20px;
+  --lorb-space-6: 24px;
+  --lorb-space-7: 32px;
+  --lorb-space-8: 40px;
+
+  --lorb-radius-sm: 4px;
+  --lorb-radius-md: 6px;
+  --lorb-radius-lg: 8px;
+  --lorb-radius-pill: 999px;
+
+  --lorb-border-width: 1px;
+  --lorb-focus-width: 3px;
+  --lorb-focus-offset: 2px;
+  /* One focus ring colour for every surface: focus visibility is an accessibility contract, not
+     a brand choice, so it does not vary with each surface's palette. */
+  --lorb-focus-color: #ef9b25;
+
+  --lorb-shadow-sm: 0 2px 5px rgb(0 0 0 / 4%);
+  --lorb-shadow-lg: -8px 0 30px rgb(0 0 0 / 20%);
+
+  --lorb-banner-height: 36px;
+  --lorb-header-height: 76px;
+  --lorb-sidebar-width: 250px;
+  --lorb-drawer-width: 520px;
+
+  --lorb-z-banner: 20;
+  --lorb-z-header: 10;
+  --lorb-z-overlay: 30;
+  --lorb-z-drawer: 31;
+  --lorb-z-skip: 99;
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Universal reset and component shapes
+ * ------------------------------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--lorb-font-sans);
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: var(--lorb-border-width) solid var(--lorb-line, #ccc);
+  background: var(--lorb-surface, #fff);
+  color: var(--lorb-ink, inherit);
+  border-radius: var(--lorb-radius-md);
+  padding: var(--lorb-space-2) var(--lorb-space-3);
+  font-weight: 650;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+input,
+select {
+  border: var(--lorb-border-width) solid var(--lorb-line, #ccc);
+  border-radius: var(--lorb-radius-sm);
+  padding: var(--lorb-space-2) var(--lorb-space-3);
+  background: var(--lorb-surface, #fff);
+  color: var(--lorb-ink, inherit);
+}
+
+.mono {
+  font-family: var(--lorb-font-mono);
+  font-size: 11px;
+}
+
+/* Skip-to-content link: off-canvas until focused. Identical mechanism on every surface. */
+.skip {
+  position: fixed;
+  z-index: var(--lorb-z-skip);
+  top: 2px;
+  left: 10px;
+  transform: translateY(-150%);
+  background: var(--lorb-surface, #fff);
+  color: var(--lorb-accent, inherit);
+  border: 2px solid var(--lorb-accent, currentColor);
+  padding: 7px 13px;
+}
+.skip:focus {
+  transform: none;
+}
+
+/* One consistent, brand-independent focus ring everywhere. */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: var(--lorb-focus-width) solid var(--lorb-focus-color);
+  outline-offset: var(--lorb-focus-offset);
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--lorb-z-overlay);
+  background: var(--lorb-overlay, rgb(0 0 0 / 40%));
+}
+
+/* Detail/diagnostics panels: right-edge slide-out drawer, matching Ops Console. */
+.drawer,
+.dialog.drawer {
+  position: fixed;
+  z-index: var(--lorb-z-drawer);
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: min(var(--lorb-drawer-width), 90vw);
+  overflow: auto;
+  background: var(--lorb-surface, #fff);
+  padding: var(--lorb-space-7);
+  box-shadow: var(--lorb-shadow-lg);
+}
+.drawer pre {
+  background: var(--lorb-paper, #f3f5f8);
+  padding: var(--lorb-space-4);
+  overflow: auto;
+  max-height: 70vh;
+}
+
+/* Confirmation dialogs: centred modal, distinct shape from the slide-out drawer above. */
+.dialog:not(.drawer) {
+  position: fixed;
+  z-index: var(--lorb-z-drawer);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--lorb-surface, #fff);
+  border-radius: var(--lorb-radius-lg);
+  padding: var(--lorb-space-6);
+  max-width: 480px;
+  width: 90vw;
+  max-height: 85vh;
+  overflow: auto;
+  box-shadow: var(--lorb-shadow-lg);
+}
+
+/* Stat / navigation tile, shared by every surface's card grid. */
+.card,
+.cards > article {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lorb-space-2);
+  padding: var(--lorb-space-5);
+  border: var(--lorb-border-width) solid var(--lorb-line, #ccc);
+  border-radius: var(--lorb-radius-lg);
+  background: var(--lorb-surface, #fff);
+  text-align: left;
+}
+.card strong,
+.cards > article strong {
+  font-size: 2rem;
+}
+
+.status,
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: var(--lorb-radius-pill);
+  padding: 4px 8px;
+  font-weight: 750;
+  font-size: 10px;
+}
+
+.tooltip {
+  border-radius: var(--lorb-radius-sm);
+  padding: 8px 10px;
+  font-size: 11px;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: var(--lorb-focus-width) solid var(--lorb-focus-color);
+  outline-offset: var(--lorb-focus-offset);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * `.app`-scoped console shell (Ops Console, Admin workspace: fixed banner + header + sidebar).
+ * Surfaces without a `.app` root (e.g. Mock Consumer) never match these selectors.
+ * ------------------------------------------------------------------------------------------- */
+
+.app .draft,
+.app .draft-banner {
+  position: fixed;
+  z-index: var(--lorb-z-banner);
+  top: 0;
+  left: 0;
+  right: 0;
+  min-height: var(--lorb-banner-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 8px var(--lorb-space-4);
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.025em;
+}
+
+.app > header {
+  position: fixed;
+  z-index: var(--lorb-z-header);
+  top: var(--lorb-banner-height);
+  left: 0;
+  right: 0;
+  height: var(--lorb-header-height);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--lorb-space-7);
+  gap: var(--lorb-space-8);
+  background: var(--lorb-surface, #fff);
+  border-bottom: var(--lorb-border-width) solid var(--lorb-line, #ccc);
+}
+
+.app .brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 230px;
+  flex-shrink: 0;
+}
+.app .mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--lorb-radius-lg);
+  font-weight: 900;
+  font-size: 22px;
+  background: var(--lorb-accent, #333);
+  color: var(--lorb-on-accent, #fff);
+}
+.app .brand strong,
+.app .brand small {
+  display: block;
+}
+.app .brand small {
+  font-size: 11px;
+  margin-top: 2px;
+  color: var(--lorb-muted, inherit);
+}
+
+.app .env {
+  border-radius: var(--lorb-radius-pill);
+  padding: 7px 11px;
+  font: 700 11px var(--lorb-font-mono);
+  border: var(--lorb-border-width) solid var(--lorb-env-border, currentColor);
+  background: var(--lorb-env-bg, transparent);
+  color: var(--lorb-env-ink, inherit);
+}
+
+.app .operator {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--lorb-space-6);
+}
+.app .operator span {
+  font-size: 14px;
+  font-weight: 650;
+}
+.app .operator small {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--lorb-muted, inherit);
+}
+
+.app .layout {
+  display: grid;
+  grid-template-columns: var(--lorb-sidebar-width) 1fr;
+  padding-top: calc(var(--lorb-banner-height) + var(--lorb-header-height));
+  min-height: 100vh;
+}
+
+.app aside {
+  position: fixed;
+  top: calc(var(--lorb-banner-height) + var(--lorb-header-height));
+  bottom: 0;
+  width: var(--lorb-sidebar-width);
+  padding: 30px 14px 18px;
+  display: flex;
+  flex-direction: column;
+  background: var(--lorb-sidebar-bg, #111);
+  color: var(--lorb-sidebar-ink, #eee);
+}
+
+.app aside nav button,
+.app .diagnostics,
+.app .diagnostics-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  border-radius: var(--lorb-radius-md);
+  text-align: left;
+  padding: 12px 14px;
+  margin: 2px 0;
+  font-weight: 550;
+}
+.app aside nav button:hover,
+.app aside nav button:focus-visible {
+  background: var(--lorb-sidebar-hover, rgb(255 255 255 / 10%));
+}
+.app aside button.active {
+  background: var(--lorb-sidebar-active-bg, var(--lorb-surface, #fff)) !important;
+  color: var(--lorb-sidebar-active-ink, var(--lorb-accent, #000)) !important;
+}
+.app .diagnostics,
+.app .diagnostics-trigger {
+  margin-top: auto;
+  border-top: var(--lorb-border-width) solid var(--lorb-sidebar-line, rgb(255 255 255 / 20%));
+  border-radius: 0;
+  padding-top: 18px;
+}
+.app .diagnostics:hover,
+.app .diagnostics-trigger:hover {
+  background: var(--lorb-sidebar-hover, rgb(255 255 255 / 10%));
+}
+.app .diagnostics span,
+.app .diagnostics-trigger span {
+  margin-left: auto;
+  background: var(--lorb-sidebar-hover, rgb(255 255 255 / 20%));
+  border-radius: var(--lorb-radius-pill);
+  padding: 2px 7px;
+}
+
+.app main {
+  grid-column: 2;
+  padding: var(--lorb-space-7) var(--lorb-space-8) 60px;
+  max-width: 1500px;
+}
+
+.app .fatal {
+  text-align: center;
+  margin: 100px auto;
+  display: block;
+}
+
+@media (max-width: 1023px) {
+  .app > *:not(.draft):not(.draft-banner) {
+    display: none;
+  }
+  .app::after {
+    content: 'This workspace is designed for desktop use. Please widen your window or use a larger screen.';
+    position: fixed;
+    inset: 36px 0 0;
+    display: grid;
+    place-items: center;
+    padding: 30px;
+    text-align: center;
+    font-size: 20px;
+    background: var(--lorb-surface, #fff);
+    color: var(--lorb-ink, #000);
+  }
+}
