@@ -1,48 +1,168 @@
-:root { color-scheme: light; --ink: #1a1a2e; --paper: #fafafa; --line: #d7d7e0; --accent: #4a3f8f; --danger: #7a1f3d; --ok: #1f6d4a; }
-* { box-sizing: border-box; }
-body { margin: 0; font-family: system-ui, sans-serif; color: var(--ink); background: var(--paper); }
-.draft-banner { background: #3d2b56; color: #fff; padding: 0.5rem 1rem; font-weight: 600; text-align: center; }
-.skip { position: absolute; left: -9999px; }
-.skip:focus { left: 1rem; top: 1rem; background: #fff; padding: 0.5rem 1rem; z-index: 10; }
-header { display: flex; align-items: center; gap: 1rem; padding: 1rem; border-bottom: 1px solid var(--line); }
-.brand { display: flex; align-items: center; gap: 0.5rem; }
-.mark { background: var(--accent); color: #fff; border-radius: 4px; padding: 0.25rem 0.5rem; font-weight: 700; }
-.env { margin-left: auto; }
-.operator { display: flex; align-items: center; gap: 0.75rem; }
-.layout { display: flex; min-height: calc(100vh - 5rem); }
-aside { width: 220px; border-right: 1px solid var(--line); padding: 1rem; display: flex; flex-direction: column; gap: 0.25rem; }
-aside nav { display: flex; flex-direction: column; gap: 0.25rem; }
-aside button { text-align: left; padding: 0.5rem; border: none; background: none; cursor: pointer; border-radius: 4px; }
-aside button.active { background: var(--accent); color: #fff; }
-main { flex: 1; padding: 1.5rem; }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; }
-.card { display: flex; flex-direction: column; gap: 0.5rem; padding: 1rem; border: 1px solid var(--line); border-radius: 8px; background: #fff; cursor: pointer; text-align: left; }
-.card strong { font-size: 2rem; }
-.form { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; margin-bottom: 1rem; }
-.form label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
-.filters { display: flex; gap: 1rem; margin-bottom: 1rem; }
-input, select { padding: 0.4rem; border: 1px solid var(--line); border-radius: 4px; }
-button { cursor: pointer; }
-button.danger { background: var(--danger); color: #fff; border: none; padding: 0.4rem 0.8rem; border-radius: 4px; }
-.list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
-.status-badge { font-size: 0.75rem; padding: 0.1rem 0.4rem; border: 1px solid var(--line); border-radius: 4px; }
-.mono { font-family: ui-monospace, monospace; }
-.small { font-size: 0.8rem; }
-.error-text { color: var(--danger); }
-.governance-note { background: #fff3e0; border: 1px solid #e0a000; padding: 0.5rem; border-radius: 4px; }
-.governance-stop { background: #fdecea; border: 1px solid var(--danger); padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
-.overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); }
-.dialog { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); background: #fff; padding: 1.5rem; border-radius: 8px; max-width: 480px; width: 90vw; max-height: 85vh; overflow: auto; }
-.drawer { max-width: 640px; }
-.dialog-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; }
-.diagnostics-trigger { margin-top: auto; }
-.version-card { border: 1px solid var(--line); border-radius: 8px; padding: 0.75rem; }
-.version-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
-.rules-viewer { background: #f0f0f5; padding: 0.5rem; border-radius: 4px; overflow: auto; }
-.tooltip { background: var(--ink); color: #fff; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem; }
-.outcome-allowed { color: var(--ok); }
-.outcome-denied, .outcome-failed { color: var(--danger); }
-.approval-card { border: 1px solid var(--line); border-radius: 8px; padding: 0.75rem; }
-.notice { background: #eef; padding: 0.5rem; border-radius: 4px; }
-.sign-in { max-width: 420px; margin: 4rem auto; display: flex; flex-direction: column; gap: 1rem; }
-.fatal { padding: 2rem; }
+@import '../../design-system/src/foundation.css';
+
+/* Admin workspace palette — deliberately not blue-and-white (anti-requirement 22, see
+ * README-design-system.md and tests/anti-requirements/README-anti-requirements.md #22).
+ * Structure, spacing, type scale and component shapes come from the shared foundation above,
+ * which is based on the Ops Console; only colour is surface-specific. */
+:root {
+  color-scheme: light;
+  --lorb-ink: #1a1a2e;
+  --lorb-paper: #fafafa;
+  --lorb-surface: #fff;
+  --lorb-line: #d7d7e0;
+  --lorb-muted: #5a5a72;
+  --lorb-accent: #4a3f8f;
+  --lorb-on-accent: #fff;
+  --lorb-overlay: rgb(0 0 0 / 40%);
+  --lorb-env-bg: #eeecf9;
+  --lorb-env-border: #c7c2e6;
+  --lorb-env-ink: #4a3f8f;
+  --lorb-sidebar-bg: var(--lorb-paper);
+  --lorb-sidebar-ink: var(--lorb-ink);
+  --lorb-sidebar-hover: #efedf9;
+  --lorb-sidebar-line: var(--lorb-line);
+  --lorb-sidebar-active-bg: var(--lorb-accent);
+  --lorb-sidebar-active-ink: #fff;
+
+  --lorb-danger: #7a1f3d;
+  --lorb-ok: #1f6d4a;
+}
+
+body {
+  color: var(--lorb-ink);
+  background: var(--lorb-paper);
+}
+
+.draft-banner {
+  background: #3d2b56;
+  color: #fff;
+}
+
+.skip {
+  color: var(--lorb-accent);
+  border-color: var(--lorb-accent);
+}
+
+.app aside {
+  border-right: 1px solid var(--lorb-line);
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--lorb-space-4);
+}
+
+.form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lorb-space-4);
+  align-items: end;
+  margin-bottom: var(--lorb-space-4);
+}
+.form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
+.filters {
+  display: flex;
+  gap: var(--lorb-space-4);
+  margin-bottom: var(--lorb-space-4);
+}
+
+button.danger {
+  background: var(--lorb-danger);
+  color: #fff;
+  border: none;
+  padding: 0.4rem 0.8rem;
+}
+
+.list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--lorb-space-2);
+}
+
+.small {
+  font-size: 0.8rem;
+}
+
+.error-text {
+  color: var(--lorb-danger);
+}
+
+.governance-note {
+  background: #fff3e0;
+  border: 1px solid #e0a000;
+  padding: var(--lorb-space-2);
+  border-radius: var(--lorb-radius-sm);
+}
+.governance-stop {
+  background: #fdecea;
+  border: 1px solid var(--lorb-danger);
+  padding: var(--lorb-space-4);
+  border-radius: var(--lorb-radius-lg);
+  margin-bottom: var(--lorb-space-4);
+}
+
+.dialog-actions {
+  display: flex;
+  gap: var(--lorb-space-2);
+  justify-content: flex-end;
+  margin-top: var(--lorb-space-4);
+}
+
+.version-card,
+.approval-card {
+  border: 1px solid var(--lorb-line);
+  border-radius: var(--lorb-radius-lg);
+  padding: 0.75rem;
+}
+.version-actions {
+  display: flex;
+  gap: var(--lorb-space-2);
+  margin-top: var(--lorb-space-2);
+}
+
+.rules-viewer {
+  background: var(--lorb-sidebar-hover);
+  padding: var(--lorb-space-2);
+  border-radius: var(--lorb-radius-sm);
+  overflow: auto;
+}
+
+.tooltip {
+  background: var(--lorb-ink);
+  color: #fff;
+}
+
+.outcome-allowed {
+  color: var(--lorb-ok);
+}
+.outcome-denied,
+.outcome-failed {
+  color: var(--lorb-danger);
+}
+
+.notice {
+  background: var(--lorb-env-bg);
+  padding: var(--lorb-space-2);
+  border-radius: var(--lorb-radius-sm);
+}
+
+.sign-in {
+  max-width: 420px;
+  margin: calc(var(--lorb-banner-height) + var(--lorb-header-height) + var(--lorb-space-6)) auto 4rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--lorb-space-4);
+}
+
+.fatal {
+  padding: var(--lorb-space-7);
+}
