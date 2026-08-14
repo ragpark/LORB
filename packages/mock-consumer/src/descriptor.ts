@@ -1,0 +1,3 @@
+import {createRemoteJWKSet,jwtVerify,decodeProtectedHeader,type JWTPayload} from 'jose';import type {Config} from './config.js';
+export interface Descriptor extends JWTPayload{player_ref?:{shell_origin?:string}}
+export async function verifyLaunchDescriptor(token:string,config:Config):Promise<Descriptor>{const header=decodeProtectedHeader(token);if(!header.kid)throw new Error('Descriptor key identifier is missing.');const result=await jwtVerify(token,createRemoteJWKSet(new URL(config.jwksUrl)),{issuer:config.stubIssuer,audience:'lorb-player'});const payload=result.payload as Descriptor;const allowed=payload.player_ref?.shell_origin??config.playerShellOrigin;if(allowed!==config.playerShellOrigin)throw new Error('Shell origin does not match.');return payload}
