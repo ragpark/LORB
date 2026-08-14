@@ -11,7 +11,7 @@ const problem=(code:string,status:number,correlation_id:string)=>({type:`https:/
 const defaultConsumerOrigins=["http://localhost:3300","https://lorb-production-consumer.up.railway.app"];
 function allowedConsumerOrigins(){
  const configured=process.env.ALLOWED_CONSUMER_ORIGINS;
- return new Set((configured?configured.split(","):defaultConsumerOrigins).map(origin=>origin.trim()).filter(Boolean));
+ return new Set([...defaultConsumerOrigins,...(configured?.split(",")??[])].map(origin=>origin.trim()).filter(Boolean));
 }
 export async function buildRuntime(options?:{iesKey?:KeyLike;secret?:Buffer}){
  const app=Fastify({logger:false,bodyLimit:65536}); const keys=await signingKeys(); const iesKey=options?.iesKey??keys.privateKey; const secret=options?.secret??Buffer.alloc(32,1);
