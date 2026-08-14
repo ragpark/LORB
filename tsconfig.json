@@ -16,6 +16,7 @@
     "tests"
   ],
   "exclude": [
-    "packages/ops-console"
+    "packages/ops-console",
+    "packages/mock-consumer"
   ]
 }
