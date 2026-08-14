@@ -8,9 +8,15 @@ import { computePseudonym } from "./services/pseudonym-service.js";
 import { issueDescriptor, signingKeys, store, transition, verifyDescriptor } from "./core.js";
 
 const problem=(code:string,status:number,correlation_id:string)=>({type:`https://lorb.example/errors/${code}`,title:code==="AUTHENTICATION_EXPIRED"?"Your session has expired":"We could not complete that request",status,code,detail:code==="AUTHENTICATION_EXPIRED"?"Sign in again to continue":"Please check the request and try again",correlation_id,retryable:status>=500,field_errors:[]});
+const defaultConsumerOrigins=["http://localhost:3300","https://lorb-production-consumer.up.railway.app"];
+function allowedConsumerOrigins(){
+ const configured=process.env.ALLOWED_CONSUMER_ORIGINS;
+ return new Set((configured?configured.split(","):defaultConsumerOrigins).map(origin=>origin.trim()).filter(Boolean));
+}
 export async function buildRuntime(options?:{iesKey?:KeyLike;secret?:Buffer}){
  const app=Fastify({logger:false,bodyLimit:65536}); const keys=await signingKeys(); const iesKey=options?.iesKey??keys.privateKey; const secret=options?.secret??Buffer.alloc(32,1);
- await app.register(helmet); await app.register(cors,{origin:(origin,cb)=>cb(null,!origin||(process.env.ALLOWED_CONSUMER_ORIGINS??"http://localhost:3300").split(",").includes(origin))});
+ const consumerOrigins=allowedConsumerOrigins();
+ await app.register(helmet); await app.register(cors,{origin:(origin,cb)=>cb(null,!origin||consumerOrigins.has(origin))});
  app.get("/api/v1/runtime/jwks",async()=>({keys:[keys.publicJwk]}));
  // STUB — NOT PRODUCTION — BLOCKED BY BLK-03. These synthetic projections stand in for the unresolved Postgres repository layer.
  const repository={repository_id:"repo-mvp",slug:"maths-foundations",display_name:"Maths foundations",status:"ACTIVE",created_at:"2026-08-12T09:14:00.000Z"};
