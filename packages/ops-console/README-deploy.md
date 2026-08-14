@@ -16,4 +16,6 @@ This deployment is dedicated to non-production use. BLK-08 (Railway procurement/
 
 Every `VITE_*` variable is embedded into the static bundle at build time. Changing any of these Railway variables therefore requires a rebuild/redeploy; restarting an existing image is not sufficient.
 
+The browser connects to the APIs through their non-production public HTTPS domains. Set `VITE_RUNTIME_API_BASE` to the Runtime API prefix (for example, `https://runtime-nonprod.example/api/v1/runtime`) and set `VITE_EVIDENCE_API_BASE` to the Evidence API prefix (for example, `https://evidence-nonprod.example/api/v1/evidence`). Set `VITE_ALLOWED_API_ORIGINS` to the exact comma-separated origins only (for example, `https://runtime-nonprod.example,https://evidence-nonprod.example`), without API paths, trailing slashes, or wildcards. A successful `/health` response confirms service health; the console itself calls concrete resources such as `repositories`, not the unimplemented `/api/v1/runtime/` root route.
+
 This service must never be used with real learner data. Do not remove or bypass the DRAFT banner, environment label, origin allow-list, or any other existing anti-requirement enforcement.
