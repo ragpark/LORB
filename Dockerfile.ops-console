@@ -13,6 +13,8 @@ COPY packages/ops-console/package.json ./packages/ops-console/package.json
 RUN pnpm install --no-frozen-lockfile
 
 COPY packages/ops-console ./packages/ops-console
+# The shared UI design-system foundation that ops-console's styles.css imports by relative path.
+COPY packages/design-system ./packages/design-system
 
 # Vite substitutes these public, non-secret values during the image build.
 ARG VITE_RUNTIME_API_BASE
