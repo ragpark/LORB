@@ -11,6 +11,7 @@
     "node_modules",
     "packages/ops-console",
     "packages/mock-consumer",
-    "packages/admin-ui"
+    "packages/admin-ui",
+    "packages/example-react-xapi-experience"
   ]
 }
