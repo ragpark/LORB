@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AdminLaunchPolicyRules.wave1",
+  "type": "object",
+  "required": ["rules"],
+  "properties": {
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "required": ["priority", "match", "route"],
+        "properties": {
+          "priority": { "type": "integer", "minimum": 0, "maximum": 999 },
+          "match": {
+            "type": "object",
+            "properties": {
+              "consumer_id": { "type": "string" },
+              "repository_id": { "type": "string", "format": "uuid" },
+              "delivery_profile": { "type": "string", "enum": ["native-web-package"] },
+              "launch_mode": { "type": "string", "enum": ["embedded-iframe"] }
+            },
+            "additionalProperties": false
+          },
+          "route": {
+            "type": "object",
+            "required": ["player_id", "player_version_id"],
+            "properties": {
+              "player_id": { "type": "string", "format": "uuid" },
+              "player_version_id": { "type": "string", "format": "uuid" }
+            },
+            "additionalProperties": false
+          },
+          "effective_at": { "type": "string", "format": "date-time" },
+          "expires_at": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

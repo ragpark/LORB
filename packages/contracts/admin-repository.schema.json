@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LORB Administration repository create request — Wave 1",
+  "type": "object",
+  "required": ["slug", "display_name"],
+  "properties": {
+    "slug": { "type": "string", "pattern": "^[a-z0-9-]{3,32}$" },
+    "display_name": { "type": "string", "minLength": 3, "maxLength": 120 }
+  },
+  "additionalProperties": false
+}

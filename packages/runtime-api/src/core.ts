@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { exportJWK, generateKeyPair, jwtVerify, SignJWT, type JWK, type KeyLike } from "jose";
 import { descriptorSchema } from "../../contracts/src/index.js";
 
-export type Attempt={attempt_id:string;repository_id:string;object_version_id:string;package_version_id:string;pseudonym:string;status:"CREATED"|"STARTED"|"COMPLETED";revision:number;state?:unknown};
+export type Attempt={attempt_id:string;repository_id:string;object_version_id:string;package_version_id:string;pseudonym:string;status:"CREATED"|"STARTED"|"COMPLETED";revision:number;state?:unknown;governed_by_launch_policy?:{launch_policy_id:string;launch_policy_version_id:string;display_name:string;semver:string}};
 export const store={attempts:new Map<string,Attempt>(),launches:new Map<string,unknown>(),idempotency:new Map<string,unknown>(),outbox:new Map<string,unknown>()};
 export async function signingKeys(){const {privateKey,publicKey}=await generateKeyPair("ES256",{extractable:true});const jwk=await exportJWK(publicKey);return {privateKey,publicJwk:{...jwk,kid:"mvp-key-001",alg:"ES256",use:"sig"} as JWK};}
 export async function issueDescriptor(privateKey:KeyLike, claims:Record<string,unknown>,config={issuer:"http://localhost:3000",evidenceEndpoint:"http://localhost:3100/api/v1/evidence/statements"}){

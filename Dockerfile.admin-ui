@@ -6,38 +6,27 @@ RUN corepack enable \
 WORKDIR /app
 
 # Copy the workspace manifests before installing so pnpm discovers the
-# ops-console workspace and installs its React, Vite, and TypeScript packages.
+# admin-ui workspace and installs its React, Vite, and TypeScript packages.
 COPY package.json pnpm-workspace.yaml ./
-COPY packages/ops-console/package.json ./packages/ops-console/package.json
+COPY packages/admin-ui/package.json ./packages/admin-ui/package.json
 
 RUN pnpm install --no-frozen-lockfile
 
-COPY packages/ops-console ./packages/ops-console
+COPY packages/admin-ui ./packages/admin-ui
 
 # Vite substitutes these public, non-secret values during the image build.
-ARG VITE_RUNTIME_API_BASE
-ARG VITE_EVIDENCE_API_BASE
-ARG VITE_JWKS_URL
-ARG VITE_STUB_IES_ISSUER
+ARG VITE_ADMIN_API_BASE
 ARG VITE_STUB_IES_LOGIN_URL
-ARG VITE_ALLOWED_API_ORIGINS
 ARG VITE_ENVIRONMENT_LABEL
-# Optional: route-only link to the separately deployed Administration workspace. Not required to build.
-ARG VITE_ADMIN_UI_ORIGIN
 
-ENV VITE_RUNTIME_API_BASE=${VITE_RUNTIME_API_BASE}
-ENV VITE_EVIDENCE_API_BASE=${VITE_EVIDENCE_API_BASE}
-ENV VITE_JWKS_URL=${VITE_JWKS_URL}
-ENV VITE_STUB_IES_ISSUER=${VITE_STUB_IES_ISSUER}
+ENV VITE_ADMIN_API_BASE=${VITE_ADMIN_API_BASE}
 ENV VITE_STUB_IES_LOGIN_URL=${VITE_STUB_IES_LOGIN_URL}
-ENV VITE_ALLOWED_API_ORIGINS=${VITE_ALLOWED_API_ORIGINS}
 ENV VITE_ENVIRONMENT_LABEL=${VITE_ENVIRONMENT_LABEL}
-ENV VITE_ADMIN_UI_ORIGIN=${VITE_ADMIN_UI_ORIGIN}
 
 # Railway deployment of this image is expressly limited to non-production.
 RUN test "${VITE_ENVIRONMENT_LABEL}" = "RAILWAY-NON-PROD"
 
-RUN pnpm --filter ops-console build
+RUN pnpm --filter admin-ui build
 
 FROM nginx:1.27-alpine AS runtime
 
@@ -61,9 +50,9 @@ RUN rm /etc/nginx/conf.d/default.conf \
         '        try_files $uri $uri/ /index.html;' \
         '    }' \
         '}' \
-        > /etc/nginx/conf.d/ops-console.conf
+        > /etc/nginx/conf.d/admin-ui.conf
 
-COPY --from=build /app/packages/ops-console/dist /usr/share/nginx/html
+COPY --from=build /app/packages/admin-ui/dist /usr/share/nginx/html
 
 EXPOSE 8080
 
