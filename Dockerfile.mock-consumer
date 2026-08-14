@@ -36,6 +36,7 @@ ENV VITE_ALLOWED_SHELL_ORIGINS=${VITE_ALLOWED_SHELL_ORIGINS}
 # integration endpoint and an explicit, non-wildcard shell origin allow-list.
 RUN test "${VITE_ENVIRONMENT_LABEL}" = "RAILWAY-NON-PROD" \
     && test -n "${VITE_RUNTIME_API_BASE}" \
+    && test -n "${VITE_RUNTIME_ISSUER}" \
     && test -n "${VITE_JWKS_URL}" \
     && test -n "${VITE_PLAYER_SHELL_ORIGIN}" \
     && test -n "${VITE_STUB_IES_ISSUER}" \
