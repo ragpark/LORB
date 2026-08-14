@@ -9,6 +9,7 @@
     "tests",
     "dist",
     "node_modules",
-    "packages/ops-console"
+    "packages/ops-console",
+    "packages/mock-consumer"
   ]
 }
