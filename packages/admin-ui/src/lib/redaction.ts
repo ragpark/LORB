@@ -11,18 +11,24 @@ const forbiddenKey = /(^|_)(subject|tenant_secret|private_key|token|signed_descr
 // otherwise false-positive on the "_subject_" substring. Mirrors Ops Console's own
 // approvedProjectionKeys allowlist for the same class of field (packages/ops-console/src/security.ts).
 const isApprovedPseudonymField = (key: string) => key === 'pseudonym' || key.endsWith('_pseudonym');
-const isForbiddenKey = (key: string) => !isApprovedPseudonymField(key) && forbiddenKey.test(key);
+// A smart link's `token` is the public share secret embedded in its `url` — the whole point is for
+// it to reach the DOM so an admin can copy and share it. Scoped to siblings of `smart_link_id` so a
+// genuine bearer/access token elsewhere in a payload still trips the leak guard.
+const isApprovedSmartLinkTokenField = (key: string, parent: Record<string, unknown>) => key === 'token' && typeof parent.smart_link_id === 'string';
+const isForbiddenKey = (key: string, parent: Record<string, unknown>) => !isApprovedPseudonymField(key) && !isApprovedSmartLinkTokenField(key, parent) && forbiddenKey.test(key);
 
 export function containsForbiddenField(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
-  return Object.entries(value as Record<string, unknown>).some(([key, item]) => isForbiddenKey(key) || containsForbiddenField(item));
+  const parent = value as Record<string, unknown>;
+  return Object.entries(parent).some(([key, item]) => isForbiddenKey(key, parent) || containsForbiddenField(item));
 }
 
 export function redactForbiddenFields<T>(value: T): T {
   if (Array.isArray(value)) return value.map(redactForbiddenFields) as T;
   if (value && typeof value === 'object') {
+    const parent = value as Record<string, unknown>;
     return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).flatMap(([key, item]) => (isForbiddenKey(key) ? [] : [[key, redactForbiddenFields(item)]])),
+      Object.entries(parent).flatMap(([key, item]) => (isForbiddenKey(key, parent) ? [] : [[key, redactForbiddenFields(item)]])),
     ) as T;
   }
   return value;
