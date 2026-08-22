@@ -2,36 +2,67 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { QuizContent } from "../../contracts/src/index.js";
 import { markQuiz, quizStatementChain, type ShellContext, type XapiStatement } from "./statements.js";
 
-/** The Player Shell embeds this module in a sandboxed iframe without allow-same-origin, so the shell
- * reports as the opaque origin "null". Accept "null" or the referrer's real origin — never a
- * wildcard. Mirrors packages/example-react-xapi-experience. */
+/**
+ * Handshake with the Player Shell.
+ *
+ * The module opens a MessageChannel, keeps one port, and hands the other to the shell inside a
+ * `module.hello` message. Everything after that — `shell.context` inbound, evidence and completion
+ * outbound — travels down that private port.
+ *
+ * This exists because the shell cannot postMessage *into* a correctly sandboxed module: without
+ * `allow-same-origin` the module's origin is opaque, so a message targeted at the package origin is
+ * dropped by the browser and only "*" would arrive. The port sidesteps that: it carries no target
+ * origin because it is reachable only by its two endpoints.
+ *
+ * The outbound `module.hello` still targets the shell's exact origin — the shell is same-origin with
+ * the package here, so `document.referrer` gives it, and a wildcard is never used in either direction.
+ */
 function shellOrigin(): string | null {
   return document.referrer ? new URL(document.referrer).origin : null;
 }
 
-function emitToShell(type: string, payload: Record<string, unknown>, correlationId?: string): boolean {
+/** The shell places a per-launch nonce in this document's URL fragment; only the document it
+ * navigated to receives it. Presenting it proves we are that document and not a later one that
+ * replaced it in the same browsing context. */
+function handshakeNonce(): string | undefined {
+  return /(?:^#|&)lorb_handshake=([^&]+)/.exec(location.hash)?.[1];
+}
+
+function envelope(type: string, payload: Record<string, unknown>, correlationId?: string) {
+  return {
+    protocol: "lorb-player",
+    version: "1.0",
+    type,
+    message_id: crypto.randomUUID(),
+    correlation_id: correlationId ?? crypto.randomUUID(),
+    reply_to: null,
+    sent_at: new Date().toISOString(),
+    payload,
+  };
+}
+
+/** Opens the channel and resolves with the port once the shell answers with `shell.context`. */
+function connectToShell(onContext: (context: ShellContext, port: MessagePort) => void): () => void {
   const origin = shellOrigin();
-  if (!origin) return false;
-  parent.postMessage(
-    {
-      protocol: "lorb-player",
-      version: "1.0",
-      type,
-      message_id: crypto.randomUUID(),
-      correlation_id: correlationId ?? crypto.randomUUID(),
-      reply_to: null,
-      sent_at: new Date().toISOString(),
-      payload,
-    },
-    origin,
-  );
-  return true;
+  const nonce = handshakeNonce();
+  if (!origin || !nonce) return () => undefined;
+  const channel = new MessageChannel();
+  const port = channel.port1;
+  port.onmessage = (event: MessageEvent) => {
+    const data = event.data as { protocol?: string; type?: string; payload?: ShellContext } | null;
+    if (!data || data.protocol !== "lorb-player" || data.type !== "shell.context" || !data.payload) return;
+    onContext(data.payload, port);
+  };
+  port.start();
+  parent.postMessage(envelope("module.hello", { lorb_handshake: nonce }), origin, [channel.port2]);
+  return () => port.close();
 }
 
 type Phase = "waiting" | "loading" | "answering" | "review" | "submitted" | "error";
 
 export function App() {
   const [context, setContext] = useState<ShellContext>();
+  const [port, setPort] = useState<MessagePort>();
   const [content, setContent] = useState<QuizContent>();
   const [answers, setAnswers] = useState<Array<string | undefined>>([]);
   const [index, setIndex] = useState(0);
@@ -39,22 +70,15 @@ export function App() {
   const [message, setMessage] = useState("");
   const [emitted, setEmitted] = useState<XapiStatement[]>([]);
 
-  useEffect(() => {
-    function onMessage(event: MessageEvent) {
-      const data = event.data as { protocol?: string; type?: string; payload?: ShellContext } | null;
-      if (!data || data.protocol !== "lorb-player" || data.type !== "shell.context" || !data.payload) return;
-      const expected = shellOrigin();
-      if (event.origin !== "null" && event.origin !== expected) return;
-      setContext(data.payload);
-    }
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, []);
+  useEffect(() => connectToShell((received, openPort) => {
+    setContext(received);
+    setPort(openPort);
+  }), []);
 
   // The quiz is data, not code: the player fetches the structured content payload the learning
   // object points at and renders it. One reviewed player package serves every quiz.
   useEffect(() => {
-    if (!context?.content_url) return;
+    if (!context?.content_url || !port) return;
     let cancelled = false;
     setPhase("loading");
     void fetch(context.content_url, { headers: { accept: "application/json" } })
@@ -67,37 +91,35 @@ export function App() {
         // `launched` opens the verb chain as soon as the learner actually has the activity in front
         // of them, not merely when the descriptor was minted.
         const chain = [quizStatementChain(context, () => crypto.randomUUID(), body, [])[0]!];
-        emitToShell("evidence.emit", { statement: chain[0] }, context.correlation_id);
+        port.postMessage(envelope("evidence.emit", { statement: chain[0] }, context.correlation_id));
         setEmitted(chain);
       })
       .catch((error: Error) => {
         if (cancelled) return;
         setPhase("error");
         setMessage(error.message);
-        emitToShell("experience.error", { code: "QUIZ_CONTENT_UNAVAILABLE", recoverable: false, detail: error.message }, context.correlation_id);
+        port.postMessage(envelope("experience.error", { code: "QUIZ_CONTENT_UNAVAILABLE", recoverable: false, detail: error.message }, context.correlation_id));
       });
     return () => { cancelled = true; };
-  }, [context]);
+  }, [context, port]);
 
   const mark = useMemo(() => (content ? markQuiz(content, answers) : undefined), [content, answers]);
 
   const submit = useCallback(() => {
-    if (!context || !content) return;
+    if (!context || !content || !port) return;
     // Marking, scoring, and the answer key all stay inside this package.
     const chain = quizStatementChain(context, () => crypto.randomUUID(), content, answers);
     // The `launched` statement was already emitted when the content loaded.
+    // Persist the attempt state before completing. Besides being the honest thing for a resumable
+    // activity to do, this is what moves the attempt CREATED -> STARTED; the Runtime only accepts a
+    // completion from STARTED, so a module that never saves state can never legally complete.
+    port.postMessage(envelope("state.put", { state: { answers, submitted: true } }, context.correlation_id));
     const remaining = chain.slice(1);
-    for (const statement of remaining) {
-      if (!emitToShell("evidence.emit", { statement }, context.correlation_id)) {
-        setPhase("error");
-        setMessage("This quiz must be opened inside the LORB Player Shell.");
-        return;
-      }
-    }
+    for (const statement of remaining) port.postMessage(envelope("evidence.emit", { statement }, context.correlation_id));
     setEmitted((previous) => [...previous, ...remaining]);
-    emitToShell("experience.complete", {}, context.correlation_id);
+    port.postMessage(envelope("experience.complete", {}, context.correlation_id));
     setPhase("submitted");
-  }, [context, content, answers]);
+  }, [context, content, answers, port]);
 
   const question = content?.questions[index];
 

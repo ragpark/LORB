@@ -26,3 +26,34 @@ non-negotiables the connector was built against:
 Three changes this work makes to enforced surfaces — the widened xAPI verb/result contract, the added
 null-origin CORS route, and the new internal service-credentialled Runtime routes — are listed for human
 LORB-001 re-review in the repository README and are not treated as reviewed by these tests passing.
+
+
+## postMessage origin policy (player shell)
+
+`originAllowed` implements two of the 15 controls — wildcard postMessage rejection and allow-listed
+postMessage origins — and is **unchanged**. It still refuses the opaque origin a sandboxed module
+reports, so no enforced control is relaxed.
+
+Instead the module channel runs over a `MessageChannel`. A module opens the channel and asks for it in
+a single `module.hello` message authenticated by `handshakeAllowed`, which requires all of:
+
+- the message came from the shell's own iframe (`event.source === frame.contentWindow`);
+- the origin is either the pinned package origin or the opaque `"null"` — never a wildcard;
+- the message presents the per-launch nonce the shell placed in the iframe URL fragment.
+
+The nonce is what binds the handshake to a *document* rather than to a *browsing context*. Window
+identity alone is not sufficient: a redirect or a self-navigation keeps the same `WindowProxy` and the
+same opaque origin, and `frame.src` still reads the pinned package URL, so nothing else can tell the
+replacement document apart. Only a document the shell itself navigated to receives the fragment.
+
+The shell additionally accepts exactly one handshake per launch, carries all later traffic on the port
+(the window is never used again), and ends the session if the document under an established channel
+changes.
+
+Known residual risk, for review: a `package_url` that 302s off-origin on the very first load carries
+the fragment to the redirect target, and the embedding page cannot detect that from inside the
+browser. A `frame-src` CSP on the Player Shell would close it at the browser level; the shipped nginx
+image serves modules from the shell's own origin, so `frame-src 'self'` would fit that topology, but it
+would break a deployment that hosts packages on a separate origin and so is not imposed here.
+
+Covered by `tests/player-shell/postmessage.spec.ts`.
