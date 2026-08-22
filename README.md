@@ -166,6 +166,28 @@ worth knowing about:
 
 `pnpm test` had therefore never passed end to end in this repository before this change.
 
+### Browser coverage
+
+`pnpm test:browser` (Playwright, `tests/browser/`) drives a real launch in Chromium: the shell verifies
+the descriptor, the module handshakes for a `MessagePort`, the quiz player fetches its content payload
+from its sandboxed opaque origin, and a completed attempt emits the `launched` → `answered` →
+`completed` chain into the Evidence API.
+
+It exists because this is the one hop the vitest suites cannot reach. The MCP smoke test builds xAPI
+statements and posts them to the Evidence API directly, so it stayed green while the module channel was
+broken for every module in the repository. Two of the four cases are regression guards for that fix and
+for the review finding on it: a document that replaces the module in its own iframe must not be able to
+take over the session, and a document with no launch nonce must not be able to open a channel at all.
+Both were verified to fail when the corresponding check is removed.
+
+The suite needs the player bundles built first:
+
+```sh
+pnpm --filter player-shell build && pnpm --filter quiz-player build && pnpm test:browser
+```
+
+Set `PLAYWRIGHT_CHROMIUM_PATH` to reuse a pre-installed Chromium, as `packages/admin-ui` does.
+
 ## Enforced anti-requirements
 
 The automated suite enforces all 15 MVP controls: descriptor PII rejection; pinned player references; immutable package-version UUIDs; launch idempotency required and replayed; runtime token audience; evidence actor binding; statement UUID validation and deduplication; no wildcard or unlisted postMessage origins; iframe sandbox isolation; sensitive-log redaction; no wildcard CORS; and legal attempt transitions. See `tests/anti-requirements/README-anti-requirements.md`. Approximately 75 wider LORB-001 anti-requirements remain explicitly out of this MVP.
