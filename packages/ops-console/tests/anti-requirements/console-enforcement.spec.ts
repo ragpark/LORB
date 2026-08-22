@@ -1,3 +1,9 @@
+// @vitest-environment node
+//
+// This suite reads its subjects off disk as text rather than rendering them, so it must run in the
+// node environment: under the package's default jsdom environment `import.meta.url` is an http: URL
+// and readFileSync(new URL(...)) throws ERR_INVALID_URL_SCHEME. The package default stays jsdom for
+// component tests.
 import {describe,expect,it} from 'vitest';
 import {containsSensitiveField,redactHeaders,sanitise} from '../../src/security.js';
 import {apiUrl} from '../../src/api.js';

@@ -1,0 +1,95 @@
+# Continuous integration for the LORB-001 MVP.
+#
+# This does not confer any approval: the repository remains DRAFT, uncertified, and local-dev only,
+# and every open blocker stays open. It exists so the enforced anti-requirements suite actually guards
+# something on a pull request instead of only when someone remembers to run it by hand.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push to the same branch supersedes an in-flight run; main is never cancelled so its history
+# stays complete.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build, typecheck and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # The Administration workspace suite talks to a real Postgres. Without one, eight tests fail and
+    # the suite is worthless as a gate — these credentials match .env.example and the admin suite's
+    # own default DATABASE_URL.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lorb
+          POSTGRES_PASSWORD: lorb
+          POSTGRES_DB: lorb_mvp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lorb -d lorb_mvp"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://lorb:lorb@localhost:5432/lorb_mvp
+      # Deterministic non-secret values. Nothing here is, or may become, a real credential: the
+      # pseudonym secret only has to be 32 hex bytes for the runtime to start, and no CI job reaches a
+      # real environment.
+      PSEUDONYM_TENANT_SECRET: "0000000000000000000000000000000000000000000000000000000000000001"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply migrations and seed
+        run: pnpm db:setup
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      # Includes the 15 enforced anti-requirements, the Administration workspace DB suite, the MCP
+      # connector end-to-end smoke test, and the player shell postMessage origin policy.
+      - name: Test
+        run: pnpm test
+
+      # Built separately from `pnpm build`, which covers only the workspaces the Runtime API image
+      # needs. These three produce the Player Shell origin's static bundles, so a break here means a
+      # launch that cannot render even though everything above is green.
+      - name: Build player bundles
+        run: |
+          pnpm --filter player-shell build
+          pnpm --filter quiz-player build
+          pnpm --filter example-react-xapi-experience build
+
+      - name: Validate docker-compose
+        env:
+          RUNTIME_INTERNAL_SERVICE_TOKEN: ci-placeholder-service-token-0000000000
+          MCP_POC_BEARER_TOKEN: ci-placeholder-agent-bearer-token-000000
+        run: docker compose config --quiet
