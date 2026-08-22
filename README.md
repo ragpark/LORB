@@ -80,6 +80,23 @@ launch path uses, so a learner's assignment and that learner's own login resolve
 second, raw-identifier actor scheme was introduced: the Runtime store holds pseudonyms only, and
 resolving a pseudonym back to a named learner happens solely in the teacher-facing tool result.
 
+### Trying it with Claude
+
+`docker compose up -d` (with `PSEUDONYM_TENANT_SECRET`, `RUNTIME_INTERNAL_SERVICE_TOKEN`, and
+`MCP_POC_BEARER_TOKEN` in `.env`) brings the connector up on `:4200`. Claude Code can then connect to
+it directly, because it speaks the streamable HTTP transport and can send the static bearer header
+this PoC mode needs:
+
+```sh
+claude mcp add --transport http lorb http://127.0.0.1:4200/mcp \
+  --header "Authorization: Bearer $MCP_POC_BEARER_TOKEN"
+```
+
+claude.ai and Claude Desktop custom connectors are **not** supported: they require a public HTTPS URL
+and OAuth-based authorization discovery, neither of which this PoC implements. Full runbook, including
+the seeded class identifiers and a no-Docker fallback, is in
+[`packages/mcp-connector/README.md`](packages/mcp-connector/README.md#trying-it-with-claude).
+
 ### Roster stub
 
 `packages/stub-roster` is a new non-production stub, labelled like `stub-ies`: LORB-001 has no class,
