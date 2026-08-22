@@ -88,6 +88,28 @@ jobs:
           pnpm --filter quiz-player build
           pnpm --filter example-react-xapi-experience build
 
+      # The player bundles must exist before this step; the browser suite starts its own Runtime API
+      # and static player origin and drives a real launch. Only Chromium is installed — the suite
+      # pins no other browser and downloading three would triple this step.
+      - name: Install Chromium for the browser suite
+        run: pnpm exec playwright install --with-deps chromium
+
+      # Covers the Player Shell to module channel: the one hop the vitest suites cannot reach, because
+      # the sandbox semantics that break it exist only in a real browser. The MCP smoke test posts xAPI
+      # statements directly and so stayed green while that channel was entirely broken.
+      - name: Browser tests
+        run: pnpm test:browser
+
+      - name: Upload browser test artefacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
       - name: Validate docker-compose
         env:
           RUNTIME_INTERNAL_SERVICE_TOKEN: ci-placeholder-service-token-0000000000
