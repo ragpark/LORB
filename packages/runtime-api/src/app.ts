@@ -14,6 +14,10 @@ import { registerAdminLaunchPolicyRoutes } from "./routes/admin/launch-policies.
 import { registerAdminApprovalRoutes } from "./routes/admin/approvals.js";
 import { registerAdminAuditRoutes } from "./routes/admin/audit.js";
 import { correlationOf, requireAdmin, requireIdempotencyKey, sendAdminError } from "./routes/admin/shared.js";
+import { learningObjectById, learningObjects, packageVersionById, packageVersions, quizContentByObjectId, REPOSITORY } from "./services/catalogue.js";
+import { checkServiceCredential, sendInternalError } from "./routes/internal/service-auth.js";
+import { registerInternalQuizRoutes } from "./routes/internal/quizzes.js";
+import { registerInternalLaunchBatchRoutes } from "./routes/internal/launch-batch.js";
 
 const problem=(code:string,status:number,correlation_id:string)=>({type:`https://lorb.example/errors/${code}`,title:code==="AUTHENTICATION_EXPIRED"?"Your session has expired":"We could not complete that request",status,code,detail:code==="AUTHENTICATION_EXPIRED"?"Sign in again to continue":"Please check the request and try again",correlation_id,retryable:status>=500,field_errors:[]});
 const defaultConsumerOrigins=["http://localhost:3300","http://localhost:5176","https://lorb-production-consumer.up.railway.app","https://lorb-production-console.up.railway.app","https://lorb-production-beda.up.railway.app"];
@@ -21,7 +25,7 @@ function allowedConsumerOrigins(){
  const configured=process.env.ALLOWED_CONSUMER_ORIGINS;
  return new Set([...defaultConsumerOrigins,...(configured?.split(",")??[])].map(origin=>origin.trim()).filter(Boolean));
 }
-export interface RuntimeOptions {iesKey?:KeyLike;secret?:Buffer;iesIssuer?:string;iesJwksUrl?:string;publicIssuer?:string;playerOrigin?:string;evidenceEndpoint?:string;packageUrl?:string}
+export interface RuntimeOptions {iesKey?:KeyLike;secret?:Buffer;iesIssuer?:string;iesJwksUrl?:string;publicIssuer?:string;playerOrigin?:string;evidenceEndpoint?:string;packageUrl?:string;internalServiceToken?:string}
 export async function buildRuntime(options:RuntimeOptions={}){
  const app=Fastify({logger:false,bodyLimit:65536}); const keys=await signingKeys();
  app.addContentTypeParser("application/json",{parseAs:"string"},(_req,body,done)=>{if(typeof body!=="string"||body.length===0)return done(null,undefined);try{done(null,JSON.parse(body));}catch(error){done(error as Error,undefined);}});
@@ -35,27 +39,17 @@ export async function buildRuntime(options:RuntimeOptions={}){
  const browserOrigins=new Set([...consumerOrigins,playerOrigin]);
  // The Player Shell iframe is sandboxed without allow-same-origin (see anti-requirements), so its own
  // fetches to these routes (JWKS verification, state, completion) arrive with an opaque "null" Origin.
- const playerShellRoute=(url:string)=>{const path=url.split("?")[0]??url;return path==="/api/v1/runtime/jwks"||/^\/api\/v1\/runtime\/attempts\/[^/]+\/(state|complete)$/.test(path)};
+ // The quiz player is JSON-content-driven: it fetches its own question payload from the route below.
+ // Like the JWKS/state/complete routes it is therefore reached from the sandboxed iframe's opaque
+ // "null" origin. This widens the null-origin CORS exception by one read-only route; it does not
+ // introduce a wildcard, and it is a change to CORS enforcement that needs human LORB-001 re-review.
+ const playerShellRoute=(url:string)=>{const path=url.split("?")[0]??url;return path==="/api/v1/runtime/jwks"||/^\/api\/v1\/runtime\/attempts\/[^/]+\/(state|complete)$/.test(path)||/^\/api\/v1\/runtime\/learning-objects\/[^/]+\/content$/.test(path)};
  await app.register(helmet);
  await app.register(cors,{delegator:(req,cb)=>{const allowOpaqueShellOrigin=playerShellRoute(req.url);cb(null,{origin:(origin,originCb)=>originCb(null,!origin||browserOrigins.has(origin)||(allowOpaqueShellOrigin&&origin==="null"))});}});
  app.get("/api/v1/runtime/jwks",async()=>({keys:[keys.publicJwk]}));
- // STUB — NOT PRODUCTION — BLOCKED BY BLK-03. These synthetic projections stand in for the unresolved Postgres repository layer.
- const repository={repository_id:"b6f1c9d2-6e3a-4f1b-9a7d-1e2f3a4b5c6d",slug:"maths-foundations",display_name:"Maths foundations",status:"ACTIVE",created_at:"2026-08-12T09:14:00.000Z"};
- // Three synthetic learning content examples for presentation in the Player Shell: the original
- // native-web-package activity, a React web experience that emits xAPI evidence, and a chatbot-like
- // coaching tool. Each carries its own module_path so /launches can route to distinct content.
- const learningObjects=[
-  {object_id:"c8a2d3e4-7f4b-4a2c-8b6e-2f3a4b5c6d7e",repository_id:repository.repository_id,status:"PUBLISHED",active_object_version_id:"d9b3e4f5-8a5c-4b3d-9c7f-3a4b5c6d7e8f",active_package_version_id:"eaa4f506-9b6d-4c4e-ad80-4b5c6d7e8f90",created_at:"2026-08-12T09:22:00.000Z",title:"Maths foundations: ratios and proportion",description:"A native-web-package activity with a single completion checkpoint.",duration:"20 minutes",kind:"native-web-package",module_path:"/module/index.html"},
-  {object_id:"9fa1bff9-e205-44ee-a08d-df208bb1c8c4",repository_id:repository.repository_id,status:"PUBLISHED",active_object_version_id:"7e08c389-8166-400c-920a-4d2d6166fce3",active_package_version_id:"6978ab59-f291-4de4-ac25-d51218fc3751",created_at:"2026-08-13T11:05:00.000Z",title:"Reflective Practice Studio",description:"A React web experience that emits xAPI statements for delivery to the LORB learning record store.",duration:"8 minutes",kind:"react-xapi-experience",module_path:"/modules/reflective-practice-studio/index.html"},
-  {object_id:"1d3cf15e-653b-446e-8398-a7b5fe0d32d9",repository_id:repository.repository_id,status:"PUBLISHED",active_object_version_id:"9592a8f2-e82b-48ea-b5a4-a0fa909ec111",active_package_version_id:"7a78d88e-4ef2-4bce-a4a7-8b4d19d22013",created_at:"2026-08-13T11:12:00.000Z",title:"Career Coach Check-in",description:"A chatbot-style coaching tool that guides a learner through a short reflective conversation.",duration:"5 minutes",kind:"coaching-chatbot",module_path:"/modules/career-coach-chat/index.html"},
- ];
- const packageVersions=[
-  {package_version_id:"eaa4f506-9b6d-4c4e-ad80-4b5c6d7e8f90",object_id:"c8a2d3e4-7f4b-4a2c-8b6e-2f3a4b5c6d7e",semver:"1.4.0",sha256:"4f3c9a182fd1b953",delivery_profile:"native-web-package",status:"PUBLISHED",published_at:"2026-08-12T10:04:00.000Z"},
-  {package_version_id:"6978ab59-f291-4de4-ac25-d51218fc3751",object_id:"9fa1bff9-e205-44ee-a08d-df208bb1c8c4",semver:"1.0.0",sha256:"62f030c5bd0f1fd606f1548a3070797730d025cb330e32837519098c44f0bd13",delivery_profile:"native-web-package",status:"PUBLISHED",published_at:"2026-08-13T11:06:00.000Z"},
-  {package_version_id:"7a78d88e-4ef2-4bce-a4a7-8b4d19d22013",object_id:"1d3cf15e-653b-446e-8398-a7b5fe0d32d9",semver:"1.0.0",sha256:"4ae991392399628e60ae327c2215fddbf5d082c80ff9aaf6e9f047886f6edd8b",delivery_profile:"native-web-package",status:"PUBLISHED",published_at:"2026-08-13T11:13:00.000Z"},
- ];
- const learningObjectById=new Map(learningObjects.map(o=>[o.object_id,o]));
- const packageVersionById=new Map(packageVersions.map(p=>[p.package_version_id,p]));
+ // STUB — NOT PRODUCTION — BLOCKED BY BLK-03. Synthetic catalogue projections live in
+ // services/catalogue.ts so the internal quiz-authoring surface can extend them; see that file.
+ const repository=REPOSITORY;
  // Smart links: a durable, revocable, pseudonymous deep link into the Player Shell for one PUBLISHED
  // learning object, so it can be shared outside the consumer + IES login flow. Redemption below reuses
  // issueDescriptor/computePseudonym unchanged — it does not stand up a new identity provider — but it
@@ -70,9 +64,18 @@ export async function buildRuntime(options:RuntimeOptions={}){
  const envelope=(items:unknown[],req:any)=>({items,next_cursor:null,correlation_id:typeof req.headers["x-correlation-id"]==="string"?req.headers["x-correlation-id"]:randomUUID()});
  app.get("/api/v1/runtime/repositories",async req=>envelope([repository],req));
  app.get("/api/v1/runtime/repositories/:repositoryId",async(req:any,reply)=>req.params.repositoryId===repository.repository_id?repository:reply.code(404).send(problem("OBJECT_NOT_FOUND",404,randomUUID())));
- app.get("/api/v1/runtime/learning-objects",async(req:any)=>envelope(!req.query.repository_id||req.query.repository_id===repository.repository_id?learningObjects:[],req));
+ app.get("/api/v1/runtime/learning-objects",async(req:any)=>envelope(!req.query.repository_id||req.query.repository_id===repository.repository_id?learningObjects():[],req));
  app.get("/api/v1/runtime/learning-objects/:objectId",async(req:any,reply)=>learningObjectById.get(req.params.objectId)??reply.code(404).send(problem("OBJECT_NOT_FOUND",404,randomUUID())));
- app.get("/api/v1/runtime/package-versions",async(req:any)=>envelope(!req.query.object_id?packageVersions:packageVersions.filter(p=>p.object_id===req.query.object_id),req));
+ // Learner-facing quiz content. Read-only, and the *only* place the marking key is served: the quiz
+ // player marks client-side (a stated PoC limitation), so the payload carries correct_option_id.
+ // Nothing on the agent-facing MCP surface ever returns this route's body.
+ app.get("/api/v1/runtime/learning-objects/:objectId/content",async(req:any,reply)=>{
+  const object=learningObjectById.get(req.params.objectId);
+  const content=quizContentByObjectId.get(req.params.objectId);
+  if(!object||object.status!=="PUBLISHED"||!content)return reply.code(404).type("application/problem+json").send(problem("OBJECT_NOT_FOUND",404,randomUUID()));
+  return reply.header("cache-control","no-store").send({...content,package_version_id:object.active_package_version_id});
+ });
+ app.get("/api/v1/runtime/package-versions",async(req:any)=>envelope(!req.query.object_id?packageVersions():packageVersions().filter(p=>p.object_id===req.query.object_id),req));
  app.get("/api/v1/runtime/package-versions/:packageVersionId",async(req:any,reply)=>packageVersionById.get(req.params.packageVersionId)??reply.code(404).send(problem("OBJECT_NOT_FOUND",404,randomUUID())));
  app.get("/api/v1/runtime/attempts",async(req:any)=>envelope([...store.attempts.values()].filter(a=>!req.query.repository_id||a.repository_id===req.query.repository_id).map(a=>({...a,pseudonymous_subject_id:a.pseudonym,correlation_id:null})),req));
  app.get("/api/v1/runtime/attempts/:attemptId",async(req:any,reply)=>store.attempts.get(req.params.attemptId)??reply.code(404).send(problem("OBJECT_NOT_FOUND",404,randomUUID())));
@@ -110,7 +113,7 @@ export async function buildRuntime(options:RuntimeOptions={}){
  // STUB — NOT PRODUCTION — BLOCKED BY BLK-03. Read-only administration projection of the same non-production
  // catalogue exposed at /api/v1/runtime/learning-objects, so learning content examples are discoverable from
  // the Administration workspace without requiring the unresolved Postgres content-authoring flow.
- app.get("/api/v1/admin/learning-objects",async(req:any,reply:any)=>{const principal=await requireAdmin(req,reply,adminCtx,"learning_object.list","learning_object");if(!principal)return;return {items:learningObjects.map(o=>({...o,package_version:packageVersionById.get(o.active_package_version_id)})),next_cursor:null,correlation_id:correlationOf(req)};});
+ app.get("/api/v1/admin/learning-objects",async(req:any,reply:any)=>{const principal=await requireAdmin(req,reply,adminCtx,"learning_object.list","learning_object");if(!principal)return;return {items:learningObjects().map(o=>({...o,package_version:packageVersionById.get(o.active_package_version_id)})),next_cursor:null,correlation_id:correlationOf(req)};});
  // Smart link management. Kept in-memory alongside the learning-object catalogue above (also a stub
  // blocked by BLK-03) rather than the Postgres-backed admin tables, since it governs that same
  // non-production catalogue and has no repository to bind a membership check to.
@@ -144,6 +147,12 @@ export async function buildRuntime(options:RuntimeOptions={}){
   smartLinksByToken.delete(link.token);
   return smartLinkResponse(link,correlation);
  });
+ // Internal service-to-service surface. Separate credential, separate path prefix, browser-origin
+ // requests refused. See routes/internal/service-auth.ts for why this needs human LORB-001 re-review.
+ const internalServiceToken=options.internalServiceToken??process.env.RUNTIME_INTERNAL_SERVICE_TOKEN;
+ const internalGuard=(req:any,reply:any,correlation:string)=>{const failure=checkServiceCredential(req,internalServiceToken);if(!failure)return true;void sendInternalError(reply,failure,correlation);return false;};
+ registerInternalQuizRoutes(app,internalGuard);
+ registerInternalLaunchBatchRoutes(app,{serviceToken:internalServiceToken,privateKey:keys.privateKey,secret,iesIssuer,publicIssuer,playerOrigin,evidenceEndpoint},internalGuard);
  registerAdminRepositoryRoutes(app,adminCtx);
  registerAdminMembershipRoutes(app,adminCtx);
  registerAdminPlayerRoutes(app,adminCtx);

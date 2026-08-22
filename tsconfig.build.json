@@ -12,6 +12,7 @@
     "packages/ops-console",
     "packages/mock-consumer",
     "packages/admin-ui",
-    "packages/example-react-xapi-experience"
+    "packages/example-react-xapi-experience",
+    "packages/quiz-player"
   ]
 }

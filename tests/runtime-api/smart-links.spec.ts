@@ -62,10 +62,10 @@ describe("Learning object smart links", () => {
 
     const first = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/smart-links/${token}` });
     const setCookie = (first.headers["set-cookie"] as string).split(";")[0];
-    const firstDescriptor = decodeJwt(decodeURIComponent((first.headers.location as string).split("#descriptor=")[1]));
+    const firstDescriptor = decodeJwt(decodeURIComponent((first.headers.location as string).split("#descriptor=")[1]!));
 
     const second = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/smart-links/${token}`, headers: { cookie: setCookie } });
-    const secondDescriptor = decodeJwt(decodeURIComponent((second.headers.location as string).split("#descriptor=")[1]));
+    const secondDescriptor = decodeJwt(decodeURIComponent((second.headers.location as string).split("#descriptor=")[1]!));
 
     expect(secondDescriptor.sub).toBe(firstDescriptor.sub);
     expect(secondDescriptor.attempt_id).not.toBe(firstDescriptor.attempt_id);

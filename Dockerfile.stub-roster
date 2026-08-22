@@ -15,5 +15,5 @@ WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 USER node
-EXPOSE 4000
-CMD ["node","dist/packages/stub-ies/src/server.js"]
+EXPOSE 4100
+CMD ["node","dist/packages/stub-roster/src/server.js"]
