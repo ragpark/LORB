@@ -26,3 +26,27 @@ non-negotiables the connector was built against:
 Three changes this work makes to enforced surfaces — the widened xAPI verb/result contract, the added
 null-origin CORS route, and the new internal service-credentialled Runtime routes — are listed for human
 LORB-001 re-review in the repository README and are not treated as reviewed by these tests passing.
+
+
+## postMessage origin policy (player shell)
+
+`originAllowed` implements two of the 15 controls: wildcard postMessage rejection and allow-listed
+postMessage origins. It was changed to also accept the **opaque** origin a correctly sandboxed module
+reports, authenticated by window identity instead of by origin string. This is a change to
+anti-requirement enforcement and needs human LORB-001 re-review; it is covered by
+`tests/player-shell/postmessage.spec.ts`.
+
+Why: a module runs in `sandbox="allow-scripts"` without `allow-same-origin`, so its document has an
+opaque origin that the browser reports to the receiver as the literal string `"null"`. That can never
+equal the pinned package origin, so the shell was silently dropping **every** message from every
+correctly sandboxed module — completions included. The sandbox anti-requirement and the origin
+anti-requirement were, in combination, making the module channel inoperable.
+
+What is unchanged: a wildcard origin is still refused outright, and a *concrete* origin must still be
+both allow-listed and equal to the origin the iframe was actually navigated to. What is added: when the
+origin is opaque, the shell requires `event.source === frame.contentWindow` — a live window reference
+the browser supplies, which no other document can forge. That is a stronger check than a claimed
+origin string, not a weaker one.
+
+The reverse direction (shell to module) uses a `MessageChannel` rather than a wildcard `postMessage`,
+so no wildcard target is introduced anywhere.

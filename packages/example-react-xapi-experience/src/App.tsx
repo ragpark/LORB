@@ -25,30 +25,48 @@ const PROMPTS = [
   "What is one thing you would like more support with?",
 ];
 
-/** The Player Shell embeds this module in a sandboxed iframe without allow-same-origin, so the
- * shell itself reports as the opaque origin "null". Accept "null" or the referrer's real origin —
- * never a wildcard. */
+/**
+ * Handshake with the Player Shell.
+ *
+ * The module opens a MessageChannel, keeps one port, and hands the other to the shell inside a
+ * `module.hello` message; `shell.context` comes back down that port and evidence goes out on it.
+ *
+ * The shell cannot postMessage *into* a correctly sandboxed module: without `allow-same-origin` the
+ * module's origin is opaque, so a message aimed at the package origin is dropped by the browser and
+ * only "*" would arrive. A port needs no target origin at all — it is reachable only by its two
+ * endpoints. The outbound `module.hello` still targets the shell's exact origin; no wildcard is used
+ * in either direction.
+ */
 function shellOrigin(): string | null {
   return document.referrer ? new URL(document.referrer).origin : null;
 }
 
-function emitToShell(type: string, payload: Record<string, unknown>, correlationId?: string) {
+function envelope(type: string, payload: Record<string, unknown>, correlationId?: string) {
+  return {
+    protocol: "lorb-player",
+    version: "1.0",
+    type,
+    message_id: crypto.randomUUID(),
+    correlation_id: correlationId ?? crypto.randomUUID(),
+    reply_to: null,
+    sent_at: new Date().toISOString(),
+    payload,
+  };
+}
+
+function connectToShell(onContext: (context: ShellContext, port: MessagePort) => void): () => void {
   const origin = shellOrigin();
-  if (!origin) return false;
-  parent.postMessage(
-    {
-      protocol: "lorb-player",
-      version: "1.0",
-      type,
-      message_id: crypto.randomUUID(),
-      correlation_id: correlationId ?? crypto.randomUUID(),
-      reply_to: null,
-      sent_at: new Date().toISOString(),
-      payload,
-    },
-    origin,
-  );
-  return true;
+  if (!origin) return () => undefined;
+  const channel = new MessageChannel();
+  const port = channel.port1;
+  port.onmessage = (event: MessageEvent) => {
+    const data = event.data as { protocol?: string; type?: string; payload?: ShellContext } | null;
+    if (!data || data.protocol !== "lorb-player" || data.type !== "shell.context" || !data.payload) return;
+    onContext(data.payload, port);
+  };
+  port.start();
+  parent.postMessage(envelope("module.hello", {}), origin, [channel.port2]);
+  return () => port.close();
 }
 
 function buildStatement(context: ShellContext): XapiStatement {
@@ -72,33 +90,28 @@ function buildStatement(context: ShellContext): XapiStatement {
 
 export function App() {
   const [context, setContext] = useState<ShellContext>();
+  const [port, setPort] = useState<MessagePort>();
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState<string[]>(["", "", ""]);
   const [statement, setStatement] = useState<XapiStatement>();
   const [emitFailed, setEmitFailed] = useState(false);
 
-  useEffect(() => {
-    function onMessage(event: MessageEvent) {
-      const data = event.data as { protocol?: string; type?: string; payload?: ShellContext } | null;
-      if (!data || data.protocol !== "lorb-player" || data.type !== "shell.context" || !data.payload) return;
-      const expected = shellOrigin();
-      if (event.origin !== "null" && event.origin !== expected) return;
-      setContext(data.payload);
-    }
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, []);
+  useEffect(() => connectToShell((received, openPort) => {
+    setContext(received);
+    setPort(openPort);
+  }), []);
 
   const submit = () => {
-    if (!context) return;
-    const built = buildStatement(context);
-    const sent = emitToShell("evidence.emit", { statement: built }, context.correlation_id);
-    if (!sent) {
+    if (!context || !port) {
       setEmitFailed(true);
       return;
     }
+    // Moves the attempt CREATED -> STARTED; the Runtime only accepts a completion from STARTED.
+    port.postMessage(envelope("state.put", { state: { answers, submitted: true } }, context.correlation_id));
+    const built = buildStatement(context);
+    port.postMessage(envelope("evidence.emit", { statement: built }, context.correlation_id));
     setStatement(built);
-    emitToShell("experience.complete", {}, context.correlation_id);
+    port.postMessage(envelope("experience.complete", {}, context.correlation_id));
   };
 
   return (

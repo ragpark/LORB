@@ -98,6 +98,20 @@ and OAuth-based authorization discovery, neither of which this PoC implements. F
 the seeded class identifiers and a no-Docker fallback, is in
 [`packages/mcp-connector/README.md`](packages/mcp-connector/README.md#trying-it-with-claude).
 
+### Player Shell module channel
+
+The shell relays launch context to an embedded module, and receives state, evidence, and completion
+back. Both directions are constrained by the sandbox: a module runs without `allow-same-origin`, so its
+origin is opaque. A `postMessage` aimed at the package origin never reaches it, and messages it sends
+arrive with the origin string `"null"`.
+
+Modules that need launch context now open a `MessageChannel` and hand one port to the shell in a
+`module.hello` message; the shell replies `shell.context` down that port and listens on it afterwards.
+A port needs no target origin at all, so no wildcard is introduced. `originAllowed` additionally accepts
+the opaque origin when `event.source` is the shell's own iframe window — **a change to
+anti-requirement enforcement, flagged for human LORB-001 re-review** and documented in
+[`tests/anti-requirements/README-anti-requirements.md`](tests/anti-requirements/README-anti-requirements.md).
+
 ### Roster stub
 
 `packages/stub-roster` is a new non-production stub, labelled like `stub-ies`: LORB-001 has no class,
