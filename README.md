@@ -146,6 +146,26 @@ The public URL is an API, not a browser UI; the root response is an endpoint ind
 
 The migration and seed make PostgreSQL ready and verify its connection during pre-deploy, but the current Runtime API still uses its in-memory MVP store. Attempts and evidence are therefore lost on restart. PostgreSQL-backed request handling is follow-up work; the seeded rows must not be represented as end-to-end persistence support. To rerun setup locally, set `DATABASE_URL` and run `pnpm db:setup`.
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every pull request and on pushes to `main`: install, migrate,
+typecheck, build, the full test suite, the Player Shell static bundles, and a `docker compose config`
+validation. It confers no approval — the repository stays DRAFT, uncertified, and local-dev only, and
+every open blocker below stays open. It exists so the enforced anti-requirements guard something
+automatically rather than only when someone remembers to run them.
+
+The job runs a **Postgres 16 service container**, because the Administration workspace suite needs a
+real database. Two pre-existing faults had to be fixed for the suite to be green at all, and both are
+worth knowing about:
+
+- Without Postgres, eight tests in `tests/runtime-api/admin-enforcement.spec.ts` fail. They were not
+  broken — they simply had no database. With one, the root suite is 123/123.
+- `packages/ops-console` declared `environment: "jsdom"` without depending on `jsdom`, so its suite
+  could not run. `jsdom` is now a declared devDependency, and the source-reading enforcement spec
+  carries `// @vitest-environment node` because under jsdom `import.meta.url` is not a `file:` URL.
+
+`pnpm test` had therefore never passed end to end in this repository before this change.
+
 ## Enforced anti-requirements
 
 The automated suite enforces all 15 MVP controls: descriptor PII rejection; pinned player references; immutable package-version UUIDs; launch idempotency required and replayed; runtime token audience; evidence actor binding; statement UUID validation and deduplication; no wildcard or unlisted postMessage origins; iframe sandbox isolation; sensitive-log redaction; no wildcard CORS; and legal attempt transitions. See `tests/anti-requirements/README-anti-requirements.md`. Approximately 75 wider LORB-001 anti-requirements remain explicitly out of this MVP.
