@@ -11,6 +11,9 @@ COPY package.json pnpm-workspace.yaml ./
 # React, Vite, and type packages are present when the workspace build runs.
 COPY packages/ops-console/package.json ./packages/ops-console/package.json
 COPY packages/mock-consumer/package.json ./packages/mock-consumer/package.json
+# The workspace tsc build below also compiles packages/mcp-connector, whose MCP SDK dependency must
+# therefore be installed before `COPY packages` — same reason as the frontend manifests above.
+COPY packages/mcp-connector/package.json ./packages/mcp-connector/package.json
 RUN pnpm install --no-frozen-lockfile
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src

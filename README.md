@@ -22,9 +22,78 @@ Opening the link (`GET /api/v1/runtime/smart-links/:token` on the Runtime API) m
 
 This intentionally lets a learner reach the Player Shell without an IES-issued token, which is a **material change to the launch surface** under this repository's own governance rule below, and needs the same human LORB-001 re-review as any other change to the launch descriptor or pseudonymisation function. It does not add a new identity provider or entitlement engine — it reuses the existing descriptor issuance and HMAC pseudonym derivation unchanged, only skipping the IES login step — but the tradeoff (anyone holding the link can launch the object, indefinitely, anonymously) should be named explicitly rather than treated as a detail.
 
+## MCP agent connector (proof of concept)
+
+> **PoC ONLY — NOT CERTIFIED — LOCAL DEV / REVIEW ENVIRONMENT ONLY.** This capability is at the same
+> maturity level as the rest of this repository. It clears no open blocker below.
+
+`packages/mcp-connector` is a remote MCP server (streamable HTTP transport) that lets a teacher's AI
+agent draft a quiz, register it as a LORB learning object, assign it to a class, and read back
+aggregated results — through the real Runtime and Evidence pipeline, not a mock of it. See
+[`packages/mcp-connector/README.md`](packages/mcp-connector/README.md) for the full description.
+
+**Two trust domains, kept apart.** The connector authenticates the *teacher's agent session* with a
+single pre-shared bearer token per environment (`AUTH_MODE=poc`), compared in constant time. That is a
+different actor, with a different lifetime and a different blast radius, from the learner identities
+the synthetic IES issues (short-lived ES256 tokens scoped to `lorb-runtime` for one launch). They
+share no token, no scope, and no signing key; the connector refuses to start if the agent token and
+the Runtime internal-service credential are configured to the same value. This is **not** the OAuth
+2.1 flow the MCP authorization specification expects of a production remote server.
+
+**Quizzes are data, not code.** `packages/quiz-player` is one reusable, already-reviewed player
+package that renders a structured JSON content payload attached to a learning object. `create_quiz`
+creates a new object plus content payload and points it at that same fixed package version — an agent
+never generates or registers a JavaScript bundle, so there is no per-quiz code-injection surface. The
+answer key is stored for the player to mark against and is served only on the learner-facing content
+route; it is never returned by any MCP tool or resource.
+
+**Smart links are deliberately not used for assignments.** They are durable, revocable, login-free,
+and bind to a pseudonymous cookie. Anonymous indefinite access is the wrong trust model for a graded
+class assignment, so `assign_quiz` goes through an authenticated internal launch path instead and
+never returns a launch descriptor or player URL to the agent.
+
+### Changes flagged for human LORB-001 re-review
+
+This capability makes four changes that the governance rule at the end of this README covers. They are
+named here rather than left implicit; none should be treated as reviewed:
+
+1. **New internal authenticated surface on the Runtime API.** `POST /api/v1/internal/runtime/quizzes`
+   and `POST /api/v1/internal/runtime/launch-batch` accept a pre-shared service credential, fail
+   closed when it is unset, and refuse any request carrying an `Origin` header. This is a new trust
+   boundary on the launch surface and needs the same re-review a smart link did.
+2. **The xAPI statement contract now accepts `launched` and `answered` alongside `completed`**, plus an
+   optional `result` object (`response`, `success`, `completion`, `score.scaled`). `response` is
+   constrained to an option identifier so a marking result cannot carry learner-authored free text.
+   This widens an enforced anti-requirement surface.
+3. **The null-origin CORS exception gained one read-only route**,
+   `GET /api/v1/runtime/learning-objects/:objectId/content`, so the sandboxed player iframe can fetch
+   its own content payload. No wildcard is introduced, but this is a change to CORS enforcement.
+4. **The Evidence API is now mounted on the Runtime API's listener** in the local and review-environment
+   host (`src/server.ts`). The MVP evidence store is process-local in-memory state that the Evidence
+   API imports from the Runtime API's core module, and it verifies descriptors with the Runtime's own
+   signing key, so the two cannot be split across processes. This puts the Evidence API on the Runtime
+   service's public surface.
+
+The launch descriptor schema and the pseudonymisation function are **unchanged**. Batch-assigned
+learners are pseudonymised with exactly the function, secret, issuer, and purpose the IES-authenticated
+launch path uses, so a learner's assignment and that learner's own login resolve to one actor. No
+second, raw-identifier actor scheme was introduced: the Runtime store holds pseudonyms only, and
+resolving a pseudonym back to a named learner happens solely in the teacher-facing tool result.
+
+### Roster stub
+
+`packages/stub-roster` is a new non-production stub, labelled like `stub-ies`: LORB-001 has no class,
+cohort, or roster concept of its own. It is seeded with two synthetic classes and their recent topics.
+
 ## How to run
 
 Use Node.js 20 and pnpm 9. Copy `.env.example` to `.env`, replace the pseudonym placeholder with 32 random bytes encoded as hex, and create the configured P-256 private key. Then run `docker compose up -d`, `pnpm install`, `pnpm build`, `pnpm test`, and `pnpm dev`. This starts the Runtime API, Evidence API, player shell, evidence forwarder, stub IES, and stub LRS for local development only.
+
+`docker compose up -d` also builds the Runtime API, synthetic IES, synthetic roster stub, Player Shell,
+and MCP connector as containers for manual proof-of-concept use. It requires `PSEUDONYM_TENANT_SECRET`,
+`RUNTIME_INTERNAL_SERVICE_TOKEN`, and `MCP_POC_BEARER_TOKEN` in `.env` and refuses to start without
+them. The end-to-end MCP smoke test (`tests/mcp-connector/mcp-smoke.spec.ts`) runs the same services
+in-process under `pnpm test`, so it is deterministic and needs no containers.
 
 ## Railway deployment (review environments only)
 
