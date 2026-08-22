@@ -1,9 +1,23 @@
-<!doctype html><html lang="en-GB"><body><button id="complete">Complete</button><script>
-// The shell is the embedding document, so its exact origin comes from document.referrer — never a
-// wildcard. The previous hard-coded localhost origin only ever worked in local development.
-const shell=document.referrer?new URL(document.referrer).origin:'http://localhost:3200';
-const send=(type,payload)=>parent.postMessage({protocol:'lorb-player',version:'1.0',type,message_id:crypto.randomUUID(),correlation_id:crypto.randomUUID(),reply_to:null,sent_at:new Date().toISOString(),payload},shell);
-// state.put first: it is what moves the attempt CREATED -> STARTED, and the Runtime only accepts a
-// completion from STARTED.
-document.querySelector('#complete').onclick=()=>{send('state.put',{state:{acknowledged:true}});send('experience.complete',{})};
+<!doctype html><html lang="en-GB"><body><button id="complete">Complete</button><p id="status"></p><script>
+// The shell hands every module a MessagePort in reply to a nonce-authenticated `module.hello`, and
+// listens for nothing else on the window. The nonce arrives in this document's URL fragment, so only
+// the document the shell navigated to can present it.
+(function(){
+  var shell=document.referrer?new URL(document.referrer).origin:null;
+  var nonce=(/(?:^#|&)lorb_handshake=([^&]+)/.exec(location.hash)||[])[1];
+  var statusEl=document.getElementById('status');
+  if(!shell||!nonce){statusEl.textContent='This activity must be opened inside the LORB Player Shell.';return;}
+  var envelope=function(type,payload){return {protocol:'lorb-player',version:'1.0',type:type,message_id:crypto.randomUUID(),correlation_id:crypto.randomUUID(),reply_to:null,sent_at:new Date().toISOString(),payload:payload};};
+  var channel=new MessageChannel();
+  var port=channel.port1;
+  port.start();
+  parent.postMessage(envelope('module.hello',{lorb_handshake:nonce}),shell,[channel.port2]);
+  // state.put first: it is what moves the attempt CREATED -> STARTED, and the Runtime only accepts a
+  // completion from STARTED.
+  document.querySelector('#complete').onclick=function(){
+    port.postMessage(envelope('state.put',{state:{acknowledged:true}}));
+    port.postMessage(envelope('experience.complete',{}));
+    statusEl.textContent='Completion sent.';
+  };
+})();
 </script></body></html>

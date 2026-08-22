@@ -21,6 +21,13 @@ function shellOrigin(): string | null {
   return document.referrer ? new URL(document.referrer).origin : null;
 }
 
+/** The shell places a per-launch nonce in this document's URL fragment; only the document it
+ * navigated to receives it. Presenting it proves we are that document and not a later one that
+ * replaced it in the same browsing context. */
+function handshakeNonce(): string | undefined {
+  return /(?:^#|&)lorb_handshake=([^&]+)/.exec(location.hash)?.[1];
+}
+
 function envelope(type: string, payload: Record<string, unknown>, correlationId?: string) {
   return {
     protocol: "lorb-player",
@@ -37,7 +44,8 @@ function envelope(type: string, payload: Record<string, unknown>, correlationId?
 /** Opens the channel and resolves with the port once the shell answers with `shell.context`. */
 function connectToShell(onContext: (context: ShellContext, port: MessagePort) => void): () => void {
   const origin = shellOrigin();
-  if (!origin) return () => undefined;
+  const nonce = handshakeNonce();
+  if (!origin || !nonce) return () => undefined;
   const channel = new MessageChannel();
   const port = channel.port1;
   port.onmessage = (event: MessageEvent) => {
@@ -46,7 +54,7 @@ function connectToShell(onContext: (context: ShellContext, port: MessagePort) =>
     onContext(data.payload, port);
   };
   port.start();
-  parent.postMessage(envelope("module.hello", {}), origin, [channel.port2]);
+  parent.postMessage(envelope("module.hello", { lorb_handshake: nonce }), origin, [channel.port2]);
   return () => port.close();
 }
 

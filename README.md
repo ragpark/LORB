@@ -105,12 +105,17 @@ back. Both directions are constrained by the sandbox: a module runs without `all
 origin is opaque. A `postMessage` aimed at the package origin never reaches it, and messages it sends
 arrive with the origin string `"null"`.
 
-Modules that need launch context now open a `MessageChannel` and hand one port to the shell in a
-`module.hello` message; the shell replies `shell.context` down that port and listens on it afterwards.
-A port needs no target origin at all, so no wildcard is introduced. `originAllowed` additionally accepts
-the opaque origin when `event.source` is the shell's own iframe window — **a change to
-anti-requirement enforcement, flagged for human LORB-001 re-review** and documented in
-[`tests/anti-requirements/README-anti-requirements.md`](tests/anti-requirements/README-anti-requirements.md).
+Modules therefore open a `MessageChannel` and request it in one `module.hello` message, authenticated
+by the shell's own iframe window, the origin shape, and a per-launch nonce the shell places in the
+iframe URL fragment. Everything afterwards travels on that port, which needs no target origin and is
+reachable only by its two endpoints — so no wildcard is introduced in either direction.
+
+`originAllowed`, which implements two of the enforced anti-requirements, is unchanged. The nonce is
+what binds a handshake to a document rather than merely to an iframe: a redirect or self-navigation
+keeps the same window and the same opaque origin. The shell also accepts one handshake per launch and
+ends the session if the document under an established channel changes. See
+[`tests/anti-requirements/README-anti-requirements.md`](tests/anti-requirements/README-anti-requirements.md)
+for the residual risk noted for review.
 
 ### Roster stub
 

@@ -36,14 +36,14 @@
 (function () {
   "use strict";
   var shellOrigin = document.referrer ? new URL(document.referrer).origin : null;
+  // The shell places a per-launch nonce in this document's URL fragment; presenting it in the
+  // handshake proves we are the document it navigated to, not a later one in the same iframe.
+  var handshakeNonce = (/(?:^#|&)lorb_handshake=([^&]+)/.exec(location.hash) || [])[1];
   var statusEl = document.getElementById("status");
+  var port = null;
 
-  function emit(type, payload) {
-    if (!shellOrigin) {
-      statusEl.textContent = "This activity must be opened inside the LORB Player Shell.";
-      return;
-    }
-    parent.postMessage({
+  function envelope(type, payload) {
+    return {
       protocol: "lorb-player",
       version: "1.0",
       type: type,
@@ -52,7 +52,24 @@
       reply_to: null,
       sent_at: new Date().toISOString(),
       payload: payload
-    }, shellOrigin);
+    };
+  }
+
+  if (shellOrigin && handshakeNonce) {
+    var channel = new MessageChannel();
+    port = channel.port1;
+    port.start();
+    parent.postMessage(envelope("module.hello", { lorb_handshake: handshakeNonce }), shellOrigin, [channel.port2]);
+  }
+
+  // Everything travels on the port the shell answered the handshake with; the window carries only the
+  // handshake itself.
+  function emit(type, payload) {
+    if (!port) {
+      statusEl.textContent = "This activity must be opened inside the LORB Player Shell.";
+      return;
+    }
+    port.postMessage(envelope(type, payload));
   }
 
   var transcript = document.getElementById("transcript");
@@ -124,6 +141,9 @@
 
   finishButton.addEventListener("click", function () {
     finishButton.disabled = true;
+    // state.put first: it is what moves the attempt CREATED -> STARTED, and the Runtime only accepts
+    // a completion from STARTED.
+    emit("state.put", { state: { conversation_finished: true } });
     emit("experience.complete", {});
   });
 

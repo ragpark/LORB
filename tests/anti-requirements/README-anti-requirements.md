@@ -30,23 +30,30 @@ LORB-001 re-review in the repository README and are not treated as reviewed by t
 
 ## postMessage origin policy (player shell)
 
-`originAllowed` implements two of the 15 controls: wildcard postMessage rejection and allow-listed
-postMessage origins. It was changed to also accept the **opaque** origin a correctly sandboxed module
-reports, authenticated by window identity instead of by origin string. This is a change to
-anti-requirement enforcement and needs human LORB-001 re-review; it is covered by
-`tests/player-shell/postmessage.spec.ts`.
+`originAllowed` implements two of the 15 controls — wildcard postMessage rejection and allow-listed
+postMessage origins — and is **unchanged**. It still refuses the opaque origin a sandboxed module
+reports, so no enforced control is relaxed.
 
-Why: a module runs in `sandbox="allow-scripts"` without `allow-same-origin`, so its document has an
-opaque origin that the browser reports to the receiver as the literal string `"null"`. That can never
-equal the pinned package origin, so the shell was silently dropping **every** message from every
-correctly sandboxed module — completions included. The sandbox anti-requirement and the origin
-anti-requirement were, in combination, making the module channel inoperable.
+Instead the module channel runs over a `MessageChannel`. A module opens the channel and asks for it in
+a single `module.hello` message authenticated by `handshakeAllowed`, which requires all of:
 
-What is unchanged: a wildcard origin is still refused outright, and a *concrete* origin must still be
-both allow-listed and equal to the origin the iframe was actually navigated to. What is added: when the
-origin is opaque, the shell requires `event.source === frame.contentWindow` — a live window reference
-the browser supplies, which no other document can forge. That is a stronger check than a claimed
-origin string, not a weaker one.
+- the message came from the shell's own iframe (`event.source === frame.contentWindow`);
+- the origin is either the pinned package origin or the opaque `"null"` — never a wildcard;
+- the message presents the per-launch nonce the shell placed in the iframe URL fragment.
 
-The reverse direction (shell to module) uses a `MessageChannel` rather than a wildcard `postMessage`,
-so no wildcard target is introduced anywhere.
+The nonce is what binds the handshake to a *document* rather than to a *browsing context*. Window
+identity alone is not sufficient: a redirect or a self-navigation keeps the same `WindowProxy` and the
+same opaque origin, and `frame.src` still reads the pinned package URL, so nothing else can tell the
+replacement document apart. Only a document the shell itself navigated to receives the fragment.
+
+The shell additionally accepts exactly one handshake per launch, carries all later traffic on the port
+(the window is never used again), and ends the session if the document under an established channel
+changes.
+
+Known residual risk, for review: a `package_url` that 302s off-origin on the very first load carries
+the fragment to the redirect target, and the embedding page cannot detect that from inside the
+browser. A `frame-src` CSP on the Player Shell would close it at the browser level; the shipped nginx
+image serves modules from the shell's own origin, so `frame-src 'self'` would fit that topology, but it
+would break a deployment that hosts packages on a separate origin and so is not imposed here.
+
+Covered by `tests/player-shell/postmessage.spec.ts`.
