@@ -92,33 +92,74 @@ Each guards a different hop and none replaces another:
 > Everything below runs against a **local, uncertified PoC** holding synthetic data only. Do not
 > expose it on a public URL — see the warning at the end of this section.
 
-### 1. Start the stack
+### 1. Generate the three secrets
 
-Put three secrets in `.env` at the repository root (compose refuses to start without them):
+Compose refuses to start without them. Export them as well as writing them to `.env` — later steps
+read `$MCP_POC_BEARER_TOKEN` from your shell, and `.env` alone does not put it there:
 
 ```sh
-printf 'PSEUDONYM_TENANT_SECRET=%s\n'        "$(openssl rand -hex 32)" >> .env
-printf 'RUNTIME_INTERNAL_SERVICE_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
-printf 'MCP_POC_BEARER_TOKEN=%s\n'           "$(openssl rand -hex 32)" >> .env
+export PSEUDONYM_TENANT_SECRET=$(openssl rand -hex 32)
+export RUNTIME_INTERNAL_SERVICE_TOKEN=$(openssl rand -hex 32)
+export MCP_POC_BEARER_TOKEN=$(openssl rand -hex 32)
+{ echo "PSEUDONYM_TENANT_SECRET=$PSEUDONYM_TENANT_SECRET"
+  echo "RUNTIME_INTERNAL_SERVICE_TOKEN=$RUNTIME_INTERNAL_SERVICE_TOKEN"
+  echo "MCP_POC_BEARER_TOKEN=$MCP_POC_BEARER_TOKEN"; } >> .env
+```
+
+In a **new** shell later on, load them back with `set -a; . ./.env; set +a` rather than regenerating
+them — new tokens would not match the running containers.
+
+### 2. Start the stack
+
+```sh
 docker compose up -d
 ```
 
 That brings up the Runtime API (`:3000`, with the Evidence routes mounted on it), the synthetic IES
 (`:4000`), the roster stub (`:4100`), the Player Shell (`:3200`), and this connector (`:4200`).
 
-Without Docker, build once and run the four Node entrypoints directly:
+<details>
+<summary>Without Docker: run the four Node entrypoints directly</summary>
+
+Each server runs in the foreground, so background them (or use four terminals). The environment below
+is not optional: without `EVIDENCE_API_ENDPOINT` the Runtime API issues descriptors pointing at
+`http://localhost:3100`, where nothing listens in this layout, and learner evidence would be posted
+into the void instead of reaching the results read model.
 
 ```sh
 pnpm install && pnpm build
-node dist/packages/stub-ies/src/server.js      # PORT=4000 IES_PUBLIC_ISSUER=http://localhost:4000
-node dist/packages/stub-roster/src/server.js   # PORT=4100
-node dist/src/server.js                        # PORT=3000 (Runtime + Evidence)
-node dist/packages/mcp-connector/src/server.js # PORT=4200
+set -a; . ./.env; set +a   # loads the three secrets from step 1
+
+PORT=4000 IES_PUBLIC_ISSUER=http://localhost:4000 \
+  node dist/packages/stub-ies/src/server.js &
+PORT=4100 \
+  node dist/packages/stub-roster/src/server.js &
+PORT=3000 RUNTIME_PUBLIC_ISSUER=http://localhost:3000 \
+  PLAYER_SHELL_ORIGIN=http://localhost:3200 \
+  EVIDENCE_API_ENDPOINT=http://localhost:3000/api/v1/evidence/statements \
+  IES_ISSUER=http://localhost:4000 \
+  IES_JWKS_URL=http://localhost:4000/.well-known/jwks.json \
+  node dist/src/server.js &
+PORT=4200 AUTH_MODE=poc RUNTIME_API_BASE=http://localhost:3000 \
+  EVIDENCE_API_BASE=http://localhost:3000 \
+  ROSTER_API_BASE=http://localhost:4100 \
+  node dist/packages/mcp-connector/src/server.js &
 ```
 
-Check it came up: `curl localhost:4200/health` returns `{"status":"ok", … "production":false}`.
+Stop them again with `kill %1 %2 %3 %4`. The Player Shell is not included — it is a static bundle, and
+nothing in this runbook up to step 4 needs a browser.
 
-### 2. Connect Claude Code
+</details>
+
+Check all four came up:
+
+```sh
+for p in 4000 4100 3000 4200; do printf 'port %s: ' $p; curl -s localhost:$p/health; echo; done
+```
+
+The connector reports `{"status":"ok", … "auth_mode":"poc","production":false}`.
+
+### 3. Connect Claude Code
 
 Claude Code speaks the streamable HTTP transport and can send a static header, which is what this
 connector's PoC bearer mode needs:
@@ -142,7 +183,7 @@ teacher first, so expect Claude to ask before calling it. After assigning, read
 `quiz://{objectId}/results` — it will show the class assigned, nobody started, and no average yet
 until learners actually sit the quiz.
 
-### 3. Poke it by hand instead
+### 4. Poke it by hand instead
 
 `npx @modelcontextprotocol/inspector` accepts a URL and a bearer token, and is the quickest way to see
 raw `tools/list` and `resources/read` traffic without an agent in the loop.

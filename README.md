@@ -88,6 +88,7 @@ it directly, because it speaks the streamable HTTP transport and can send the st
 this PoC mode needs:
 
 ```sh
+set -a; . ./.env; set +a          # .env alone does not put the token in your shell
 claude mcp add --transport http lorb http://127.0.0.1:4200/mcp \
   --header "Authorization: Bearer $MCP_POC_BEARER_TOKEN"
 ```
