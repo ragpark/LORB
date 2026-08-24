@@ -119,6 +119,28 @@ describe("MCP agent connector proof of concept", () => {
     await client.close();
   });
 
+  it("1a. serves an unauthenticated endpoint index and health check", async () => {
+    // Opening the service in a browser should say what it is, not return a bare 404. Both routes are
+    // deliberately outside the auth hook, which covers /mcp only.
+    const index = await fetch(connectorUrl.replace(/\/mcp$/, "/"));
+    expect(index.status).toBe(200);
+    const body = await index.json();
+    expect(body).toMatchObject({ name: "LORB MCP connector", status: "ok", production: false, auth_mode: "poc" });
+    expect(body.endpoints).toEqual({ health: "/health", mcp: "/mcp" });
+    expect(body.notice).toMatch(/NOT CERTIFIED/);
+
+    // The index must never disclose the connector's upstream addresses or either credential.
+    const serialised = JSON.stringify(body);
+    expect(serialised).not.toContain(AGENT_TOKEN);
+    expect(serialised).not.toContain(SERVICE_TOKEN);
+    expect(serialised).not.toContain(RUNTIME_BASE);
+    expect(serialised).not.toContain(ROSTER_BASE);
+
+    const health = await fetch(connectorUrl.replace(/\/mcp$/, "/health"));
+    expect(health.status).toBe(200);
+    expect(await health.json()).toMatchObject({ status: "ok", service: "lorb-mcp-connector", production: false });
+  });
+
   it("1b. rejects a bad bearer token with 401 and an MCP-shaped challenge", async () => {
     const response = await fetch(connectorUrl, {
       method: "POST",
