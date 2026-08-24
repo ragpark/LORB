@@ -21,11 +21,52 @@ They share no token, no scope, and no signing key. The agent's bearer token neve
 descriptor or an IES token, and an IES token is never accepted here. `loadConfig` refuses to start if
 the agent token and the Runtime internal-service credential are configured to the same value.
 
-**What this is not.** The MCP authorization specification expects a production remote server to
-implement OAuth 2.1 with protected-resource metadata and authorization-server discovery. This
-connector does not. It carries one pre-shared token per environment, compared in constant time, and
-returns a spec-shaped `WWW-Authenticate: Bearer …` challenge on failure so a compliant host reports a
-useful error. Wiring a real identity provider is gated on BLK-08 and is out of scope here.
+### Two authentication modes
+
+| | `AUTH_MODE=poc` | `AUTH_MODE=oidc` |
+|---|---|---|
+| Credential | One pre-shared bearer token per environment | A token issued by an identity provider you already run |
+| Validated by | Constant-time comparison | Signature against the provider's JWKS, plus `iss`, `aud` and expiry |
+| Discovery | None | RFC 9728 metadata at `/.well-known/oauth-protected-resource` |
+| Suitable for | Local development and CI | Anything a real person uses |
+
+**In `oidc` mode this connector is an OAuth resource server and nothing else.** It validates tokens
+and publishes metadata. It never issues, refreshes, stores, or exchanges a credential, and it holds
+no client secret — whoever runs the identity provider remains the only issuer of identity. That is
+the whole point: the hardest part of authorization stays with a system built for it.
+
+Configure it against Auth0, Entra, Google Workspace, Keycloak, or anything else that publishes a
+JWKS:
+
+```
+AUTH_MODE=oidc
+OIDC_ISSUER=https://your-tenant.example.com      # expected `iss`
+OIDC_AUDIENCE=https://your-connector/mcp         # expected `aud` — see below
+MCP_PUBLIC_URL=https://your-connector            # for the RFC 9728 `resource` value
+OIDC_JWKS_URL=...                                # optional; defaults to the issuer's standard path
+OIDC_REQUIRED_SCOPE=lorb.teacher                 # optional scope gate
+```
+
+**`OIDC_AUDIENCE` is required and never derived.** It is the check that stops a token the same
+provider minted for *some other service in the same tenant* from opening this one — the
+confused-deputy problem the MCP authorization specification calls out. Making it explicit means it
+cannot be quietly forgotten. Register this connector as its own API/resource in your provider and use
+that identifier.
+
+Two further guards, both fail-closed at startup: the issuer must be `https`, and
+`MCP_POC_BEARER_TOKEN` must be **absent** in `oidc` mode, so a pre-shared token cannot linger as a
+second, weaker way past the provider.
+
+### What `oidc` mode does and does not buy you
+
+It makes the connector a valid OAuth resource server, which is the half of the problem that belongs
+in this repository. Whether a given client can then complete a flow depends on the provider: Claude
+needs dynamic client registration, client ID metadata documents, or a client you pre-register and
+paste in. That is a decision about your identity provider, not about this code.
+
+This does **not** close BLK-08. It is a necessary step in the direction BLK-08 has to go — the
+synthetic IES can never be the answer for a real person — but the privacy and security design work
+those blockers name is still outstanding.
 
 ## Resources
 
@@ -74,8 +115,13 @@ Each guards a different hop and none replaces another:
 
 | Variable | Required | Notes |
 |---|---|---|
-| `AUTH_MODE` | no (`poc`) | Only `poc` is implemented; any other value refuses to start. |
-| `MCP_POC_BEARER_TOKEN` | yes | ≥32 characters. The agent session's credential. |
+| `AUTH_MODE` | no (`poc`) | `poc` or `oidc`; any other value refuses to start. |
+| `MCP_POC_BEARER_TOKEN` | in `poc` | ≥32 characters. Must be absent when `AUTH_MODE=oidc`. |
+| `OIDC_ISSUER` | in `oidc` | Expected `iss`. Must be `https`. |
+| `OIDC_AUDIENCE` | in `oidc` | Expected `aud` — this resource's own identifier. |
+| `MCP_PUBLIC_URL` | in `oidc` | Public base URL, for the RFC 9728 `resource` value. |
+| `OIDC_JWKS_URL` | no | Defaults to `${OIDC_ISSUER}/.well-known/jwks.json`. |
+| `OIDC_REQUIRED_SCOPE` | no | When set, a valid token without it gets `403 insufficient_scope`. |
 | `RUNTIME_INTERNAL_SERVICE_TOKEN` | yes | ≥32 characters, must differ from the above. |
 | `RUNTIME_API_BASE` | no | Default `http://localhost:3000`. |
 | `EVIDENCE_API_BASE` | no | Defaults to `RUNTIME_API_BASE` — the MVP evidence store is process-local to the Runtime API. |
@@ -85,7 +131,11 @@ Each guards a different hop and none replaces another:
 ## Endpoints
 
 - `POST|GET|DELETE /mcp` — streamable HTTP transport, stateless (one server and transport per request).
+- `GET /` — unauthenticated endpoint index.
 - `GET /health` — unauthenticated liveness only.
+- `GET /.well-known/oauth-protected-resource` — RFC 9728 metadata, **`oidc` mode only**. In `poc`
+  mode it is deliberately not served: publishing a document pointing at an authorization server that
+  does not exist would start a flow no client could finish.
 
 ## Trying it with Claude
 

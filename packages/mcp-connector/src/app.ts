@@ -1,7 +1,7 @@
 // AGENT-FACING TRUST DOMAIN — NOT PRODUCTION. Remote MCP server over the streamable HTTP transport.
 import Fastify from "fastify";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { authenticateAgent, wwwAuthenticate } from "./auth.js";
+import { createVerifier, protectedResourceMetadata, PROTECTED_RESOURCE_METADATA_PATH, wwwAuthenticate } from "./auth.js";
 import { createLorbClients, type FetchImpl, type LorbClients } from "./lorb-clients.js";
 import { IdempotencyStore } from "./idempotency.js";
 import { CONNECTOR_NAME, CONNECTOR_VERSION, createMcpServer } from "./mcp-server.js";
@@ -14,6 +14,8 @@ export interface ConnectorOptions {
   /** Overrides the whole client layer. Prefer fetchImpl. */
   clients?: LorbClients;
   newId?: () => string;
+  /** Overrides token validation. Tests only — production always builds one from config. */
+  verifyToken?: import("./auth.js").TokenVerifier;
 }
 
 const JSONRPC_UNAUTHORIZED = -32001;
@@ -23,6 +25,7 @@ export function buildMcpConnector(options: ConnectorOptions) {
   const clients = options.clients ?? createLorbClients(config, options.fetchImpl);
   const assignIdempotency = new IdempotencyStore<Record<string, unknown>>();
   const app = Fastify({ logger: false, bodyLimit: 262144 });
+  const verifyToken = options.verifyToken ?? createVerifier(config);
 
   // Endpoint index, mirroring the Runtime API's root route. Unauthenticated, like /health: the MCP
   // endpoint itself is the only authenticated surface. Without this, opening the service in a browser
@@ -39,23 +42,35 @@ export function buildMcpConnector(options: ConnectorOptions) {
     endpoints: {
       health: "/health",
       mcp: "/mcp",
+      ...(config.oidc ? { protected_resource_metadata: PROTECTED_RESOURCE_METADATA_PATH } : {}),
     },
     transport: "streamable-http",
   }));
   app.get("/health", async () => ({ status: "ok", service: CONNECTOR_NAME, version: CONNECTOR_VERSION, auth_mode: config.authMode, production: false }));
+
+  // RFC 9728 protected resource metadata. Served only in `oidc` mode: in `poc` mode there is no
+  // authorization server to name, and publishing a document that pointed nowhere would be worse
+  // than publishing none — a client would start a flow that cannot complete.
+  if (config.oidc) {
+    const document = protectedResourceMetadata(config.oidc);
+    app.get(PROTECTED_RESOURCE_METADATA_PATH, async (_req, reply) =>
+      reply.header("cache-control", "public, max-age=300").send(document));
+  }
 
   // PoC-grade agent authentication. See auth.ts: this is *not* the OAuth 2.1 flow the MCP
   // authorization specification requires of a production remote server. The challenge shape is
   // spec-correct so a compliant host reports a useful error; the credential behind it is not.
   app.addHook("onRequest", async (req, reply) => {
     if (!req.url.startsWith("/mcp")) return;
-    const outcome = authenticateAgent(req.headers.authorization, config.agentBearerToken);
+    const outcome = await verifyToken(req.headers.authorization);
     if (outcome.ok) return;
+    // insufficient_scope is a 403 per RFC 6750 §3.1: the token is valid, the grant is not enough.
+    const status = outcome.error === "insufficient_scope" ? 403 : 401;
     return reply
-      .code(401)
-      .header("www-authenticate", wwwAuthenticate(outcome.error))
+      .code(status)
+      .header("www-authenticate", wwwAuthenticate(outcome.error, config))
       .type("application/json")
-      .send({ jsonrpc: "2.0", error: { code: JSONRPC_UNAUTHORIZED, message: "Unauthorized" }, id: null });
+      .send({ jsonrpc: "2.0", error: { code: JSONRPC_UNAUTHORIZED, message: status === 403 ? "Forbidden" : "Unauthorized" }, id: null });
   });
 
   const handle = async (req: any, reply: any) => {
