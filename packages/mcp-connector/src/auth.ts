@@ -98,7 +98,17 @@ export const createVerifier = (config: ConnectorConfig): TokenVerifier =>
 /** RFC 9728 §3. Path is fixed by the spec; clients look for it without being told. */
 export const PROTECTED_RESOURCE_METADATA_PATH = "/.well-known/oauth-protected-resource";
 
-export const protectedResourceMetadataUrl = (oidc: OidcConfig) => `${oidc.publicUrl}${PROTECTED_RESOURCE_METADATA_PATH}`;
+/**
+ * RFC 9728 §3.1 forms the metadata URL by inserting the well-known path *between* the host and the
+ * resource's own path, so a resource served at `https://host/mcp` publishes at
+ * `https://host/.well-known/oauth-protected-resource/mcp`. Clients that follow the
+ * `resource_metadata` pointer never construct this; clients that construct it never see the
+ * pointer. Serving both costs one route and removes a whole class of "discovery 404" failures.
+ */
+export const PROTECTED_RESOURCE_METADATA_PATH_INSERTED = `${PROTECTED_RESOURCE_METADATA_PATH}/mcp`;
+
+export const protectedResourceMetadataUrl = (oidc: OidcConfig) =>
+  `${oidc.publicUrl}${PROTECTED_RESOURCE_METADATA_PATH_INSERTED}`;
 
 /**
  * RFC 9728 protected resource metadata. This is how a client discovers *which* authorization server

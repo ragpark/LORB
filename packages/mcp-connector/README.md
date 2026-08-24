@@ -57,6 +57,37 @@ Two further guards, both fail-closed at startup: the issuer must be `https`, and
 `MCP_POC_BEARER_TOKEN` must be **absent** in `oidc` mode, so a pre-shared token cannot linger as a
 second, weaker way past the provider.
 
+### Wiring it to Auth0
+
+Auth0 is the provider this has been shaped against, because it is the one of the common three that
+implements dynamic client registration. Four things must be true, and three of them are tenant
+configuration rather than code.
+
+**1. Create an API.** Applications → APIs → Create API. Set the **Identifier** to the connector's
+MCP endpoint — `https://<connector-host>/mcp`. The identifier is an opaque string to Auth0, but a
+client checks that the `resource` field in our metadata matches the resource it was trying to
+reach, so making it anything else invites a mismatch. This value becomes `OIDC_AUDIENCE`.
+
+**2. Enable dynamic client registration.** Settings → Advanced → *OIDC Dynamic Application
+Registration*. Without it, a client has to be pre-registered and its ID pasted in by hand.
+
+> Auth0's registration endpoint is open once enabled: anyone on the internet can create an
+> application in the tenant. That is a rate-limiting and monitoring problem you now own. Weigh it
+> against pre-registering one client and skipping DCR entirely.
+
+**3. Set a Default Audience.** Settings → General → API Authorization Settings → *Default Audience*
+→ the identifier from step 1. Without it Auth0 returns an **opaque** access token rather than a
+JWT, and this connector — which verifies a JWT signature — will reject it. The symptom is a 401
+*after* an apparently successful login, so it is worth getting right first time.
+
+**4. Set `OIDC_ISSUER` with its trailing slash.** Auth0 mints `iss` as
+`https://<tenant>.<region>.auth0.com/`, and the claim is compared byte for byte. Copy it exactly
+as the tenant's discovery document reports it. `OIDC_JWKS_URL` is then derived automatically and
+does not need setting.
+
+If you define a permission on the API (say `lorb.teacher`), set `OIDC_REQUIRED_SCOPE` to it and a
+token without that permission gets a 403 rather than access.
+
 ### What `oidc` mode does and does not buy you
 
 It makes the connector a valid OAuth resource server, which is the half of the problem that belongs
@@ -133,8 +164,13 @@ Each guards a different hop and none replaces another:
 - `POST|GET|DELETE /mcp` — streamable HTTP transport, stateless (one server and transport per request).
 - `GET /` — unauthenticated endpoint index.
 - `GET /health` — unauthenticated liveness only.
-- `GET /.well-known/oauth-protected-resource` — RFC 9728 metadata, **`oidc` mode only**. In `poc`
-  mode it is deliberately not served: publishing a document pointing at an authorization server that
+- `GET /.well-known/oauth-protected-resource/mcp` — RFC 9728 metadata, **`oidc` mode only**. This
+  is the path-inserted location RFC 9728 §3.1 specifies for a resource served at `/mcp`, and the
+  URL the `WWW-Authenticate` challenge points at.
+- `GET /.well-known/oauth-protected-resource` — the same document at the bare well-known path, for
+  clients that construct it from the origin rather than following the challenge pointer.
+
+  Neither is served in `poc` mode: publishing a document pointing at an authorization server that
   does not exist would start a flow no client could finish.
 
 ## Trying it with Claude
