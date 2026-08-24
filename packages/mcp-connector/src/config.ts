@@ -104,7 +104,11 @@ const required = (env: NodeJS.ProcessEnv, name: string): string => {
 };
 
 function loadOidc(env: NodeJS.ProcessEnv): OidcConfig {
-  const issuer = trimBase(required(env, "OIDC_ISSUER"));
+  // An issuer is an exact-match identifier, not a base URL to concatenate onto. Auth0 mints `iss`
+  // as "https://tenant.auth0.com/" — with the trailing slash — and jose compares the claim byte
+  // for byte, so normalising it away here would reject every token that tenant issues. Keep it
+  // verbatim; trim only the copy used to build a URL.
+  const issuer = required(env, "OIDC_ISSUER");
   if (!issuer.startsWith("https://")) {
     throw new ConnectorConfigError("OIDC_ISSUER must be an https URL: token signatures are only as trustworthy as the channel their keys arrive over.");
   }
@@ -112,7 +116,7 @@ function loadOidc(env: NodeJS.ProcessEnv): OidcConfig {
   return {
     issuer,
     audience: required(env, "OIDC_AUDIENCE"),
-    jwksUrl: trimBase(env.OIDC_JWKS_URL?.trim() || `${issuer}/.well-known/jwks.json`),
+    jwksUrl: trimBase(env.OIDC_JWKS_URL?.trim() || `${trimBase(issuer)}/.well-known/jwks.json`),
     requiredScope: env.OIDC_REQUIRED_SCOPE?.trim() || undefined,
     publicUrl,
   };

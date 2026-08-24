@@ -140,7 +140,7 @@ describe("OIDC resource-server mode", () => {
     const challenge = response.headers.get("www-authenticate") ?? "";
     // RFC 9728 §5.1 — this pointer is what lets a client find the authorization server rather than
     // guess. Its absence is why claude.ai's dynamic client registration failed against poc mode.
-    expect(challenge).toContain(`resource_metadata="${PUBLIC_URL}/.well-known/oauth-protected-resource"`);
+    expect(challenge).toContain(`resource_metadata="${PUBLIC_URL}/.well-known/oauth-protected-resource/mcp"`);
     expect(challenge).toContain(`scope="${SCOPE}"`);
   });
 
@@ -153,6 +153,16 @@ describe("OIDC resource-server mode", () => {
       bearer_methods_supported: ["header"],
       scopes_supported: [SCOPE],
     });
+  });
+
+  /**
+   * RFC 9728 §3.1 inserts the well-known path between host and resource path. A client that
+   * constructs the URL rather than following the challenge pointer looks here, and only here.
+   */
+  it("serves the same document at the path-inserted location", async () => {
+    const response = await fetch(`${metadataUrl}/mcp`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(await (await fetch(metadataUrl)).json());
   });
 });
 
@@ -233,5 +243,80 @@ describe("poc mode is unaffected", () => {
     const challenge = response.headers.get("www-authenticate") ?? "";
     expect(challenge).toContain("Bearer");
     expect(challenge).not.toContain("resource_metadata");
+  });
+});
+
+/**
+ * Auth0 shapes. These are not hypothetical: an Auth0 tenant's `iss` claim carries a trailing
+ * slash, and jose compares the claim byte for byte. Normalising the issuer at config time — the
+ * obvious thing to do to a URL — silently rejects every token the tenant issues, and the symptom
+ * is a 401 *after* a successful login, which is a miserable thing to debug.
+ */
+describe("an Auth0-shaped issuer", () => {
+  const TENANT = "https://lorb-tenant.eu.auth0.com/";
+  const API_ID = "https://mcp.lorb-oidc.test/mcp";
+  let auth0Connector: FastifyInstance;
+  let auth0Url: string;
+
+  beforeAll(async () => {
+    const config = loadConfig({
+      AUTH_MODE: "oidc",
+      OIDC_ISSUER: TENANT,
+      OIDC_AUDIENCE: API_ID,
+      OIDC_JWKS_URL: jwksUrl,
+      OIDC_REQUIRED_SCOPE: SCOPE,
+      MCP_PUBLIC_URL: PUBLIC_URL,
+      RUNTIME_INTERNAL_SERVICE_TOKEN: SERVICE_TOKEN,
+    } as NodeJS.ProcessEnv);
+    auth0Connector = buildMcpConnector({ config, fetchImpl: async () => ({ status: 200, text: async () => "{}" }) });
+    await auth0Connector.listen({ host: "127.0.0.1", port: 0 });
+    auth0Url = `http://127.0.0.1:${(auth0Connector.server.address() as { port: number }).port}/mcp`;
+  });
+
+  afterAll(async () => {
+    await auth0Connector?.close();
+  });
+
+  it("accepts a token whose iss carries the trailing slash Auth0 mints", async () => {
+    const token = await mintToken({ issuer: TENANT, audience: API_ID });
+    const response = await fetch(auth0Url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    expect(response.status).toBe(200);
+  });
+
+  it("still rejects the same token with the slash stripped from iss", async () => {
+    const token = await mintToken({ issuer: "https://lorb-tenant.eu.auth0.com", audience: API_ID });
+    const response = await fetch(auth0Url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    expect(response.status).toBe(401);
+  });
+
+  it("derives the JWKS URL without doubling the slash", () => {
+    const config = loadConfig({
+      AUTH_MODE: "oidc",
+      OIDC_ISSUER: TENANT,
+      OIDC_AUDIENCE: API_ID,
+      MCP_PUBLIC_URL: PUBLIC_URL,
+      RUNTIME_INTERNAL_SERVICE_TOKEN: SERVICE_TOKEN,
+    } as NodeJS.ProcessEnv);
+    expect(config.oidc?.issuer).toBe(TENANT);
+    expect(config.oidc?.jwksUrl).toBe("https://lorb-tenant.eu.auth0.com/.well-known/jwks.json");
+  });
+
+  // Auth0 puts scopes in a space-delimited `scope` string, not an array.
+  it("reads a space-delimited scope claim", async () => {
+    const token = await mintToken({ issuer: TENANT, audience: API_ID, scope: `openid profile ${SCOPE}` });
+    const response = await fetch(auth0Url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    expect(response.status).toBe(200);
   });
 });

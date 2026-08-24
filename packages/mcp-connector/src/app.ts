@@ -1,7 +1,13 @@
 // AGENT-FACING TRUST DOMAIN — NOT PRODUCTION. Remote MCP server over the streamable HTTP transport.
 import Fastify from "fastify";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createVerifier, protectedResourceMetadata, PROTECTED_RESOURCE_METADATA_PATH, wwwAuthenticate } from "./auth.js";
+import {
+  createVerifier,
+  protectedResourceMetadata,
+  PROTECTED_RESOURCE_METADATA_PATH,
+  PROTECTED_RESOURCE_METADATA_PATH_INSERTED,
+  wwwAuthenticate,
+} from "./auth.js";
 import { createLorbClients, type FetchImpl, type LorbClients } from "./lorb-clients.js";
 import { IdempotencyStore } from "./idempotency.js";
 import { CONNECTOR_NAME, CONNECTOR_VERSION, createMcpServer } from "./mcp-server.js";
@@ -42,7 +48,7 @@ export function buildMcpConnector(options: ConnectorOptions) {
     endpoints: {
       health: "/health",
       mcp: "/mcp",
-      ...(config.oidc ? { protected_resource_metadata: PROTECTED_RESOURCE_METADATA_PATH } : {}),
+      ...(config.oidc ? { protected_resource_metadata: PROTECTED_RESOURCE_METADATA_PATH_INSERTED } : {}),
     },
     transport: "streamable-http",
   }));
@@ -53,8 +59,12 @@ export function buildMcpConnector(options: ConnectorOptions) {
   // than publishing none — a client would start a flow that cannot complete.
   if (config.oidc) {
     const document = protectedResourceMetadata(config.oidc);
-    app.get(PROTECTED_RESOURCE_METADATA_PATH, async (_req, reply) =>
-      reply.header("cache-control", "public, max-age=300").send(document));
+    const serve = async (_req: unknown, reply: { header: (k: string, v: string) => { send: (b: unknown) => unknown } }) =>
+      reply.header("cache-control", "public, max-age=300").send(document);
+    // Both spellings: the path-inserted one RFC 9728 §3.1 specifies for a resource with a path,
+    // and the bare root one a client may try when it treats the origin as the resource.
+    app.get(PROTECTED_RESOURCE_METADATA_PATH_INSERTED, serve);
+    app.get(PROTECTED_RESOURCE_METADATA_PATH, serve);
   }
 
   // PoC-grade agent authentication. See auth.ts: this is *not* the OAuth 2.1 flow the MCP
