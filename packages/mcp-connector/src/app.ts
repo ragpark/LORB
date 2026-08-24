@@ -24,6 +24,24 @@ export function buildMcpConnector(options: ConnectorOptions) {
   const assignIdempotency = new IdempotencyStore<Record<string, unknown>>();
   const app = Fastify({ logger: false, bodyLimit: 262144 });
 
+  // Endpoint index, mirroring the Runtime API's root route. Unauthenticated, like /health: the MCP
+  // endpoint itself is the only authenticated surface. Without this, opening the service in a browser
+  // returns a bare Fastify 404, which reads as "broken" rather than "alive but nothing served here".
+  // It lists paths only — never the configured Runtime, Evidence, or roster addresses, which are
+  // internal and none of a caller's business.
+  app.get("/", async () => ({
+    name: "LORB MCP connector",
+    status: "ok",
+    production: false,
+    notice: "DRAFT — NOT CERTIFIED — LOCAL DEV / REVIEW ENVIRONMENT ONLY. Synthetic data only.",
+    auth_mode: config.authMode,
+    documentation: "packages/mcp-connector/README.md",
+    endpoints: {
+      health: "/health",
+      mcp: "/mcp",
+    },
+    transport: "streamable-http",
+  }));
   app.get("/health", async () => ({ status: "ok", service: CONNECTOR_NAME, version: CONNECTOR_VERSION, auth_mode: config.authMode, production: false }));
 
   // PoC-grade agent authentication. See auth.ts: this is *not* the OAuth 2.1 flow the MCP
