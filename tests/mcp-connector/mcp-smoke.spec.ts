@@ -135,7 +135,7 @@ describe("MCP agent connector proof of concept", () => {
     expect(client.getServerVersion()?.name).toBe("lorb-mcp-connector");
     const tools = await client.listTools();
     const names = tools.tools.map((tool) => tool.name).sort();
-    expect(names).toEqual(["assign_quiz", "create_quiz"]);
+    expect(names).toEqual(["assign_quiz", "create_quiz", "list_classes"]);
 
     const assign = tools.tools.find((tool) => tool.name === "assign_quiz")!;
     const create = tools.tools.find((tool) => tool.name === "create_quiz")!;
@@ -186,6 +186,20 @@ describe("MCP agent connector proof of concept", () => {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
     });
     expect(missing.status).toBe(401);
+  });
+
+  it("1b. list_classes discovers the class without being told its identifier", async () => {
+    const client = await connect();
+    const listed = toolJson(await client.callTool({ name: "list_classes", arguments: {} }));
+    const found = listed.classes.find((entry: { class_id: string }) => entry.class_id === SMOKE_CLASS.class_id);
+    expect(found).toBeDefined();
+    expect(found.name).toBe(SMOKE_CLASS.name);
+    expect(found.learner_count).toBe(SMOKE_CLASS.learners.length);
+    // Discovery must not become a roster dump: no learner identifiers, no display names.
+    const serialised = JSON.stringify(listed);
+    for (const learner of SMOKE_CLASS.learners) expect(serialised).not.toContain(learner);
+    expect(serialised).not.toContain("Display synthetic-smoke-01");
+    await client.close();
   });
 
   it("2. reads class://{classId}/recent-topics from the roster the Consumer UI writes", async () => {

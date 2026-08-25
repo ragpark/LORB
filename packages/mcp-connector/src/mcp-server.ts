@@ -118,6 +118,43 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
 
   // -------------------------------------------------------------------- tools
 
+  // Discovery. Without this an agent can only read a class whose id it was handed, so every
+  // workflow started with a human copying a UUID out of the Consumer UI. Read-only: the roster is
+  // created and changed by a signed-in teacher on the web, and there is no tool here that writes to
+  // it. The projection this calls returns names, year groups, subjects and counts — never learner
+  // names or identifiers.
+  server.registerTool(
+    "list_classes",
+    {
+      title: "List the classes available in LORB",
+      description: [
+        "Lists the classes a teacher has set up, with year group, subject and learner count, so a class can be",
+        "chosen without knowing its identifier in advance. Returns no learner names or identifiers.",
+        "Read class:// resources for what a class has recently been taught before drafting content for it.",
+      ].join(" "),
+      inputSchema: {},
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async () => {
+      let list;
+      try {
+        list = await deps.clients.listClasses();
+      } catch (error) {
+        return failure(serviceMessage(error, "The class list could not be read from LORB."));
+      }
+      return json({
+        classes: list.items.map((entry) => ({
+          class_id: entry.class_id,
+          name: entry.name,
+          year_group: entry.year_group,
+          subject: entry.subject,
+          learner_count: entry.learner_count,
+        })),
+        source: "LORB roster (non-production)",
+      });
+    },
+  );
+
   server.registerTool(
     "create_quiz",
     {
