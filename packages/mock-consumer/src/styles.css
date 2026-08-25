@@ -147,3 +147,20 @@ dt {
     font-weight: bold;
   }
 }
+
+/* Roster administration */
+.admin-head{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap}
+.admin-columns{display:grid;grid-template-columns:minmax(16rem,1fr) minmax(0,2fr);gap:2rem;align-items:start}
+.admin-error{color:#8a1c1c;font-weight:600}
+.class-list,.learner-list,.topic-list,.assign-list{list-style:none;padding:0;margin:0 0 1rem}
+.class-list button{display:flex;flex-direction:column;gap:.15rem;width:100%;text-align:left;padding:.6rem .75rem;margin-bottom:.4rem}
+.class-list button[aria-current="true"]{outline:2px solid currentColor}
+.learner-list li,.assign-list li{display:flex;align-items:center;gap:.75rem;padding:.35rem 0;flex-wrap:wrap}
+.learner-list code{font-size:.85em;opacity:.75}
+.learner-list button{margin-left:auto}
+.admin .empty{opacity:.7;font-style:italic}
+.admin form{display:grid;gap:.5rem;margin-bottom:1.5rem}
+.admin label{display:grid;gap:.2rem}
+.results table{border-collapse:collapse;width:100%;margin-bottom:1rem}
+.results th,.results td{text-align:left;padding:.35rem .5rem;border-bottom:1px solid rgba(128,128,128,.35)}
+@media (max-width:60rem){.admin-columns{grid-template-columns:1fr}}

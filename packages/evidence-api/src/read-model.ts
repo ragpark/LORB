@@ -49,3 +49,44 @@ export function aggregateActivityResults(object_id: string): ActivityResults {
     not_started_pseudonyms: [...assigned].filter((pseudonym) => !active.has(pseudonym)).sort(),
   };
 }
+
+export interface PseudonymResult {
+  /** Any statement at all for this activity — launched, answered or completed. */
+  attempted: boolean;
+  completed: boolean;
+  scaled: number | null;
+}
+
+/**
+ * Per-actor view of the same statements `aggregateActivityResults` counts, for the one caller that
+ * holds a roster and can therefore turn a pseudonym back into a name: the class results endpoint.
+ * It returns pseudonyms, never identifiers — the caller does the matching and the pairing exists
+ * only for the duration of that request.
+ */
+export function resultsByPseudonym(object_id: string, since?: string): Map<string, PseudonymResult> {
+  const target = object_id.toLowerCase();
+  const results = new Map<string, PseudonymResult>();
+  for (const row of store.outbox.values() as Iterable<{ payload?: any; created_at?: string }>) {
+    // `since` bounds the answer to one assignment window. Without it a freshly created assignment
+    // reports completions from before it existed, and re-assigning the same object to the same class
+    // returns the identical aggregate every time.
+    //
+    // The bound is the outbox row's created_at, set by the Evidence API when it accepted the
+    // statement — not the statement's own `timestamp`, which the player supplies and could place
+    // anywhere it liked.
+    if (since && (typeof row?.created_at !== "string" || row.created_at < since)) continue;
+    const statement = row?.payload;
+    if (!statement?.object?.id || activityObjectId(statement.object.id) !== target) continue;
+    const pseudonym = statement.actor?.account?.name;
+    if (typeof pseudonym !== "string") continue;
+    const entry = results.get(pseudonym) ?? { attempted: true, completed: false, scaled: null };
+    entry.attempted = true;
+    if (statement.verb?.id === xapiVerbs.completed) {
+      entry.completed = true;
+      // Last completion wins, matching the "most recent attempt" semantics of the aggregate above.
+      entry.scaled = typeof statement.result?.score?.scaled === "number" ? statement.result.score.scaled : null;
+    }
+    results.set(pseudonym, entry);
+  }
+  return results;
+}

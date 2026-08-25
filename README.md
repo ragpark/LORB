@@ -194,7 +194,14 @@ The automated suite enforces all 15 MVP controls: descriptor PII rejection; pinn
 
 ## Open blockers
 
-This work cannot progress beyond local development while BLK-02 (portfolio reuse), BLK-03 (accountable owner), BLK-07 (privacy), BLK-08 (security), BLK-09 (accessibility), and BLK-11 (operational design) remain open. Stubs additionally document their removal blockers.
+This work cannot progress beyond local development while BLK-02 (portfolio reuse), BLK-03 (accountable owner), BLK-07 (privacy), BLK-08 (security), BLK-09 (accessibility), and BLK-11 (operational design) remain open.
+
+**BLK-02, BLK-03 and BLK-07 are now implicated by a shipped feature, not merely open.** The roster
+administration surface (classes, learners, assignment and results — `004_roster.sql`, the
+`/api/v1/admin/classes` routes and the Consumer UI administration area) is the "real
+roster/entitlement source" that `packages/stub-roster/STUB.md` names those three blockers as
+prerequisites for. It was built on an explicit instruction to build one. The privacy design for
+holding class membership has not been done, and must be before this holds data about a real person. Stubs additionally document their removal blockers.
 
 Any material change to the launch descriptor, pseudonymisation function, error envelope, or anti-requirement enforcement requires human re-review against LORB-001.
 
