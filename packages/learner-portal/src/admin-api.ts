@@ -13,9 +13,11 @@ import {adminTokenStore} from './security.js';
  * 1. It does not run responses through `sanitise`. That guard strips any key matching
  *    /(email|(^|_)name$|dob|date_of_birth|address)/i, which is correct for every learner-facing
  *    runtime response and fatal here — a roster is made of class `name` and learner `display_name`.
- *    Suppressing the guard for this one surface is a real narrowing of a rail the consumer has
- *    relied on since it was written, and it is one of the reasons this feature implicates BLK-07.
- *    Everything the learner-facing UI fetches still goes through `apiRequest` and is still checked.
+ *    Suppressing the guard for this one surface deliberately narrows a rail the portal otherwise
+ *    relies on everywhere, so the narrowing is confined to the one client that needs it: everything
+ *    the learner-facing UI fetches still goes through `apiRequest` and is still checked. A display
+ *    name reaches a teacher's screen and stops there — it never enters a launch descriptor or an
+ *    xAPI statement, and the descriptor schema would reject it if it tried.
  *
  * 2. It carries the administrator token, not the learner token. The two are kept in separate
  *    session storage keys so signing in as a teacher never widens what a learner session can reach.

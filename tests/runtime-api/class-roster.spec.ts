@@ -1,7 +1,8 @@
-// Roster administration enforcement. Requires Postgres with migrations through 004_roster.sql.
+// Roster administration enforcement. Needs Postgres with the migrations applied.
 //
-// BLK-02, BLK-03 and BLK-07 are implicated by this feature, not cleared by it: these tests check
-// that the boundaries the design depends on hold, not that the privacy design is done.
+// What these check is that the privacy shape the roster schema was built around actually holds in
+// the routes: no row pairs a learner identifier with a pseudonym, an assignment remembers who was in
+// the class at the time, and a class is only ever visible to the principal that owns it.
 import { randomUUID } from "node:crypto";
 import { generateKeyPair } from "jose";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

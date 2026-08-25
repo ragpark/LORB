@@ -2,14 +2,14 @@
  * Access-token verification against the configured identity provider.
  *
  * LORB does not issue identities and does not become an identity provider; it consumes access tokens
- * from one it is configured to trust. What changes for production is which providers that can be: the
- * MVP hard-coded ES256 and a single locally-run synthetic issuer, which is neither what a real
- * provider signs with (RS256, usually) nor something a deployment should be able to fall back to.
+ * from one it is configured to trust. Which providers that can be is configuration: issuer, audience,
+ * algorithms and JWKS location all come from the environment, because hard-coding ES256 and a single
+ * local issuer is neither what a real provider signs with (RS256, usually) nor something a
+ * deployment should be able to fall back to.
  *
- * The verifier below takes issuer, audience, algorithms and JWKS location from configuration,
- * caches the remote key set (jose refreshes it on an unknown `kid`, which is how provider key
- * rotation is absorbed without a redeploy), and reports a subject plus the role claims the
- * administration surface needs.
+ * The verifier caches the remote key set — jose refreshes it on an unknown `kid`, which is how a
+ * provider's own key rotation is absorbed without a redeploy — and reports a subject plus the role
+ * claims the administration surfaces need.
  */
 import { createRemoteJWKSet, jwtVerify, type JWTPayload, type KeyLike } from "jose";
 import type { IdentityProviderConfig } from "../config/index.js";

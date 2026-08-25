@@ -67,7 +67,7 @@ create table if not exists learning_object_content (
 -- Attempts
 -- ---------------------------------------------------------------------------
 
--- The MVP recognised three attempt states. The lifecycle the specification describes has eight, and
+-- The original schema recognised three attempt states. The lifecycle the specification describes has eight, and
 -- two of the missing ones are load-bearing in production: an attempt that is never completed has to
 -- reach a terminal state rather than sitting in STARTED for ever.
 alter table attempt drop constraint if exists attempt_status_check;

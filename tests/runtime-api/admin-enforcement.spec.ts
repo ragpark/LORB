@@ -1,8 +1,11 @@
-// Administration workspace (Wave 1) API/DB-side anti-requirements — Section 13 of the brief.
-// Requires Postgres (docker compose up -d, matching the project's existing DATABASE_URL convention
-// in .env.example) with migrations 001_mvp.sql and 003_admin_tables.sql applied.
-// UI-side controls (banner, pseudonym-only display, sessionStorage, no dangerouslySetInnerHTML, the
-// Simulate tooltip, etc.) are tested in packages/admin-ui/tests/anti-requirements/admin-ui-enforcement.spec.ts.
+// Administration enforcement, on the side that cannot be bypassed: the API and the database.
+//
+// Needs Postgres with the migrations applied (`pnpm db:setup`). Several of the properties here are
+// enforced by triggers and constraints rather than by application code — immutability of a published
+// player version, immutability of published launch-policy rules, the append-only audit trail, and
+// the self-approval check — so a run without a database would not exercise them at all.
+//
+// UI-side controls are covered in packages/admin-ui/tests/anti-requirements/.
 import { randomUUID } from "node:crypto";
 import { generateKeyPair } from "jose";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

@@ -1,25 +1,23 @@
-# Interim design system
+# Design system
 
-This slice uses Radix UI primitives as its interim component layer, matching the Ops Console's
-precedent. The specification-level Pearson Design System commitment cannot yet be resolved because
-the ActiveHub-approved layer remains open (BLK-07). This is not represented as the Pearson Design
-System, and the palette deliberately avoids the Pearson blue-and-white scheme (see anti-requirement
-22 in [`tests/anti-requirements/README-anti-requirements.md`](tests/anti-requirements/README-anti-requirements.md)).
+Radix UI primitives as the component layer, matching the Operations Console. Radix is used
+specifically for the things that are easy to get wrong by hand and hard to notice when you have:
+dialog focus trapping, focus restoration, and Escape handling.
 
-A later slice is expected to re-skin the workspace to the approved PDS layer without changing its
-information structure, keyboard behaviour, or accessibility semantics.
+The workspace can be re-skinned to a corporate design system without changing its information
+structure, keyboard behaviour or accessibility semantics — the colour tokens are the seam, and they
+are deliberately the only thing not shared with the other surfaces.
 
 ## Shared structural foundation
 
 `src/styles.css` imports `packages/design-system/src/foundation.css`, the same structural layer the
 Ops Console uses: spacing scale, radius scale, focus ring, skip link, overlay/drawer/dialog shapes,
 card grid, badge, tooltip, and — because this workspace shares the Ops Console's console-shell
-shape (fixed draft banner, fixed header, fixed sidebar) — the same layout scaffold, scoped to this
-surface's `<div class="app">` root.
+shape (fixed environment notice, fixed header, fixed sidebar) — the same layout scaffold, scoped to
+this surface's `<div class="app">` root.
 
 **What is intentionally not shared: colour.** This surface defines its own `--lorb-*` colour tokens
 (indigo/purple accent, its own ink/paper/line values) instead of the Ops Console's navy/blue —
-this is anti-requirement 22, enforced by `tests/anti-requirements/admin-ui-enforcement.spec.ts`
-("22 does not use blue-and-white Pearson-style palettes"), and must not be changed to match Ops
-Console's palette without first resolving that anti-requirement with the accountable owner (BLK-03)
-and updating the corresponding spec/test.
+so that an operator who has both open in adjacent tabs can tell at a glance which one they are
+typing into. Enforced by `tests/anti-requirements/admin-ui-enforcement.spec.ts`; changing it to
+match the Operations Console means updating that test, deliberately, rather than by accident.

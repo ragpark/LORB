@@ -4,7 +4,7 @@
  * Every setting the platform needs is read once, here, and validated before anything starts. The
  * rule the module exists to enforce is that a production deployment fails to start rather than
  * starting in a degraded shape: no ephemeral signing key, no in-memory system of record, no
- * synthetic identity provider, no implicit CORS allow-list, no development-mode credential.
+ * development identity provider, no implicit CORS allow-list, no development-mode credential.
  *
  * Development and test deployments keep working defaults so the suites and `pnpm dev` need no
  * ceremony, but every default that would be unsafe in production is refused there explicitly.
@@ -40,7 +40,7 @@ export interface IdentityProviderConfig {
   roleClaim: string;
   /** Claim carrying a platform-administrator marker. */
   platformAdminClaim: string;
-  /** True only for the bundled non-production identity simulator. */
+  /** True only for the bundled development identity provider, which production refuses. */
   synthetic: boolean;
 }
 

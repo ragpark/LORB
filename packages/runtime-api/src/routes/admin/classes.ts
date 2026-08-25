@@ -26,7 +26,7 @@ import { catalogue as defaultCatalogue, type CatalogueStore } from "../../catalo
 import { store as defaultStore, type RuntimeStore } from "../../store/index.js";
 import { resultsByPseudonym } from "../../../../evidence-api/src/read-model.js";
 
-/** The identifier shape the synthetic IES accepts, so a roster entry and that learner's own login
+/** The identifier shape the identity provider issues, so a roster entry and that learner's own sign-in
  *  derive the same pseudonym. Deliberately narrower than a free-text field: an identifier that
  *  cannot round-trip through the IES would produce evidence nobody could ever attribute. */
 const LEARNER_REF = /^[A-Za-z\d._:-]{1,128}$/;

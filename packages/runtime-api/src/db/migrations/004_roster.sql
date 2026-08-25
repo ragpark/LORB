@@ -1,16 +1,15 @@
--- NOT PRODUCTION — BLK-02, BLK-03 and BLK-07 ARE NOW IMPLICATED, NOT MERELY OPEN.
+-- The roster: classes, their learners, taught topics, and the assignment of a learning object to a
+-- whole class.
 --
--- packages/stub-roster/STUB.md states that LORB-001 has no class, cohort or roster concept of its
--- own, and that a real roster/entitlement source requires the accountable owner (BLK-03), the
--- privacy design for holding class membership (BLK-07), and the portfolio-reuse decision (BLK-02).
--- These tables are that roster source. They were added on an explicit instruction to build one; the
--- three blockers must be closed before this schema holds data about any real person.
---
--- Design note carried into the table shapes below: a learner's platform identifier and their LORB
+-- The privacy shape is carried into the table definitions themselves, and it is the reason several
+-- reads are more expensive than they need to be: a learner's platform identifier and their LORB
 -- pseudonym are never stored in the same row, and the pseudonym is never stored at all. Results are
 -- joined back to a class by recomputing the pseudonym from the identifier at read time, through the
--- unchanged pseudonymisation function. Persisting the pair would create a standing re-identification
--- table, which is exactly the artefact BLK-07 exists to govern.
+-- unchanged pseudonymisation function.
+--
+-- Persisting the pair would make those reads a simple join. It would also create a standing
+-- re-identification table sitting in the database, which is exactly the artefact pseudonymising the
+-- evidence was meant to avoid. The cost is accepted deliberately.
 
 create table class (
   class_id uuid primary key,
@@ -24,8 +23,8 @@ create table class (
 );
 create index class_created_by_idx on class(created_by_pseudonym);
 
--- learner_ref is the identifier the upstream identity source issues, in the same shape the synthetic
--- IES accepts, so a roster entry and that learner's own login derive the same pseudonym.
+-- learner_ref is the identifier the identity provider issues for that learner, so a roster entry and
+-- that learner's own sign-in derive the same pseudonym.
 -- display_name is a teacher-facing label only. It must never reach a launch descriptor or an xAPI
 -- statement; the descriptor schema rejects PII fields and the anti-requirement suite enforces it.
 create table class_learner (
@@ -50,8 +49,8 @@ create table class_assignment (
 create index class_assignment_class_idx on class_assignment(class_id);
 create index class_assignment_object_idx on class_assignment(object_id);
 
--- Recent teaching topics, so the MCP class:// resources keep working against a real class rather
--- than the synthetic seed. Content about the curriculum, not about people.
+-- Recent teaching topics, so generated content can be relevant to what a class has actually been
+-- taught. Content about the curriculum, not about people.
 create table class_topic (
   class_topic_id uuid primary key,
   class_id uuid not null references class(class_id) on delete cascade,

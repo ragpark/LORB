@@ -32,7 +32,7 @@ describe('roster administration',()=>{
   // must not be what makes this test pass.
   expect(admin).not.toContain('sanitise(');
   // ...and it must say why, so the next reader does not treat it as an oversight to "fix".
-  expect(admin).toContain('BLK-07');
+  expect(admin).toContain('deliberately narrows a rail');
  });
 
  it('holds the administrator session under its own key',()=>{
