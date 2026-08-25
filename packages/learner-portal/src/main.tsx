@@ -1,0 +1,2 @@
+import React from 'react';import{createRoot}from'react-dom/client';import{App}from'./App.js';import{readConfig}from'./config.js';import'./styles.css';
+const root=createRoot(document.getElementById('root')!);try{root.render(<React.StrictMode><App config={readConfig()}/></React.StrictMode>)}catch{root.render(<main role="alert"><h1>Configuration error</h1><p>The portal needs a valid environment label, an explicit player-shell origin allow-list, and — outside development — a configured identity provider.</p></main>)}

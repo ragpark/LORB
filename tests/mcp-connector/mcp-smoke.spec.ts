@@ -157,9 +157,8 @@ describe("MCP agent connector proof of concept", () => {
     const index = await fetch(connectorUrl.replace(/\/mcp$/, "/"));
     expect(index.status).toBe(200);
     const body = await index.json();
-    expect(body).toMatchObject({ name: "LORB MCP connector", status: "ok", production: false, auth_mode: "poc" });
+    expect(body).toMatchObject({ name: "LORB MCP connector", status: "ok", auth_mode: "shared-token" });
     expect(body.endpoints).toEqual({ health: "/health", mcp: "/mcp" });
-    expect(body.notice).toMatch(/NOT CERTIFIED/);
 
     // The index must never disclose the connector's upstream addresses or either credential.
     const serialised = JSON.stringify(body);
@@ -170,7 +169,7 @@ describe("MCP agent connector proof of concept", () => {
 
     const health = await fetch(connectorUrl.replace(/\/mcp$/, "/health"));
     expect(health.status).toBe(200);
-    expect(await health.json()).toMatchObject({ status: "ok", service: "lorb-mcp-connector", production: false });
+    expect(await health.json()).toMatchObject({ status: "ok", service: "lorb-mcp-connector" });
   });
 
   it("1b. rejects a bad bearer token with 401 and an MCP-shaped challenge", async () => {

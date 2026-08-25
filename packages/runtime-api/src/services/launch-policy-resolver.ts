@@ -1,4 +1,4 @@
-// STUB — NOT PRODUCTION — BLOCKED BY BLK-03, BLK-11. Administration workspace Wave 1 launch-policy resolution.
+// Launch-policy resolution: which player renders a launch, for content that does not pin one.
 export interface LaunchPolicyRule {
   priority: number;
   match?: { consumer_id?: string; repository_id?: string; delivery_profile?: string; launch_mode?: string };

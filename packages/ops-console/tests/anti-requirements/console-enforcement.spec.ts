@@ -8,11 +8,22 @@ import {describe,expect,it} from 'vitest';
 import {containsSensitiveField,redactHeaders,sanitise} from '../../src/security.js';
 import {apiUrl} from '../../src/api.js';
 import {readFileSync} from 'node:fs';
+import {allowsDevelopmentSignIn,environmentNotice} from '@lorb/web-auth';
 const app=readFileSync(new URL('../../src/App.tsx',import.meta.url),'utf8');
 const api=readFileSync(new URL('../../src/api.ts',import.meta.url),'utf8');
-describe('LORB-001 console enforcement controls',()=>{
- it('1 places the DRAFT banner before the first interactive skip link',()=>expect(app.indexOf('className="draft"')).toBeLessThan(app.indexOf('className="skip"')));
- it('2 allows only the two environment labels and visibly fails otherwise',()=>{expect(app).toContain("['LOCAL-DEV','RAILWAY-NON-PROD']");expect(app).toContain('Environment configuration error')});
+const oidcSource=readFileSync(new URL('../../../web-auth/src/oidc.ts',import.meta.url),'utf8');
+describe('Operations Console enforcement controls',()=>{
+ // A non-production console says so before anything a keyboard user can reach, so an operator knows
+ // whether the records in front of them are real before they act on them. Production shows nothing:
+ // a banner that is always on stops being read.
+ it('1 places the environment notice before the first interactive skip link',()=>expect(app.indexOf('className="environment-notice"')).toBeLessThan(app.indexOf('className="skip"')));
+ it('2 allows only the known environment labels and visibly fails otherwise',()=>{expect(app).toContain('ENVIRONMENT_LABELS.includes');expect(app).toContain('Environment configuration error')});
+ it('2a shows no notice in production and names the environment otherwise',()=>{expect(environmentNotice('PRODUCTION')).toBeUndefined();expect(environmentNotice('STAGING')).toMatch(/Staging/);expect(environmentNotice('DEVELOPMENT')).toMatch(/Development/)});
+ // The development login must be reachable only from a development build. A deployed console that
+ // could POST a subject string to a login endpoint would have no authentication worth the name.
+ it('2b confines the development sign-in to a development environment',()=>{expect(app).toContain('allowsDevelopmentSignIn(env');expect(allowsDevelopmentSignIn('PRODUCTION')).toBe(false);expect(allowsDevelopmentSignIn('STAGING')).toBe(false);expect(allowsDevelopmentSignIn('DEVELOPMENT')).toBe(true)});
+ it('2c signs in with authorization code and PKCE, never the implicit flow',()=>{expect(oidcSource).toContain("response_type\", \"code");expect(oidcSource).toContain('code_challenge_method');expect(oidcSource).not.toContain('response_type=token')});
+ it('2d never renders a fabricated operator identity',()=>{expect(app).not.toContain('SYNTHETIC OPERATOR');expect(app).toContain("<small>OPERATOR</small>")});
  it('3 detects identifying fields rather than rendering their values',()=>expect(containsSensitiveField({email:'synthetic@example.test'})).toBe(true));
  it('4 removes raw subject and tenant secret fields',()=>expect(sanitise({subject:'raw',tenant_secret:'secret',safe:'ok'})).toEqual({safe:'ok'}));
  it('5 attaches X-Correlation-ID to every API request',()=>expect(api).toContain("'X-Correlation-ID':correlationId"));

@@ -34,7 +34,7 @@ noted as such below):
 ## Known gaps against the brief (documented for the accountable owner — BLK-03)
 
 - **Section 14's Publisher UI cross-slice update was not implemented.** No such package exists in
-  this repository (the existing packages are `runtime-api`, `mock-consumer`, `ops-console`,
+  this repository (the existing packages are `runtime-api`, `learner-portal`, `ops-console`,
   `player-shell`, `stub-ies`, `stub-lrs`, `evidence-api`, `evidence-forwarder`, `contracts`,
   `example-module`, `test-client`). There is nothing to add repository-scoped ABAC to.
 - **A `GET /api/v1/admin/whoami` endpoint was added** beyond Section 8's literal endpoint list. It
@@ -42,7 +42,7 @@ noted as such below):
   disable "Approve" for its own requests without knowing its own pseudonym, and pseudonyms are not
   derivable client-side (they are an HMAC of the real subject, computed only server-side).
 - **The Admin UI does not use `@tanstack/react-router` or per-view route files.** It follows the
-  same single-`App.tsx`, page-state pattern already used successfully by `mock-consumer` and
+  same single-`App.tsx`, page-state pattern already used successfully by `learner-portal` and
   `ops-console` in this repository, to keep the surface area consistent and reviewable. Section 3's
   file tree was treated as a structural suggestion, not a literal requirement, given the size of
   this slice.

@@ -190,7 +190,7 @@ describe("enforced anti-requirements", () => {
     const dockerfile = fs.readFileSync("Dockerfile", "utf8");
     const install = dockerfile.indexOf("RUN pnpm install");
     expect(dockerfile.indexOf("COPY packages/ops-console/package.json")).toBeLessThan(install);
-    expect(dockerfile.indexOf("COPY packages/mock-consumer/package.json")).toBeLessThan(install);
+    expect(dockerfile.indexOf("COPY packages/learner-portal/package.json")).toBeLessThan(install);
   });
 
   it("rejects illegal attempt transitions", () => {

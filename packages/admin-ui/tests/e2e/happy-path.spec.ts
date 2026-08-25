@@ -152,14 +152,14 @@ test('LORB-001 Administration workspace happy path (Section 15.6)', async ({ pag
     })
     .toBe('ACTIVE');
 
-  // 12-13. Trigger a launch through the Runtime API (the same endpoint the Mock Consumer calls) and verify the
+  // 12-13. Trigger a launch through the Runtime API (the same endpoint the Learner Portal calls) and verify the
   // resulting attempt carries the "Governed by Launch Policy" reference.
   const learnerLogin = await page.request.fetch(`${IES}/dev-login`, { method: 'POST', headers: { 'content-type': 'application/json' }, data: { subject: 'synthetic-happy-path-learner' } });
   const learnerToken = (await learnerLogin.json()).access_token as string;
   const launch = await page.request.fetch(`${RUNTIME_BASE}/launches`, {
     method: 'POST',
     headers: { authorization: `Bearer ${learnerToken}`, 'idempotency-key': `${unique}` },
-    data: { contract_version: '1.0', consumer_id: 'mock-consumer', repository_id: repository.repository_id, object_id: crypto.randomUUID(), requested_launch_mode: 'embedded-iframe', locale: 'en-GB' },
+    data: { contract_version: '1.0', consumer_id: 'learner-portal', repository_id: repository.repository_id, object_id: crypto.randomUUID(), requested_launch_mode: 'embedded-iframe', locale: 'en-GB' },
   });
   expect(launch.status()).toBe(201);
   const launchBody = await launch.json();

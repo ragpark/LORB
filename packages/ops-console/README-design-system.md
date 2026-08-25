@@ -9,7 +9,7 @@ A later slice is expected to re-skin the console to the approved PDS layer witho
 Ops Console is the reference implementation for `packages/design-system/src/foundation.css`, the
 structural layer (spacing, radius, type, motion, focus ring, console shell, and shared component
 shapes such as the card grid, drawer/dialog and status badge) shared with the Admin workspace and,
-for common component shapes only, the Mock Consumer. `src/styles.css` imports the foundation and
+for common component shapes only, the Learner Portal. `src/styles.css` imports the foundation and
 then defines only this surface's own colour tokens (`--lorb-*` custom properties) and the handful
 of components — search bar, stat panel, launcher form, table — that are specific to this console.
 

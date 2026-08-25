@@ -1,0 +1,15 @@
+{
+  "name": "@lorb/web-auth",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --pretty false"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

@@ -1,4 +1,4 @@
-// STUB — NOT PRODUCTION — BLOCKED BY BLK-03, BLK-07, BLK-08, BLK-09, BLK-11. Administration workspace Wave 1 approval inbox and execution.
+// Administration: the approval inbox and execution of approved actions.
 // Not enumerated as its own file in the original brief's Section 3 layout (which lists repositories/memberships/players/launch-policies/audit
 // under routes/admin/), but Section 8.7's approval-request endpoints need a home; grouping them with audit.ts would have been worse for
 // maintainability, so they live in their own file instead.

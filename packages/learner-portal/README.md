@@ -1,4 +1,4 @@
-# LORB Mock Consumer
+# LORB Learner Portal
 
 **DRAFT — human review required — not certified. Non-production only.** This synthetic integration fixture is not ActiveHub, is not a Pearson product, and must never process real learner data.
 
@@ -10,10 +10,10 @@ BLK-03 leaves accountable ownership open. BLK-08 and BLK-09 prevent production a
 
 ## Run locally
 
-Use Node 20 and pnpm 9. Copy `.env.example`, point every URL at the local synthetic stack, then run `pnpm install` and `pnpm --filter mock-consumer dev`. Open `http://localhost:5174`. Tokens are held only for the browser tab.
+Use Node 20 and pnpm 9. Copy `.env.example`, point every URL at the local synthetic stack, then run `pnpm install` and `pnpm --filter learner-portal dev`. Open `http://localhost:5174`. Tokens are held only for the browser tab.
 
 ## Railway non-production
 
-Build static output with `pnpm --filter mock-consumer build`; deployment details are in `README-deploy.md`. A production project is prohibited.
+Build static output with `pnpm --filter learner-portal build`; deployment details are in `README-deploy.md`. A production project is prohibited.
 
 Changes to postMessage envelope handling, launch flow, error taxonomy or anti-requirement enforcement must be re-reviewed against LORB-001.

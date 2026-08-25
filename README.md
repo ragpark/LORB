@@ -6,7 +6,7 @@ This repository demonstrates one native-web-package launch, an embedded sandboxe
 
 ## Learning content examples
 
-Three synthetic learning objects are seeded in the Runtime API's non-production catalogue for presentation in the Player Shell, and are discoverable in the Mock Consumer catalogue, the Ops Console (Learning objects, Package versions, Test launcher), and the Administration workspace (Learning objects):
+Three synthetic learning objects are seeded in the Runtime API's non-production catalogue for presentation in the Player Shell, and are discoverable in the Learner Portal catalogue, the Ops Console (Learning objects, Package versions, Test launcher), and the Administration workspace (Learning objects):
 
 - **Maths foundations: ratios and proportion** (`packages/example-module`) — the original native-web-package activity with a single completion checkpoint.
 - **Reflective Practice Studio** (`packages/example-react-xapi-experience`) — a React web experience. On completion it emits an xAPI statement over the Player Shell's `evidence.emit` channel; the Runtime API queues it in the evidence outbox for the Evidence Forwarder to deliver to the LORB learning record store (`stub-lrs` locally).
@@ -134,7 +134,7 @@ in-process under `pnpm test`, so it is deterministic and needs no containers.
 
 ## Railway deployment (review environments only)
 
-The included `Dockerfile` and `railway.json` deploy the Runtime API as one Railway service. This does **not** remove the draft status or open blockers above, and it must not be treated as a production or shared-environment approval. A review launch additionally requires separate Mock Consumer, Player Shell, and synthetic IES services; use the complete variable matrix and connectivity checklist in [`packages/mock-consumer/README-deploy.md`](packages/mock-consumer/README-deploy.md).
+The included `Dockerfile` and `railway.json` deploy the Runtime API as one Railway service. This does **not** remove the draft status or open blockers above, and it must not be treated as a production or shared-environment approval. A review launch additionally requires separate Learner Portal, Player Shell, and synthetic IES services; use the complete variable matrix and connectivity checklist in [`packages/learner-portal/README-deploy.md`](packages/learner-portal/README-deploy.md).
 
 1. Push the repository to a Git provider and create a Railway project using **Deploy from GitHub repo** (or run `railway up` from the repository root).
 2. Add a **PostgreSQL** service from the project canvas (**+ New → Database → Add PostgreSQL**). In the Runtime API service's **Variables** tab, add `DATABASE_URL=${{Postgres.DATABASE_URL}}` (change `Postgres` if you renamed the database service). Railway's pre-deploy command applies the SQL migration and idempotently seeds a demo repository, learning object, and package version on each deploy.
@@ -211,4 +211,4 @@ The deployed-equivalent launch is split into independently HTTPS-terminated serv
 
 The synthetic IES accepts only `synthetic-*` subjects at `POST /dev-login`, issues ten-minute ES256 tokens with audience `lorb-runtime`, and publishes its key at `/.well-known/jwks.json`. It is strictly a non-production identity simulator.
 
-For the mock consumer image, do not configure `VITE_RUNTIME_ISSUER` in Railway: the image deliberately does not accept or require that build argument and derives the issuer origin from `VITE_RUNTIME_API_BASE`. `VITE_STUB_IES_ISSUER` and `VITE_STUB_IES_LOGIN_URL` must use the real public domain of the deployed synthetic IES; placeholder values such as `<stub-ies-non-production-host>` are not valid configuration. If a Railway build log still contains `test -n "${VITE_RUNTIME_ISSUER}"`, Railway is building an older revision of `Dockerfile.mock-consumer`; deploy the commit containing this paragraph and rebuild without the old cached deployment.
+For the learner portal image, do not configure `VITE_RUNTIME_ISSUER` in Railway: the image deliberately does not accept or require that build argument and derives the issuer origin from `VITE_RUNTIME_API_BASE`. `VITE_STUB_IES_ISSUER` and `VITE_STUB_IES_LOGIN_URL` must use the real public domain of the deployed synthetic IES; placeholder values such as `<stub-ies-non-production-host>` are not valid configuration. If a Railway build log still contains `test -n "${VITE_RUNTIME_ISSUER}"`, Railway is building an older revision of `Dockerfile.learner-portal`; deploy the commit containing this paragraph and rebuild without the old cached deployment.

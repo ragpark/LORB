@@ -630,9 +630,10 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
   const internalServiceToken = runtimeConfig.internalServiceToken;
   // The internal credential and any agent-facing credential are different trust domains with
   // different blast radii; configuring them to the same value collapses that separation.
-  if (internalServiceToken && process.env.MCP_POC_BEARER_TOKEN
-    && internalServiceToken.length === process.env.MCP_POC_BEARER_TOKEN.length
-    && timingSafeEqual(Buffer.from(internalServiceToken), Buffer.from(process.env.MCP_POC_BEARER_TOKEN))) {
+  const agentToken = process.env.MCP_SHARED_BEARER_TOKEN ?? process.env.MCP_POC_BEARER_TOKEN;
+  if (internalServiceToken && agentToken
+    && internalServiceToken.length === agentToken.length
+    && timingSafeEqual(Buffer.from(internalServiceToken), Buffer.from(agentToken))) {
     throw new Error("RUNTIME_INTERNAL_SERVICE_TOKEN must not equal the agent connector's bearer token");
   }
 

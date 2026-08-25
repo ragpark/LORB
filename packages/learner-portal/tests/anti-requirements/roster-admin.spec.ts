@@ -52,7 +52,7 @@ describe('roster administration',()=>{
  });
 
  it('sends administration calls to the admin prefix, not the learner runtime prefix',()=>{
-  const config=readConfig({VITE_ENVIRONMENT_LABEL:'LOCAL-DEV'} as never);
+  const config=readConfig({VITE_ENVIRONMENT_LABEL:'DEVELOPMENT'} as never);
   expect(config.adminApiBase).toMatch(/\/api\/v1\/admin$/);
   expect(config.adminApiBase).not.toBe(config.runtimeApiBase);
  });

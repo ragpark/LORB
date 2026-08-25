@@ -1,5 +1,5 @@
 /**
- * The Player Shell embedded the way the Mock Consumer embeds it.
+ * The Player Shell embedded the way the Learner Portal embeds it.
  *
  * Every other browser test opens the shell as a top-level page, which is what a smart link does. The
  * Consumer UI does not: it puts the shell in `<iframe sandbox="allow-scripts">`, so the shell itself
@@ -20,7 +20,7 @@ test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async () => {
   harness = await startHarness();
-  // Stands in for the Mock Consumer's launch screen: the shell in a sandboxed iframe, nothing else.
+  // Stands in for the Learner Portal's launch screen: the shell in a sandboxed iframe, nothing else.
   await addFixturePage(
     harness,
     "consumer.html",
@@ -45,7 +45,7 @@ async function launchQuiz(subject: string) {
     method: "POST", url: "/api/v1/runtime/launches",
     headers: { authorization: `Bearer ${token}`, "idempotency-key": randomUUID() },
     payload: {
-      contract_version: "1.0", consumer_id: "mock-consumer", repository_id: REPOSITORY_ID,
+      contract_version: "1.0", consumer_id: "learner-portal", repository_id: REPOSITORY_ID,
       object_id: quiz.object_id, requested_launch_mode: "embedded-iframe", locale: "en-GB",
     },
   });

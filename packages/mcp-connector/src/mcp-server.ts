@@ -1,4 +1,14 @@
-// AGENT-FACING TRUST DOMAIN — NOT PRODUCTION — BLOCKED BY BLK-02, BLK-03, BLK-07, BLK-08, BLK-09, BLK-11.
+/**
+ * The agent-facing tool and resource surface.
+ *
+ * A teacher's assistant drafts a quiz, registers it as a learning object, assigns it to a class and
+ * reads back aggregated results — through the real Runtime and Evidence pipeline, not a mock of it.
+ *
+ * A quiz is data, never code: `create_quiz` sends a structured JSON payload that the fixed,
+ * already-reviewed quiz-player package renders, so an agent never registers an executable bundle.
+ * The answer key is stored for the player to mark against and is served only on the learner-facing
+ * content route; no tool or resource here ever returns it.
+ */
 import { randomUUID } from "node:crypto";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -9,14 +19,12 @@ import { LorbServiceError, type BatchLaunch, type LorbClients, type RosterLearne
 export const CONNECTOR_NAME = "lorb-mcp-connector";
 export const CONNECTOR_VERSION = "0.1.0";
 
-const DRAFT_BANNER = "DRAFT — NOT CERTIFIED — LOCAL DEV / REVIEW ENVIRONMENT ONLY. Synthetic data only.";
-
 const json = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] });
 const failure = (message: string) => ({ isError: true, content: [{ type: "text" as const, text: message }] });
 
 function serviceMessage(error: unknown, fallback: string): string {
   if (error instanceof LorbServiceError) {
-    if (error.status === 404) return "That identifier was not found in the LORB review environment.";
+    if (error.status === 404) return "That identifier was not found in LORB.";
     if (error.status === 401 || error.status === 403) return "The connector is not authorised to call that LORB service. Check its service credential configuration.";
     if (error.status === 503) return "That LORB service is not configured in this environment.";
   }
@@ -49,10 +57,10 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     {
       capabilities: { resources: {}, tools: {} },
       instructions: [
-        DRAFT_BANNER,
-        "This connector drafts and assigns quizzes in a LORB review environment.",
+        "This connector drafts, registers and assigns quizzes in LORB, and reads back class results.",
         "Read class:// resources before drafting so questions match what the class has actually been taught.",
-        "assign_quiz creates real learner assignments — always confirm with the teacher before calling it.",
+        "assign_quiz gives real work to real learners — always confirm with the teacher before calling it.",
+        "Results are reported per learner to the teacher who owns the class, and never to anyone else.",
       ].join(" "),
     },
   );
@@ -64,7 +72,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     new ResourceTemplate("class://{classId}/recent-topics", { list: undefined }),
     {
       title: "Class recent topics",
-      description: "Topics recently taught to a class, so generated content is contextually relevant. Synthetic roster data only.",
+      description: "Topics recently taught to a class, so generated content is contextually relevant.",
       mimeType: "application/json",
     },
     async (uri, variables) => {

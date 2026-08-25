@@ -17,7 +17,7 @@
   ],
   "exclude": [
     "packages/ops-console",
-    "packages/mock-consumer",
+    "packages/learner-portal",
     "packages/admin-ui",
     "packages/example-react-xapi-experience",
     "packages/quiz-player"

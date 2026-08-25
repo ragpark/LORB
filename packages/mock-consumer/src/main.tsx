@@ -1,2 +1,0 @@
-import React from 'react';import{createRoot}from'react-dom/client';import{App}from'./App.js';import{readConfig}from'./config.js';import'./styles.css';
-const root=createRoot(document.getElementById('root')!);try{root.render(<React.StrictMode><App config={readConfig()}/></React.StrictMode>)}catch{root.render(<main role="alert"><h1>Configuration error</h1><p>This mock can start only in LOCAL-DEV or RAILWAY-NON-PROD with explicit shell origins.</p></main>)}

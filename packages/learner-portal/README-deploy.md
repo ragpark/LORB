@@ -1,6 +1,6 @@
 # Railway non-production deployment
 
-The sole deploy target is the `lorb-mock-consumer` Railway service in EU West
+The sole deploy target is the `lorb-learner-portal` Railway service in EU West
 (Amsterdam). BLK-08 and BLK-09 prevent real-learner-data use. The MOCK badge and
 environment banner must remain visible in every environment.
 
@@ -10,8 +10,8 @@ A green Railway deployment only proves that each container answered its own
 health check. A launch crosses public HTTPS origins in this order:
 
 ```text
-browser -> Mock Consumer -> synthetic IES /dev-login
-browser -> Mock Consumer -> Runtime API /api/v1/runtime/launches
+browser -> Learner Portal -> synthetic IES /dev-login
+browser -> Learner Portal -> Runtime API /api/v1/runtime/launches
 browser -> Runtime API JWKS (descriptor verification)
 browser -> Player Shell -> packaged activity
 ```
@@ -23,7 +23,7 @@ current Runtime request path remains in-memory.
 | Railway service | Config file | Public endpoint used by the launch |
 | --- | --- | --- |
 | Runtime API | `railway.json` | `https://<runtime-host>` |
-| Mock Consumer | `railway.mock-consumer.json` | `https://<consumer-host>` |
+| Learner Portal | `railway.learner-portal.json` | `https://<consumer-host>` |
 | Player Shell and example package | `railway.player-shell.json` | `https://<shell-host>` |
 | Synthetic IES | `railway.stub-ies.json` | `https://<ies-host>` |
 
@@ -50,10 +50,10 @@ variables. In the instructions below, replace `lorb-runtime`, `lorb-consumer`,
 `https://`, do not add a trailing `/`, and do not substitute one service's
 domain for another.
 
-## Mock Consumer configuration
+## Learner Portal configuration
 
-On the **Mock Consumer service only**, set **Settings -> Build -> Railway Config
-File** to `/railway.mock-consumer.json`. Then open that service's **Variables**
+On the **Learner Portal service only**, set **Settings -> Build -> Railway Config
+File** to `/railway.learner-portal.json`. Then open that service's **Variables**
 tab and add exactly these variables (using the example domains above):
 
 ```text
@@ -140,13 +140,13 @@ Before redeploying, the Railway canvas should contain the following settings:
 
 | Service | Variable | Value points to |
 | --- | --- | --- |
-| Mock Consumer | `VITE_RUNTIME_API_BASE` | Runtime API domain plus `/api/v1/runtime` |
-| Mock Consumer | `VITE_JWKS_URL` | Runtime API domain plus `/api/v1/runtime/jwks` |
-| Mock Consumer | `VITE_PLAYER_SHELL_ORIGIN` | Player Shell domain only |
-| Mock Consumer | `VITE_ALLOWED_SHELL_ORIGINS` | Player Shell domain only |
-| Mock Consumer | `VITE_STUB_IES_ISSUER` | Synthetic IES domain only |
-| Mock Consumer | `VITE_STUB_IES_LOGIN_URL` | Synthetic IES domain plus `/dev-login` |
-| Runtime API | `ALLOWED_CONSUMER_ORIGINS` | Mock Consumer domain only |
+| Learner Portal | `VITE_RUNTIME_API_BASE` | Runtime API domain plus `/api/v1/runtime` |
+| Learner Portal | `VITE_JWKS_URL` | Runtime API domain plus `/api/v1/runtime/jwks` |
+| Learner Portal | `VITE_PLAYER_SHELL_ORIGIN` | Player Shell domain only |
+| Learner Portal | `VITE_ALLOWED_SHELL_ORIGINS` | Player Shell domain only |
+| Learner Portal | `VITE_STUB_IES_ISSUER` | Synthetic IES domain only |
+| Learner Portal | `VITE_STUB_IES_LOGIN_URL` | Synthetic IES domain plus `/dev-login` |
+| Runtime API | `ALLOWED_CONSUMER_ORIGINS` | Learner Portal domain only |
 | Runtime API | `RUNTIME_PUBLIC_ISSUER` | Runtime API's own domain only |
 | Runtime API | `PLAYER_SHELL_ORIGIN` | Player Shell domain only |
 | Runtime API | `PACKAGE_PUBLIC_URL` | Player Shell domain plus `/module/index.html` |
@@ -156,7 +156,7 @@ Before redeploying, the Railway canvas should contain the following settings:
 | Player Shell | _(none)_ | No variables required |
 
 Redeploy the **Synthetic IES**, then **Player Shell**, then **Runtime API**, and
-finally the **Mock Consumer**. The ordering ensures that every public dependency
+finally the **Learner Portal**. The ordering ensures that every public dependency
 is available when the Consumer is rebuilt with its `VITE_*` values.
 
 ## Connectivity checks

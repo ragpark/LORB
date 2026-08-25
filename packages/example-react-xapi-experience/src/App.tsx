@@ -41,7 +41,7 @@ const PROMPTS = [
  * The target origin for the outbound handshake.
  *
  * `document.referrer` names the shell when the shell has an origin to name. It does not when the
- * shell is itself sandboxed without `allow-same-origin` — the Mock Consumer embeds it exactly that
+ * shell is itself sandboxed without `allow-same-origin` — the Learner Portal embeds it exactly that
  * way — because a document with an opaque origin sends no referrer. An opaque origin also cannot be
  * addressed by any concrete target origin, so in that case "*" is not a shortcut, it is the only
  * value that reaches the shell at all.

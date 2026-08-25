@@ -1,4 +1,4 @@
-// STUB — NOT PRODUCTION — BLOCKED BY BLK-03, BLK-11. Administration workspace Wave 1 Postgres access.
+// Administration and roster database access.
 import pg from "pg";
 
 let pool: pg.Pool | undefined;

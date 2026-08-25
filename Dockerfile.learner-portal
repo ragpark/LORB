@@ -5,56 +5,63 @@ RUN corepack enable \
 
 WORKDIR /app
 
-# Copy the workspace manifests before installing so pnpm discovers the
-# ops-console workspace and installs its React, Vite, and TypeScript packages.
+# Install from the workspace root so pnpm resolves the portal's complete build dependency graph,
+# including the workspace-linked packages, before the application source is copied.
 COPY package.json pnpm-workspace.yaml ./
-COPY packages/ops-console/package.json ./packages/ops-console/package.json
+COPY packages/learner-portal/package.json ./packages/learner-portal/package.json
 COPY packages/web-auth/package.json ./packages/web-auth/package.json
-
 RUN pnpm install --no-frozen-lockfile
 
-COPY packages/ops-console ./packages/ops-console
+COPY packages/learner-portal ./packages/learner-portal
 COPY packages/web-auth ./packages/web-auth
-# The shared UI design-system foundation that ops-console's styles.css imports by relative path.
+# The shared UI foundation that the portal's styles.css imports by relative path.
 COPY packages/design-system ./packages/design-system
 
-# Vite substitutes these public, non-secret values during the image build.
+# Vite substitutes these public, non-secret integration values at build time. None of them is a
+# credential: the OIDC client id identifies a public client, which is what a browser app has to be.
 ARG VITE_RUNTIME_API_BASE
-ARG VITE_EVIDENCE_API_BASE
 ARG VITE_JWKS_URL
-ARG VITE_ALLOWED_API_ORIGINS
+ARG VITE_PLAYER_SHELL_ORIGIN
+ARG VITE_ENVIRONMENT_LABEL
+ARG VITE_ALLOWED_SHELL_ORIGINS
 ARG VITE_OIDC_ISSUER
 ARG VITE_OIDC_CLIENT_ID
 ARG VITE_OIDC_REDIRECT_URI
 ARG VITE_OIDC_AUDIENCE
 ARG VITE_OIDC_SCOPE
-ARG VITE_ENVIRONMENT_LABEL
-# Optional: route-only link to the separately deployed Administration workspace. Not required to build.
-ARG VITE_ADMIN_UI_ORIGIN
+ARG VITE_ADMIN_API_BASE
 
 ENV VITE_RUNTIME_API_BASE=${VITE_RUNTIME_API_BASE}
-ENV VITE_EVIDENCE_API_BASE=${VITE_EVIDENCE_API_BASE}
 ENV VITE_JWKS_URL=${VITE_JWKS_URL}
-ENV VITE_ALLOWED_API_ORIGINS=${VITE_ALLOWED_API_ORIGINS}
+ENV VITE_PLAYER_SHELL_ORIGIN=${VITE_PLAYER_SHELL_ORIGIN}
+ENV VITE_ENVIRONMENT_LABEL=${VITE_ENVIRONMENT_LABEL}
+ENV VITE_ALLOWED_SHELL_ORIGINS=${VITE_ALLOWED_SHELL_ORIGINS}
 ENV VITE_OIDC_ISSUER=${VITE_OIDC_ISSUER}
 ENV VITE_OIDC_CLIENT_ID=${VITE_OIDC_CLIENT_ID}
 ENV VITE_OIDC_REDIRECT_URI=${VITE_OIDC_REDIRECT_URI}
 ENV VITE_OIDC_AUDIENCE=${VITE_OIDC_AUDIENCE}
 ENV VITE_OIDC_SCOPE=${VITE_OIDC_SCOPE}
-ENV VITE_ENVIRONMENT_LABEL=${VITE_ENVIRONMENT_LABEL}
-ENV VITE_ADMIN_UI_ORIGIN=${VITE_ADMIN_UI_ORIGIN}
+ENV VITE_ADMIN_API_BASE=${VITE_ADMIN_API_BASE}
 
-# Railway deployment of this image is expressly limited to non-production.
+# The build refuses anything that would produce a portal nobody can trust: an unrecognised
+# environment, a missing integration endpoint, a wildcard shell origin, or — outside development —
+# no identity provider, which would leave the local sign-in as the only way in.
 RUN case "${VITE_ENVIRONMENT_LABEL}" in \
         PRODUCTION|STAGING|DEVELOPMENT) : ;; \
         *) echo "VITE_ENVIRONMENT_LABEL must be PRODUCTION, STAGING or DEVELOPMENT" >&2; exit 1 ;; \
     esac \
+    && test -n "${VITE_RUNTIME_API_BASE}" \
+    && test -n "${VITE_JWKS_URL}" \
+    && test -n "${VITE_PLAYER_SHELL_ORIGIN}" \
+    && test -n "${VITE_ALLOWED_SHELL_ORIGINS}" \
+    && test "${VITE_ALLOWED_SHELL_ORIGINS}" != "*" \
+    && case "${VITE_ALLOWED_SHELL_ORIGINS}" in *'*'*) echo "shell origins must not contain a wildcard" >&2; exit 1 ;; esac \
     && if [ "${VITE_ENVIRONMENT_LABEL}" != "DEVELOPMENT" ]; then \
            test -n "${VITE_OIDC_ISSUER}" && test -n "${VITE_OIDC_CLIENT_ID}" \
            || { echo "VITE_OIDC_ISSUER and VITE_OIDC_CLIENT_ID are required outside development" >&2; exit 1; }; \
        fi
 
-RUN pnpm --filter ops-console build
+RUN pnpm --filter learner-portal build
 
 FROM nginx:1.27-alpine AS runtime
 
@@ -68,6 +75,10 @@ RUN rm /etc/nginx/conf.d/default.conf \
         '    root /usr/share/nginx/html;' \
         '    index index.html;' \
         '' \
+        '    add_header X-Content-Type-Options nosniff always;' \
+        '    add_header X-Frame-Options DENY always;' \
+        '    add_header Referrer-Policy no-referrer always;' \
+        '' \
         '    location = /health {' \
         '        access_log off;' \
         '        default_type application/json;' \
@@ -78,9 +89,9 @@ RUN rm /etc/nginx/conf.d/default.conf \
         '        try_files $uri $uri/ /index.html;' \
         '    }' \
         '}' \
-        > /etc/nginx/conf.d/ops-console.conf
+        > /etc/nginx/conf.d/learner-portal.conf
 
-COPY --from=build /app/packages/ops-console/dist /usr/share/nginx/html
+COPY --from=build /app/packages/learner-portal/dist /usr/share/nginx/html
 
 EXPOSE 8080
 

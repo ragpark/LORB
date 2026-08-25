@@ -1,6 +1,6 @@
 @import '../../design-system/src/foundation.css';
 
-/* Mock Consumer palette — deliberately generic, not a LORB house style: this surface simulates a
+/* Learner Portal palette — deliberately generic, not a LORB house style: this surface simulates a
  * third-party consuming platform, not LORB itself (see README-design-system.md). It shares the
  * structural foundation above (spacing, radii, focus ring, card/drawer shapes) but keeps its own
  * warm, brand-neutral colours and its own simple flowing layout rather than the console shell. */
@@ -48,7 +48,7 @@ header {
   font-weight: 800;
 }
 
-.mock-banner {
+.environment-notice {
   background: #4a3212;
   color: #fff7df;
   text-align: center;
@@ -136,7 +136,7 @@ dt {
 
 @media (max-width: 767px) {
   header,
-  .mock-banner,
+  .environment-notice,
   main,
   .diagnostics {
     display: none;

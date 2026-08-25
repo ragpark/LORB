@@ -1,9 +1,15 @@
-import {describe,expect,it,beforeEach,vi} from 'vitest';import {readFileSync} from 'node:fs';import {resolve} from 'node:path';import {fileURLToPath} from 'node:url';import {readConfig} from '../../src/config.js';import {errorCopy} from '../../src/errors.js';import {acceptPlayerMessage} from '../../src/messages.js';import {sanitise} from '../../src/security.js';
+import {describe,expect,it,beforeEach,vi} from 'vitest';import {readFileSync} from 'node:fs';import {resolve} from 'node:path';import {fileURLToPath} from 'node:url';import {readConfig} from '../../src/config.js';import {errorCopy} from '../../src/errors.js';import {acceptPlayerMessage} from '../../src/messages.js';import {sanitise} from '../../src/security.js';import {allowsDevelopmentSignIn,environmentNotice} from '@lorb/web-auth';
 const packageRoot=fileURLToPath(new URL('../..',import.meta.url));const source=(file:string)=>readFileSync(resolve(packageRoot,file),'utf8');
 const envelope={protocol:'lorb-player',version:'1.0',type:'experience.complete',message_id:'1b4e28ba-2fa1-11d2-883f-0016d3cca427',correlation_id:'1b4e28ba-2fa1-11d2-883f-0016d3cca428',reply_to:null,sent_at:'2026-08-14T00:00:00.000Z',payload:{}};
-describe('mock consumer enforcement',()=>{beforeEach(()=>{vi.restoreAllMocks()});
- it('puts skip link before chrome and the banner before interactive header controls',()=>{const app=source('src/App.tsx');expect(app.indexOf('<a className="skip"')).toBeLessThan(app.indexOf('<Header'));expect(app).toContain('MOCK — LORB-001 CONSUMER SIMULATION — NOT LMS')});
- it('renders badge and environment',()=>{const app=source('src/App.tsx');expect(app).toContain('className="badge">MOCK');expect(app).toContain('{environment}')});
+describe('learner portal enforcement',()=>{beforeEach(()=>{vi.restoreAllMocks()});
+ it('puts the skip link before the chrome',()=>{const app=source('src/App.tsx');expect(app.indexOf('<a className="skip"')).toBeLessThan(app.indexOf('<Header'))});
+ // A non-production portal says so; production shows nothing, so a banner that is present is
+ // always telling the reader something.
+ it('shows an environment notice outside production and none inside it',()=>{const app=source('src/App.tsx');expect(app).toContain('environmentNoticeFor(config.environment)');expect(environmentNotice('PRODUCTION')).toBeUndefined();expect(environmentNotice('STAGING')).toBeTruthy()});
+ it('names the environment in the header only when it is not production',()=>{const app=source('src/App.tsx');expect(app).toContain("environment!=='PRODUCTION'&&<span className=\"environment\">{environment}</span>")});
+ // A deployed portal must not be able to obtain a learner session by naming a subject.
+ it('confines the local sign-in to a development environment',()=>{const app=source('src/App.tsx');expect(app).toContain('allowsDevelopmentSignIn(config.environment)');expect(allowsDevelopmentSignIn('PRODUCTION')).toBe(false)});
+ it('refuses to build a portal outside development without an identity provider',()=>{expect(()=>readConfig({VITE_ENVIRONMENT_LABEL:'STAGING'} as never)).toThrow(/VITE_OIDC_ISSUER/)});
  it('rejects unsupported environment labels and wildcard origins',()=>{expect(()=>readConfig({VITE_ENVIRONMENT_LABEL:'PRODUCTION'} as ImportMetaEnv)).toThrow();expect(()=>readConfig({VITE_ALLOWED_SHELL_ORIGINS:'*'} as ImportMetaEnv)).toThrow()});
  it('derives the Runtime descriptor issuer when the optional override is blank',()=>{const config=readConfig({VITE_RUNTIME_API_BASE:'https://runtime.example/api/v1/runtime',VITE_RUNTIME_ISSUER:'',VITE_ALLOWED_SHELL_ORIGINS:'https://shell.example'} as ImportMetaEnv);expect(config.runtimeIssuer).toBe('https://runtime.example')});
  it('removes suspected identity fields recursively',()=>{const leak=vi.fn();expect(sanitise({title:'Safe',email:'hidden',nested:{date_of_birth:'hidden'}},leak)).toEqual({title:'Safe',nested:{}});expect(leak).toHaveBeenCalledTimes(2)});

@@ -1,18 +1,15 @@
-// NEW INTERNAL TRUST BOUNDARY — NOT PRODUCTION — BLOCKED BY BLK-08.
+// The internal service-to-service trust boundary.
 //
-// The routes under /api/v1/internal/runtime are a *service-to-service* surface, distinct from both
-// the consumer surface (IES-issued ES256 access tokens, audience `lorb-runtime`) and the player
-// surface (Runtime-signed launch descriptors, audience `lorb-player`). It exists so one internal
-// caller — currently only packages/mcp-connector — can mint many learner launches from a single
-// request instead of impersonating one IES login per learner.
+// The routes under /api/v1/internal/runtime are distinct from both the consumer surface (provider
+// access tokens, audience `lorb-runtime`) and the player surface (Runtime-signed launch descriptors,
+// audience `lorb-player`). They exist so one internal caller can record an assignment for a whole
+// class from a single request instead of impersonating one login per learner.
 //
-// This is a new authenticated surface on the Runtime API and therefore a material change to the
-// launch surface under the repository's own governance rule. It needs the same human LORB-001
-// re-review the README requires for any other launch-surface change.
-//
-// PoC-grade credential: one pre-shared token per environment, compared in constant time. It is not
-// an IdP, not scoped, not rotatable, and carries no principal identity. It must never be issued to a
-// browser and must never be accepted as, or exchanged for, an IES token or a launch descriptor.
+// The credential is one pre-shared service token per environment, compared in constant time. It
+// carries no principal identity, so it authorises the *service*, never a person: every route behind
+// it derives the acting teacher from an explicit agent-principal link instead. It must never be
+// issued to a browser, and must never be accepted as, or exchanged for, a learner access token or a
+// launch descriptor. Rotating it is a deployment-variable change on both sides.
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
 

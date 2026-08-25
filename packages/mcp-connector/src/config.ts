@@ -1,22 +1,26 @@
-// AGENT-FACING TRUST DOMAIN — NOT PRODUCTION — BLOCKED BY BLK-03, BLK-07, BLK-08.
+// The agent-facing trust domain.
 //
-// This service authenticates a *teacher's agent session* (e.g. Claude over MCP). That is a different
-// actor, with a different lifetime and a different blast radius, from the learner identities the
-// synthetic IES issues. The two never share a token, a scope, or a signing key:
+// This service authenticates a *teacher's agent session* (Claude over MCP, for instance). That is a
+// different actor, with a different lifetime and a different blast radius, from the learner
+// identities the platform's identity provider issues. The two never share a token, a scope, or a
+// signing key:
 //
-//   agent   -> AUTH_MODE=poc:  pre-shared bearer token, no IdP behind it, local dev and CI only
-//              AUTH_MODE=oidc: a token issued by an external identity provider the institution
-//                              already runs, validated here against that provider's JWKS
-//   learner -> IES-issued short-lived ES256 token, audience `lorb-runtime`, one launch
+//   agent   -> AUTH_MODE=oidc:         a token issued by the identity provider the institution
+//                                      already runs, validated here against that provider's JWKS.
+//                                      The only mode a deployed environment may use.
+//              AUTH_MODE=shared-token: one pre-shared bearer token, no identity provider behind it.
+//                                      Local development and continuous integration only; refused
+//                                      outright when NODE_ENV is production or staging.
+//   learner -> a short-lived access token from the same provider, audience `lorb-runtime`, one launch
 //
-// An agent token must never reach a launch descriptor or an IES token, and an IES token must never
-// be accepted here.
+// An agent token must never reach a launch descriptor or a learner access token, and a learner
+// token must never be accepted here.
 //
 // In `oidc` mode this connector is an OAuth **resource server** and nothing more. It validates
 // tokens and publishes metadata; it never issues, refreshes, stores, or exchanges a credential, and
 // it holds no client secret. Whoever runs the identity provider stays the only issuer of identity.
 
-export type AuthMode = "poc" | "oidc";
+export type AuthMode = "shared-token" | "oidc";
 
 /** Set only when authMode is "oidc". */
 export interface OidcConfig {
@@ -37,7 +41,7 @@ export interface OidcConfig {
 
 export interface ConnectorConfig {
   authMode: AuthMode;
-  /** Pre-shared bearer token for the agent session, in "poc" mode only. Compared in constant time. */
+  /** Pre-shared bearer token for the agent session, in "shared-token" mode only. Constant-time compared. */
   agentBearerToken: string;
   /** Present exactly when authMode is "oidc". */
   oidc?: OidcConfig;
@@ -56,20 +60,28 @@ export class ConnectorConfigError extends Error {}
 const trimBase = (value: string) => value.replace(/\/$/, "");
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConnectorConfig {
+  const production = env.NODE_ENV === "production" || env.NODE_ENV === "staging";
+  // OIDC is the default. A deployment that says nothing gets the mode a deployment should have.
+  // `poc` is still accepted as the previous name for `shared-token`, so an existing development
+  // environment keeps working without an edit.
+  const requested = env.AUTH_MODE ?? (production ? "oidc" : "shared-token");
+  const authMode: string = requested === "poc" ? "shared-token" : requested;
   // Fail closed on an unrecognised mode rather than silently degrading to no authentication.
-  const authMode = env.AUTH_MODE ?? "poc";
-  if (authMode !== "poc" && authMode !== "oidc") {
-    throw new ConnectorConfigError(`AUTH_MODE must be "poc" or "oidc". Received "${authMode}".`);
+  if (authMode !== "shared-token" && authMode !== "oidc") {
+    throw new ConnectorConfigError(`AUTH_MODE must be "oidc" or "shared-token". Received "${requested}".`);
+  }
+  if (production && authMode !== "oidc") {
+    throw new ConnectorConfigError('AUTH_MODE must be "oidc" in production: a single pre-shared token has no identity behind it, cannot be scoped to one teacher, and cannot be revoked for one agent.');
   }
   const oidc = authMode === "oidc" ? loadOidc(env) : undefined;
-  // The pre-shared token is required in "poc" mode and must be absent in "oidc" mode: leaving it
-  // configured would keep a second, weaker way in alongside the identity provider.
-  const agentBearerToken = env.MCP_POC_BEARER_TOKEN ?? "";
-  if (authMode === "poc" && agentBearerToken.length < MIN_TOKEN_LENGTH) {
-    throw new ConnectorConfigError(`MCP_POC_BEARER_TOKEN must be set and at least ${MIN_TOKEN_LENGTH} characters.`);
+  // The pre-shared token is required in "shared-token" mode and must be absent in "oidc" mode:
+  // leaving it configured would keep a second, weaker way in alongside the identity provider.
+  const agentBearerToken = env.MCP_SHARED_BEARER_TOKEN ?? env.MCP_POC_BEARER_TOKEN ?? "";
+  if (authMode === "shared-token" && agentBearerToken.length < MIN_TOKEN_LENGTH) {
+    throw new ConnectorConfigError(`MCP_SHARED_BEARER_TOKEN must be set and at least ${MIN_TOKEN_LENGTH} characters.`);
   }
   if (authMode === "oidc" && agentBearerToken.length > 0) {
-    throw new ConnectorConfigError('MCP_POC_BEARER_TOKEN must not be set when AUTH_MODE=oidc: the pre-shared token would remain a second, weaker way past the identity provider.');
+    throw new ConnectorConfigError('MCP_SHARED_BEARER_TOKEN must not be set when AUTH_MODE=oidc: the pre-shared token would remain a second, weaker way past the identity provider.');
   }
   const runtimeInternalServiceToken = env.RUNTIME_INTERNAL_SERVICE_TOKEN ?? "";
   if (runtimeInternalServiceToken.length < MIN_TOKEN_LENGTH) {
@@ -77,19 +89,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ConnectorConfi
   }
   // Structural guarantee that the agent-facing and service-to-service credentials stay separate: if
   // they were ever configured to the same value, an agent token would be a Runtime internal credential.
-  if (authMode === "poc" && agentBearerToken === runtimeInternalServiceToken) {
-    throw new ConnectorConfigError("MCP_POC_BEARER_TOKEN and RUNTIME_INTERNAL_SERVICE_TOKEN must differ: the agent-facing and service-to-service trust domains must not share a credential.");
+  if (authMode === "shared-token" && agentBearerToken === runtimeInternalServiceToken) {
+    throw new ConnectorConfigError("The agent bearer token and RUNTIME_INTERNAL_SERVICE_TOKEN must differ: the agent-facing and service-to-service trust domains must not share a credential.");
   }
   const runtimeApiBase = trimBase(env.RUNTIME_API_BASE ?? "http://localhost:3000");
   const port = Number.parseInt(env.PORT ?? env.MCP_CONNECTOR_PORT ?? "4200", 10);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConnectorConfigError("PORT must be a valid TCP port");
   return {
-    authMode,
+    authMode: authMode as AuthMode,
     agentBearerToken,
     oidc,
     runtimeApiBase,
-    // The MVP evidence store is process-local to the Runtime API (see packages/evidence-api), so the
-    // Evidence routes are served by the Runtime API host unless pointed elsewhere.
+    // The Evidence API is mounted on the Runtime API's listener (see src/server.ts), so it defaults
+    // to the same base unless an operator has split them.
     evidenceApiBase: trimBase(env.EVIDENCE_API_BASE ?? runtimeApiBase),
     rosterApiBase: trimBase(env.ROSTER_API_BASE ?? "http://localhost:4100"),
     runtimeInternalServiceToken,

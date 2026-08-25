@@ -1,7 +1,11 @@
-// NOT PRODUCTION — BLK-02, BLK-03 and BLK-07 ARE IMPLICATED. See 004_roster.sql and stub-roster/STUB.md.
 // Roster administration: classes, their learners, assignment of a learning object to a whole class,
-// and the class-level results read-model. Writes are web-only and administrator-authenticated; the
-// MCP connector reads this roster through the internal service-token routes and cannot change it.
+// and the class-level results read model. Writes are administrator-authenticated and web-only; the
+// agent connector reads this roster through the internal service-token routes and cannot change it.
+//
+// The privacy shape is load-bearing and is described in 004_roster.sql: no row pairs a learner's
+// platform identifier with their LORB pseudonym, so there is no standing re-identification table.
+// Results are matched by recomputing the pseudonym at read time, and the pairing exists only for
+// the duration of the request that needed it.
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";

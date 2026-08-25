@@ -1,4 +1,4 @@
-// AGENT-FACING TRUST DOMAIN — NOT PRODUCTION — BLOCKED BY BLK-08. See config.ts.
+// Token validation for the agent-facing surface. See config.ts for the two trust domains.
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 import type { ConnectorConfig, OidcConfig } from "./config.js";

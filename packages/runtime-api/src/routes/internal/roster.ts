@@ -1,4 +1,5 @@
-// NOT PRODUCTION — BLK-02, BLK-03 and BLK-07 ARE IMPLICATED. See 004_roster.sql.
+// The internal roster projection, scoped to the teacher an agent principal is linked to.
+// See 006_agent_principal_link.sql for why that link is explicit rather than inferred.
 // Read-only roster projection for the MCP connector, behind the internal service token. The agent
 // surface can discover classes and resolve a roster for assignment; it cannot create or change one.
 // Writes live on the administrator-authenticated /api/v1/admin/classes routes and nowhere else.

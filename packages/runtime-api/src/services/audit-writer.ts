@@ -1,4 +1,5 @@
-// STUB — NOT PRODUCTION — BLOCKED BY BLK-03, BLK-07, BLK-08, BLK-09, BLK-11. Administration workspace Wave 1 audit trail.
+// The audit trail. Every administrative decision is recorded, allowed or denied, with the actor as
+// a pseudonym and the state redacted of anything that must never be written down.
 import { randomUUID } from "node:crypto";
 
 export interface AuditInput {

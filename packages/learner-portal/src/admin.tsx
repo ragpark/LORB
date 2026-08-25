@@ -1,4 +1,8 @@
-// MOCK — LORB-001 CONSUMER SIMULATION — NOT LMS.
+// The teacher-facing roster administration area: classes, learners, assignments and results.
+//
+// A learner is identified here by the identifier their identity provider issues, and never paired
+// with their LORB pseudonym in storage — results are matched by recomputing the pseudonym at read
+// time, so no standing re-identification table exists. See 004_roster.sql.
 // Roster administration: classes, learners, taught topics, assignment and results. This is the
 // consumer's own surface — the roster belongs to the LMS, not to LORB — but it is stored by the
 // Runtime API, which is why BLK-02, BLK-03 and BLK-07 are implicated. See stub-roster/STUB.md.
@@ -16,8 +20,8 @@ export interface LearnerResult{learner_ref:string;display_name:string;attempted:
 export interface AgentLink{agent_issuer:string;agent_subject:string;label:string;linked_at:string}
 export interface AssignmentResults{assignment_id:string;object_id:string;assigned_at:string;learner_count:number;attempted_count:number;learners:LearnerResult[]}
 
-/** The synthetic IES only mints tokens for subjects matching this shape, and the roster only accepts
- *  identifiers that could round-trip through it. Enforced again server-side. */
+/** The roster accepts only identifiers that could round-trip through the identity provider, so a
+ *  roster entry and that learner's own sign-in derive the same pseudonym. Enforced again server-side. */
 export const LEARNER_REF=/^[A-Za-z\d._:-]{1,128}$/;
 
 export function AdminWorkspace({config,onSignOut}:{config:Config;onSignOut:()=>void}){
@@ -123,7 +127,7 @@ export function AdminWorkspace({config,onSignOut}:{config:Config;onSignOut:()=>v
    <h1>Classes and learners</h1>
    <button onClick={onSignOut}>Sign out of administration</button>
   </div>
-  <p className="notice">Synthetic identities only. Learner identifiers must match the shape the identity service issues, for example <code>synthetic-9b-01</code>.</p>
+  <p className="notice">Learner identifiers must match the identifier your identity provider issues for that learner, for example <code>9b-01</code>. A display name is shown to you only and never reaches a launch or an evidence statement.</p>
   {error&&<p role="alert" className="admin-error">{error}</p>}
 
   <div className="admin-columns">
@@ -164,7 +168,7 @@ export function AdminWorkspace({config,onSignOut}:{config:Config;onSignOut:()=>v
      </ul>
      <form onSubmit={e=>{e.preventDefault();void addLearner(e.currentTarget)}}>
       <label>Display name<input name="display_name" required maxLength={120}/></label>
-      <label>Learner identifier<input name="learner_ref" required placeholder="synthetic-9b-01"/></label>
+      <label>Learner identifier<input name="learner_ref" required placeholder="9b-01"/></label>
       <button type="submit" disabled={busy}>Add learner</button>
      </form>
 
@@ -233,9 +237,9 @@ export function AdminWorkspace({config,onSignOut}:{config:Config;onSignOut:()=>v
  </section>;
 }
 
-/** Signs in against the synthetic IES asking for the administrator role. */
+/** Development sign-in for the administration area, asking for the administrator role. */
 export async function adminSignIn(config:Config,subject:string):Promise<void>{
- const response=await fetch(config.stubLoginUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({subject,role:'admin'})});
+ const response=await fetch(config.developmentLoginUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({subject,role:'admin'})});
  if(!response.ok)throw new ApiProblem('AUTHENTICATION_EXPIRED',crypto.randomUUID());
  adminTokenStore.set((await response.json() as {access_token:string}).access_token);
 }
