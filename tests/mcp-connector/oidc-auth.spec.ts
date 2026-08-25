@@ -91,7 +91,7 @@ describe("OIDC resource-server mode", () => {
     const response = await post(await mintToken());
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.result.tools.map((tool: { name: string }) => tool.name).sort()).toEqual(["assign_quiz", "create_quiz", "list_classes"]);
+    expect(body.result.tools.map((tool: { name: string }) => tool.name).sort()).toEqual(["assign_quiz", "create_quiz", "list_classes", "whoami"]);
   });
 
   /**

@@ -120,7 +120,7 @@ export function buildMcpConnector(options: ConnectorOptions) {
     // Clients are built per request so the roster reads carry this caller's principal. An injected
     // client layer (tests) is used as-is.
     const requestClients = options.clients ?? createLorbClients(config, options.fetchImpl, req.agentPrincipal);
-    const server = createMcpServer({ clients: requestClients, assignIdempotency, newId: options.newId });
+    const server = createMcpServer({ clients: requestClients, principal: req.agentPrincipal, assignIdempotency, newId: options.newId });
     reply.raw.on("close", () => {
       void transport.close();
       void server.close();

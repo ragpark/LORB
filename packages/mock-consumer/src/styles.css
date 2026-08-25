@@ -169,3 +169,4 @@ dt {
 .link-list li{display:flex;align-items:center;gap:.75rem;padding:.35rem 0;flex-wrap:wrap}
 .link-list code{font-size:.85em;opacity:.75}
 .link-list button{margin-left:auto}
+.link-issuer{opacity:.6;max-width:22rem;overflow-wrap:anywhere}

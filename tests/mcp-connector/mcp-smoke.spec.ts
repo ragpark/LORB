@@ -135,7 +135,7 @@ describe("MCP agent connector proof of concept", () => {
     expect(client.getServerVersion()?.name).toBe("lorb-mcp-connector");
     const tools = await client.listTools();
     const names = tools.tools.map((tool) => tool.name).sort();
-    expect(names).toEqual(["assign_quiz", "create_quiz", "list_classes"]);
+    expect(names).toEqual(["assign_quiz", "create_quiz", "list_classes", "whoami"]);
 
     const assign = tools.tools.find((tool) => tool.name === "assign_quiz")!;
     const create = tools.tools.find((tool) => tool.name === "create_quiz")!;
@@ -204,6 +204,35 @@ describe("MCP agent connector proof of concept", () => {
 
   // Discovery is scoped like every other roster read. A class owned by a different teacher must not
   // appear, or list_classes would hand out exactly the UUIDs the scoping exists to withhold.
+  // The dead end this closes: an unlinked assistant sees an empty list and cannot tell anyone which
+  // principal to link, because the host keeps its token away from the model.
+  it("1a2. whoami reports the principal and its link status", async () => {
+    const client = await connect();
+    const me = toolJson(await client.callTool({ name: "whoami", arguments: {} }));
+    expect(me.authenticated).toBe(true);
+    expect(me.issuer).toBe(POC_PRINCIPAL.issuer);
+    expect(me.subject).toBe(POC_PRINCIPAL.subject);
+    expect(me.linked_to_a_teacher).toBe(true);
+    // It reports the caller's own identity, never the teacher it resolves to.
+    expect(JSON.stringify(me)).not.toContain("smoke-suite");
+    await client.close();
+  });
+
+  it("1a3. whoami says so when the principal is not linked to anyone", async () => {
+    await adminDbPool().query("update agent_principal_link set revoked_at = now() where agent_issuer = $1 and agent_subject = $2", [POC_PRINCIPAL.issuer, POC_PRINCIPAL.subject]);
+    try {
+      const client = await connect();
+      const me = toolJson(await client.callTool({ name: "whoami", arguments: {} }));
+      expect(me.linked_to_a_teacher).toBe(false);
+      expect(me.next_step).toContain("AI assistants");
+      // And the class list is empty for the same reason, which is the pairing that makes it diagnosable.
+      expect(toolJson(await client.callTool({ name: "list_classes", arguments: {} })).classes).toEqual([]);
+      await client.close();
+    } finally {
+      await adminDbPool().query("update agent_principal_link set revoked_at = null where agent_issuer = $1 and agent_subject = $2", [POC_PRINCIPAL.issuer, POC_PRINCIPAL.subject]);
+    }
+  });
+
   it("1c. list_classes shows only the linked teacher's classes", async () => {
     const strangerClass = randomUUID();
     await adminDbPool().query(

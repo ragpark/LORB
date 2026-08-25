@@ -38,14 +38,17 @@ export function registerInternalRosterRoutes(
     const correlation = correlationOf(req);
     if (!guard(req, reply, correlation)) return;
     const teacher = await teacherFor(req);
-    if (!teacher) return { items: [], next_cursor: null, correlation_id: correlation };
+    // `linked` distinguishes "this assistant is not linked to anyone" from "it is linked and that
+    // teacher has no classes". Both return an empty list, and without this the difference is
+    // invisible — which is exactly the dead end an unlinked assistant used to hit.
+    if (!teacher) return { items: [], linked: false, next_cursor: null, correlation_id: correlation };
     const rows = (await adminDbPool().query(
       `select c.class_id, c.name, c.year_group, c.subject,
               (select count(*)::int from class_learner l where l.class_id = c.class_id) as learner_count
        from class c where c.status = 'ACTIVE' and c.created_by_pseudonym = $1 order by c.name`,
       [teacher],
     )).rows;
-    return { items: rows, next_cursor: null, correlation_id: correlation };
+    return { items: rows, linked: true, next_cursor: null, correlation_id: correlation };
   });
 
   // Summary only: name, year group, subject and a count. No learner names or identifiers, matching
