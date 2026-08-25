@@ -144,7 +144,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       if (!deps.principal) {
         return json({
           authenticated: false,
-          detail: "This connector is running without a per-user identity, so it cannot be linked to a teacher.",
+          detail: "LORB could not determine an identity for this connection, so it cannot be linked to a teacher.",
         });
       }
       // The link status comes from the roster projection rather than being inferred from an empty
@@ -160,10 +160,16 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         issuer: deps.principal.issuer,
         subject: deps.principal.subject,
         linked_to_a_teacher: linked ?? "unknown",
+        // Three states, deliberately. Collapsing "unknown" into "linked" would have this tool assert
+        // something it does not know — in the one place someone turns to when nothing else adds up.
+        // Unknown happens when the Runtime API is unreachable, rejects the service credential, or is
+        // mid-deployment on a build that does not report link status yet.
         next_step:
-          linked === false
-            ? "Ask the teacher to add this issuer and subject in the LORB Consumer UI under AI assistants. Both must match exactly, including the issuer's trailing slash."
-            : "This assistant is linked. If class lookups are still empty, that teacher has no classes yet.",
+          linked === true
+            ? "This assistant is linked. If class lookups are still empty, that teacher has no classes yet."
+            : linked === false
+              ? "Ask the teacher to add this issuer and subject in the LORB Consumer UI under AI assistants. Both must match exactly, including the issuer's trailing slash."
+              : "LORB could not be reached to check whether this assistant is linked. The issuer and subject above are still correct to link with.",
       });
     },
   );
