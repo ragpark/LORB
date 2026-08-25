@@ -26,6 +26,23 @@ export interface ConnectorOptions {
 
 const JSONRPC_UNAUTHORIZED = -32001;
 
+/**
+ * Startup banner. It reports the authentication mode actually in force, which means it has to run
+ * after the configuration loads — the previous version was a bare string printed before it, and so
+ * announced "PoC bearer authentication only" on a deployment running OIDC. A log line that lies
+ * about the auth mode is worse than no log line: it sends whoever is debugging the wrong way.
+ *
+ * The issuer and audience are safe to print. Both are published to unauthenticated callers in the
+ * RFC 9728 metadata document, and having them in the logs is exactly what you want when a token is
+ * being rejected.
+ */
+export function startupBanner(config: ConnectorConfig): string {
+  const auth = config.oidc
+    ? `OIDC resource-server mode — validating tokens from ${config.oidc.issuer} for audience ${config.oidc.audience}`
+    : "PoC pre-shared bearer authentication";
+  return `LORB MCP connector: DRAFT, uncertified. ${auth}. Not for shared or production deployment.`;
+}
+
 export function buildMcpConnector(options: ConnectorOptions) {
   const { config } = options;
   const clients = options.clients ?? createLorbClients(config, options.fetchImpl);

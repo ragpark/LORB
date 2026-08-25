@@ -1,10 +1,12 @@
 // AGENT-FACING TRUST DOMAIN — NOT PRODUCTION — LOCAL DEV / REVIEW ENVIRONMENT ONLY.
-console.error("LORB MCP connector: DRAFT, uncertified, PoC bearer authentication only. Not for shared or production deployment.");
 import "dotenv/config";
-import { buildMcpConnector } from "./app.js";
+import { buildMcpConnector, startupBanner } from "./app.js";
 import { loadConfig } from "./config.js";
 
+// Configuration first, so the banner can name the authentication mode that is actually in force.
+// A failure here is fail-closed by design and the thrown ConnectorConfigError names the variable.
 const config = loadConfig();
+console.error(startupBanner(config));
 const app = buildMcpConnector({ config });
 
 const stop = async (signal: string) => {

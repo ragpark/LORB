@@ -60,33 +60,100 @@ second, weaker way past the provider.
 ### Wiring it to Auth0
 
 Auth0 is the provider this has been shaped against, because it is the one of the common three that
-implements dynamic client registration. Four things must be true, and three of them are tenant
-configuration rather than code.
+implements dynamic client registration. Entra does not implement RFC 7591 and Microsoft has said it
+is not on the roadmap; Google Workspace does not either. With those two you pre-register a client
+and paste its ID into the connector settings by hand.
+
+Everything below except step 6 is tenant configuration rather than code. It is written in the order
+you hit the failures, because each one only surfaces after the previous is fixed, and none of the
+error messages name the cause.
 
 **1. Create an API.** Applications → APIs → Create API. Set the **Identifier** to the connector's
 MCP endpoint — `https://<connector-host>/mcp`. The identifier is an opaque string to Auth0, but a
 client checks that the `resource` field in our metadata matches the resource it was trying to
 reach, so making it anything else invites a mismatch. This value becomes `OIDC_AUDIENCE`.
 
-**2. Enable dynamic client registration.** Settings → Advanced → *OIDC Dynamic Application
-Registration*. Without it, a client has to be pre-registered and its ID pasted in by hand.
+> Do **not** use `https://<tenant>/api/v2/`. That is the built-in Management API — the one that
+> administers the tenant — and it is the only API a fresh tenant has, so it is the one you find if
+> you go looking. Pointing the connector at it would accept any tenant-administration token, and
+> would have clients requesting tenant-administration credentials to talk to a quiz service.
 
-> Auth0's registration endpoint is open once enabled: anyone on the internet can create an
-> application in the tenant. That is a rate-limiting and monitoring problem you now own. Weigh it
-> against pre-registering one client and skipping DCR entirely.
+> Auth0 does not let you edit an Identifier after creation. If it is wrong, delete the API and
+> create another.
 
-**3. Set a Default Audience.** Settings → General → API Authorization Settings → *Default Audience*
-→ the identifier from step 1. Without it Auth0 returns an **opaque** access token rather than a
-JWT, and this connector — which verifies a JWT signature — will reject it. The symptom is a 401
-*after* an apparently successful login, so it is worth getting right first time.
+**2. Define at least one permission.** The new API → Permissions → add e.g. `lorb.teacher`. This
+looks optional and is not: step 3 is a choice of *which permissions* third-party applications get
+by default, and with none defined there is nothing to grant.
 
-**4. Set `OIDC_ISSUER` with its trailing slash.** Auth0 mints `iss` as
-`https://<tenant>.<region>.auth0.com/`, and the claim is compared byte for byte. Copy it exactly
-as the tenant's discovery document reports it. `OIDC_JWKS_URL` is then derived automatically and
-does not need setting.
+**3. Authorise third-party applications.** The API → Settings → **Default Permissions for
+Third-Party Applications** → *Authorized for User-Delegated Access*. A dynamically registered
+client is a third-party application, and third-party applications get no API access by default.
 
-If you define a permission on the API (say `lorb.teacher`), set `OIDC_REQUIRED_SCOPE` to it and a
-token without that permission gets a 403 rather than access.
+*Symptom if skipped:* `invalid_request: Client "tpc_…" is not authorized to access resource server
+"https://…/mcp"`, at the authorize step, before any login screen.
+
+**4. Allow a connection to serve third-party clients.** Authentication → Database →
+`Username-Password-Authentication` → **Enable for third-party clients** (labelled *Promote to
+domain level* in some tenants). Without it the client has no way to authenticate anyone.
+
+**5. Enable dynamic client registration** and **set a Default Audience.** Settings → Advanced →
+*OIDC Dynamic Application Registration*; then Settings → General → API Authorization Settings →
+*Default Audience* → the identifier from step 1.
+
+Without the Default Audience, Auth0 returns an **opaque** access token rather than a JWT, and this
+connector — which verifies a JWT signature — rejects it. The symptom is a 401 *after* an
+apparently successful login, which sends you hunting in the wrong place.
+
+**6. Configure the connector.** `OIDC_ISSUER` must carry its **trailing slash**: Auth0 mints `iss`
+as `https://<tenant>.<region>.auth0.com/` and the claim is compared byte for byte. Copy it exactly
+as the tenant's discovery document reports it. `OIDC_JWKS_URL` is derived and need not be set.
+`OIDC_REQUIRED_SCOPE` is optional; note that a client requesting only OIDC scopes will not carry
+your API permission, so setting it will 403 every token unless the client asks for that scope.
+
+#### Two things that will bite you
+
+**Every failed connector attempt consumes an Auth0 application slot.** Each attempt that reaches
+the authorize step has already completed a dynamic registration and created a third-party client.
+Retry a failing setup half a dozen times and the tenant hits its application limit, at which point
+registration itself starts failing:
+
+```
+403 {"errorCode":"too_many_entities",
+     "message":"You reached the limit of entities of this type for this tenant."}
+```
+
+The failure then looks like a regression — it worked, now it does not, and nothing was changed.
+The fix is to delete the accumulated `tpc_…` applications named "Claude" in Applications →
+Applications. The lesson is to fix the tenant configuration and make *one* attempt, rather than
+retrying on failure.
+
+**That limit is a denial-of-service vector.** Once DCR is enabled, `/oidc/register` is open to
+unauthenticated callers. An attacker does not need to authenticate to anything: they call it in a
+loop until the tenant's application quota is exhausted, after which no legitimate client can
+register. For a proof of concept that is a known and accepted exposure. It is not acceptable for
+anything real, and it is a reason to weigh pre-registering a single client against enabling DCR at
+all.
+
+#### Diagnosing a failure
+
+The connector's own logs answer very little here; the tenant log answers almost everything. Auth0
+Dashboard → Monitoring → Logs, newest entry, read `description`.
+
+| What the log says | What it means |
+|---|---|
+| `Service not found: https://…/mcp` | No API in the tenant has that exact Identifier (step 1) |
+| `Client "tpc_…" is not authorized to access resource server` | Third-party access not granted (steps 2–3) |
+| Anything naming a connection | No domain-level connection (step 4) |
+| `too_many_entities` from `/oidc/register` | Application quota exhausted — delete the orphaned clients |
+
+To test registration directly, without going through a client:
+
+```
+curl -i -X POST "https://<tenant>/oidc/register" -H "Content-Type: application/json" \
+  -d '{"client_name":"dcr-test","redirect_uris":["https://claude.ai/api/mcp/auth_callback"]}'
+```
+
+A 201 creates a real application — delete it afterwards. The status line is half the answer.
 
 ### What `oidc` mode does and does not buy you
 
@@ -274,20 +341,28 @@ until learners actually sit the quiz.
 `npx @modelcontextprotocol/inspector` accepts a URL and a bearer token, and is the quickest way to see
 raw `tools/list` and `resources/read` traffic without an agent in the loop.
 
-### What does not work yet: claude.ai and Claude Desktop
+### claude.ai and Claude Desktop custom connectors
 
-Custom connectors there need a **public HTTPS URL** and discover authorization over OAuth. This
-connector implements neither: it has one pre-shared bearer token and no authorization server, and
-there is no field in those UIs for a static bearer header. Wiring OAuth is BLK-08 work and is
-deliberately not in this PoC.
+These need a **public HTTPS URL** and discover authorization over OAuth, so they require `oidc`
+mode. In `poc` mode they cannot work at all: there is no authorization server to discover, no
+metadata document is served, and neither UI has a field for a static bearer header. The registration
+failure they report — *"Couldn't register with … sign-in service"* — is the absence of that
+discovery chain, not a fault in the client.
 
-Tunnelling the local connector to a public URL is technically possible and **is not recommended**:
-anyone holding the bearer token could then create catalogue entries and assign work to the synthetic
-roster, over an uncertified surface with no privacy or security review behind it (BLK-07, BLK-08).
+In `oidc` mode, against an Auth0 tenant configured as above, the full flow works: 401 challenge →
+RFC 9728 discovery → dynamic client registration → login and consent → a JWT this connector
+verifies. That has been exercised end to end against a live deployment.
+
+None of which makes it safe to leave running. It remains an uncertified surface with no privacy or
+security review behind it (BLK-07, BLK-08), and `oidc` mode authenticates callers without answering
+either question. Tunnelling a local connector to a public URL is still **not recommended** for the
+same reason it always was.
 
 ## Open blockers
 
-Untouched by this package: BLK-02, BLK-03, BLK-07, BLK-08, BLK-09, BLK-11. In particular BLK-07
-(privacy) and BLK-08 (security) bear directly on it — an agent-facing surface that resolves class
+Untouched by this package: BLK-02, BLK-03, BLK-07, BLK-08, BLK-09, BLK-11. Note that BLK-02, BLK-03
+and BLK-07 are separately *implicated* by the roster administration feature the Runtime API now
+carries — see the repository README and `packages/stub-roster/STUB.md`. In particular BLK-07
+(privacy) and BLK-08 (security) bear directly on this package — an agent-facing surface that resolves class
 rosters and reads learner outcomes needs a privacy design and a real authorization design before it is
 anything more than a demonstration.
