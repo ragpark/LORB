@@ -2,14 +2,13 @@
 
 `src/foundation.css` is the structural design-system layer shared by LORB's own management
 surfaces (Ops Console, Admin workspace) and, for common component shapes only, the Learner Portal.
-It is not a component library and not the Pearson Design System — the specification-level PDS
-commitment remains OPEN (BLK-07). This is an interim, hand-rolled CSS foundation, imported by each
-surface's own `src/styles.css` via a relative `@import`.
+It is not a component library: it owns structure, and each surface owns its own colour. Imported by
+each surface's own `src/styles.css` via a relative `@import`.
 
 **What it owns:** spacing scale, radius scale, shadow scale, type stack, motion/reduced-motion
 behaviour, the shared focus ring, and the shape (not colour) of common components — skip link,
 overlay, drawer/dialog, card, badge, tooltip, form-field and button chrome. For Ops Console and the
-Admin workspace specifically, it also owns the console shell: a fixed draft banner, fixed header
+Admin workspace specifically, it also owns the console shell: a fixed environment notice, fixed header
 and fixed sidebar, scoped to a `<div class="app">` root so it never leaks into surfaces that don't
 use that shell shape (e.g. the Learner Portal, which is a simple flowing page by design).
 

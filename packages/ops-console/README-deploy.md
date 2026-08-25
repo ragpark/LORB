@@ -1,21 +1,41 @@
-# Railway non-production deployment
+# Deploying the Operations Console
 
-This deployment is dedicated to non-production use. BLK-08 (Railway procurement/security assessment) and BLK-09 (UK residency) remain open blockers. **Real learner data is prohibited.** Do not present this service as production-ready or connect it to production services.
+Deployment procedure, including provider registration and the full variable matrix, is in
+[docs/runbooks/deployment.md](../../docs/runbooks/deployment.md). This page lists only what is
+specific to this surface.
 
-## Create the Railway service
+## Build arguments
 
-1. Deploy from the same GitHub repository as the rest of LORB.
-2. Use a separate Railway project/service named `lorb-ops-console`.
-3. Keep the Railway service root directory at the repository root. Do not set it to `packages/ops-console`.
-4. Select `Dockerfile.ops-console` as the service Dockerfile. The optional config-as-code file for this service is `railway.ops-console.json`; unlike the Runtime API configuration, it has no database setup pre-deploy command.
-5. Configure the service port as `8080` and health check path as `/health`.
-6. Generate a separate public domain for the console. Do not reuse a Runtime API domain.
-7. Set `VITE_ENVIRONMENT_LABEL=RAILWAY-NON-PROD`. The image build intentionally fails for any other value.
-8. Configure the other required `VITE_*` variables for the non-production environment. API URLs must reference non-production services only.
-9. Deploy or redeploy the service, then verify the DRAFT banner and `RAILWAY-NON-PROD` environment label remain visible.
+Vite substitutes these at build time. None is a credential: an OIDC client id identifies a public
+client, which is what a browser application has to be. There is no way to supply them at runtime — a
+rebuild is how you change an endpoint.
 
-Every `VITE_*` variable is embedded into the static bundle at build time. Changing any of these Railway variables therefore requires a rebuild/redeploy; restarting an existing image is not sufficient.
+| Argument | Notes |
+| --- | --- |
+| `VITE_ENVIRONMENT_LABEL` | `PRODUCTION`, `STAGING` or `DEVELOPMENT`. Any other value fails the build |
+| `VITE_OIDC_ISSUER`, `VITE_OIDC_CLIENT_ID` | Required unless the label is `DEVELOPMENT` |
+| `VITE_OIDC_REDIRECT_URI` | This surface's own origin, registered with the provider |
+| `VITE_OIDC_AUDIENCE` | The Runtime API's audience, so the token opens the right resource |
+| `VITE_RUNTIME_API_BASE` | The Runtime API prefix, e.g. `https://runtime.lorb.example/api/v1/runtime` |
+| `VITE_EVIDENCE_API_BASE` | The Evidence API prefix |
+| `VITE_ALLOWED_API_ORIGINS` | Exact origins, comma-separated. No paths, no trailing slashes, no wildcards |
+| `VITE_ADMIN_UI_ORIGIN` | Optional link to the Administration workspace |
 
-The browser connects to the APIs through their non-production public HTTPS domains. Set `VITE_RUNTIME_API_BASE` to the Runtime API prefix (for example, `https://runtime-nonprod.example/api/v1/runtime`) and set `VITE_EVIDENCE_API_BASE` to the Evidence API prefix (for example, `https://evidence-nonprod.example/api/v1/evidence`). Set `VITE_ALLOWED_API_ORIGINS` to the exact comma-separated origins only (for example, `https://runtime-nonprod.example,https://evidence-nonprod.example`), without API paths, trailing slashes, or wildcards. A successful `/health` response confirms service health; the console itself calls concrete resources such as `repositories`, not the unimplemented `/api/v1/runtime/` root route.
+## After deploying
 
-This service must never be used with real learner data. Do not remove or bypass the DRAFT banner, environment label, origin allow-list, or any other existing anti-requirement enforcement.
+1. `curl -sf https://<host>/health` returns `{"status":"ok"}` (served by nginx, not the application).
+2. Sign in. You should be redirected to the identity provider and back.
+3. In a non-production environment, confirm the environment notice is visible above everything a
+   keyboard user can reach. In production, confirm there is none.
+4. Confirm the surface loads live data rather than an error — a failure here is almost always an
+   origin missing from the Runtime API's `ALLOWED_CONSUMER_ORIGINS`.
+
+## Do not
+
+- Build for a deployed environment without an identity provider. The image refuses, because the
+  alternative is a surface whose only way in accepts any subject a caller names.
+- Put a wildcard in an origin allow-list. The build refuses that too.
+- Remove the environment notice, the origin allow-list, or any control the enforcement suite covers.
+
+The console reaches concrete resources such as `repositories`; there is no `/api/v1/runtime/` root
+route to health-check against.
