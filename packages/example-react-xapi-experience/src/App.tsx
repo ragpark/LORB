@@ -37,8 +37,26 @@ const PROMPTS = [
  * endpoints. The outbound `module.hello` still targets the shell's exact origin; no wildcard is used
  * in either direction.
  */
-function shellOrigin(): string | null {
-  return document.referrer ? new URL(document.referrer).origin : null;
+/**
+ * The target origin for the outbound handshake.
+ *
+ * `document.referrer` names the shell when the shell has an origin to name. It does not when the
+ * shell is itself sandboxed without `allow-same-origin` — the Mock Consumer embeds it exactly that
+ * way — because a document with an opaque origin sends no referrer. An opaque origin also cannot be
+ * addressed by any concrete target origin, so in that case "*" is not a shortcut, it is the only
+ * value that reaches the shell at all.
+ *
+ * This does not move the shell's trust decision. `handshakeAllowed` accepts a hello only from the
+ * window it put in its own iframe, carrying the per-launch nonce it placed in that document's URL,
+ * and the target origin a sender chose is not part of that test. What "*" widens is who could
+ * observe the hello, and the only window that can is `parent` — which, if it is not the shell, is a
+ * page that already embedded this module and wrote its fragment.
+ *
+ * Approved as option A on #59 and flagged for LORB-001 re-review: it changes the postMessage
+ * posture, even though it leaves every enforced control intact.
+ */
+function shellTarget(): string {
+  return document.referrer ? new URL(document.referrer).origin : "*";
 }
 
 /** The shell places a per-launch nonce in this document's URL fragment; only the document it
@@ -62,9 +80,9 @@ function envelope(type: string, payload: Record<string, unknown>, correlationId?
 }
 
 function connectToShell(onContext: (context: ShellContext, port: MessagePort) => void): () => void {
-  const origin = shellOrigin();
+  const origin = shellTarget();
   const nonce = handshakeNonce();
-  if (!origin || !nonce) return () => undefined;
+  if (!nonce) return () => undefined;
   const channel = new MessageChannel();
   const port = channel.port1;
   port.onmessage = (event: MessageEvent) => {

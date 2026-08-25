@@ -3,10 +3,13 @@
 // listens for nothing else on the window. The nonce arrives in this document's URL fragment, so only
 // the document the shell navigated to can present it.
 (function(){
-  var shell=document.referrer?new URL(document.referrer).origin:null;
+  // "*" only when the shell has no origin to name — sandboxed without allow-same-origin it sends no
+  // referrer, and no concrete target origin can address an opaque one. The shell still accepts a
+  // hello only from its own iframe window carrying the launch nonce. See #59 and #60.
+  var shell=document.referrer?new URL(document.referrer).origin:"*";
   var nonce=(/(?:^#|&)lorb_handshake=([^&]+)/.exec(location.hash)||[])[1];
   var statusEl=document.getElementById('status');
-  if(!shell||!nonce){statusEl.textContent='This activity must be opened inside the LORB Player Shell.';return;}
+  if(!nonce){statusEl.textContent='This activity must be opened inside the LORB Player Shell.';return;}
   var envelope=function(type,payload){return {protocol:'lorb-player',version:'1.0',type:type,message_id:crypto.randomUUID(),correlation_id:crypto.randomUUID(),reply_to:null,sent_at:new Date().toISOString(),payload:payload};};
   var channel=new MessageChannel();
   var port=channel.port1;
