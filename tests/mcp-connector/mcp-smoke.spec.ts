@@ -202,6 +202,27 @@ describe("MCP agent connector proof of concept", () => {
     await client.close();
   });
 
+  // Discovery is scoped like every other roster read. A class owned by a different teacher must not
+  // appear, or list_classes would hand out exactly the UUIDs the scoping exists to withhold.
+  it("1c. list_classes shows only the linked teacher's classes", async () => {
+    const strangerClass = randomUUID();
+    await adminDbPool().query(
+      "insert into class (class_id, name, year_group, subject, created_by_pseudonym) values ($1,'Someone Else 10Z','Year 10','History','a-different-teacher')",
+      [strangerClass],
+    );
+    try {
+      const client = await connect();
+      const listed = toolJson(await client.callTool({ name: "list_classes", arguments: {} }));
+      const ids = listed.classes.map((entry: { class_id: string }) => entry.class_id);
+      expect(ids).toContain(SMOKE_CLASS.class_id);
+      expect(ids).not.toContain(strangerClass);
+      expect(JSON.stringify(listed)).not.toContain("Someone Else 10Z");
+      await client.close();
+    } finally {
+      await adminDbPool().query("delete from class where class_id = $1", [strangerClass]);
+    }
+  });
+
   it("2. reads class://{classId}/recent-topics from the roster the Consumer UI writes", async () => {
     const client = await connect();
     const resource = await client.readResource({ uri: `class://${SMOKE_CLASS.class_id}/recent-topics` });
