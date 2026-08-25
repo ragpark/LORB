@@ -36,6 +36,11 @@ const ADMIN_ERROR_STATUS: Record<string, number> = {
   LEARNING_OBJECT_NOT_FOUND: 404,
   LEARNING_OBJECT_NOT_PUBLISHED: 409,
   SMART_LINK_NOT_FOUND: 404,
+  CLASS_NOT_FOUND: 404,
+  CLASS_REQUEST_INVALID: 400,
+  CLASS_EMPTY: 409,
+  LEARNER_REF_INVALID: 400,
+  LEARNER_NOT_FOUND: 404,
 };
 
 const ADMIN_ERROR_TITLE: Record<string, string> = {
@@ -50,6 +55,10 @@ const ADMIN_ERROR_TITLE: Record<string, string> = {
   LEARNING_OBJECT_NOT_FOUND: "Learning object not found",
   LEARNING_OBJECT_NOT_PUBLISHED: "Only published learning objects can have a smart link",
   SMART_LINK_NOT_FOUND: "Smart link not found",
+  CLASS_NOT_FOUND: "Class not found",
+  CLASS_EMPTY: "Add at least one learner to the class before assigning work",
+  LEARNER_REF_INVALID: "One or more learner identifiers are not in a supported shape",
+  LEARNER_NOT_FOUND: "That learner is not in this class",
 };
 
 export function adminProblem(code: string, correlation_id: string, status = ADMIN_ERROR_STATUS[code] ?? 400) {

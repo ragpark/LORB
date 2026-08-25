@@ -19,8 +19,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { FastifyInstance } from "fastify";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
 import { buildEvidence, registerEvidenceRoutes } from "../../packages/evidence-api/src/app.js";
-import { buildRoster } from "../../packages/stub-roster/src/app.js";
-import { STUB_CLASSES } from "../../packages/stub-roster/src/seed.js";
+import { adminDbPool } from "../../packages/runtime-api/src/db/pool.js";
 import { buildMcpConnector } from "../../packages/mcp-connector/src/app.js";
 import { loadConfig } from "../../packages/mcp-connector/src/config.js";
 import { store } from "../../packages/runtime-api/src/core.js";
@@ -34,7 +33,16 @@ const AGENT_TOKEN = "poc-agent-bearer-token-0123456789abcdef";
 const SERVICE_TOKEN = "runtime-internal-service-token-0123456789ab";
 const RUNTIME_BASE = "http://runtime.smoke.test";
 const ROSTER_BASE = "http://roster.smoke.test";
-const STUB_CLASS = STUB_CLASSES[0]!;
+/** The connector now resolves classes from the Runtime API's roster projection rather than the
+ *  synthetic stub, so the smoke test seeds a real class the way the Consumer UI would create one. */
+const SMOKE_CLASS = {
+  class_id: randomUUID(),
+  name: "9B Smoke Science",
+  year_group: "Year 9",
+  subject: "Science",
+  topic: { topic: "Photosynthesis", taught_on: "2026-08-10", summary: "Inputs, outputs and where it happens." },
+  learners: Array.from({ length: 8 }, (_, index) => `synthetic-smoke-${String(index + 1).padStart(2, "0")}`),
+};
 
 const QUIZ_DRAFT = {
   title: "Ratio and proportion check",
@@ -50,16 +58,13 @@ const QUIZ_DRAFT = {
 
 let runtime: Awaited<ReturnType<typeof buildRuntime>>;
 let evidence: FastifyInstance;
-let roster: FastifyInstance;
 let connector: FastifyInstance;
 let connectorUrl: string;
 let iesPrivateKey: CryptoKey | Uint8Array;
 
 /** Routes the connector's outbound HTTP through the in-process LORB services. */
 const injectingFetch = async (input: string, init: { method?: string; headers?: Record<string, string>; body?: string } = {}) => {
-  const target = input.startsWith(ROSTER_BASE) ? roster : runtime.app;
-  const base = input.startsWith(ROSTER_BASE) ? ROSTER_BASE : RUNTIME_BASE;
-  const response = await target.inject({ method: (init.method ?? "GET") as any, url: input.slice(base.length), headers: init.headers, payload: init.body });
+  const response = await runtime.app.inject({ method: (init.method ?? "GET") as any, url: input.slice(RUNTIME_BASE.length), headers: init.headers, payload: init.body });
   return { status: response.statusCode, text: async () => response.body };
 };
 
@@ -82,7 +87,21 @@ beforeAll(async () => {
   // own key, so it is mounted on the Runtime instance here exactly as src/server.ts does in the PoC host.
   evidence = await buildEvidence(runtime.keys.privateKey, RUNTIME_BASE);
   registerEvidenceRoutes(runtime.app as any, runtime.keys.privateKey, RUNTIME_BASE);
-  roster = await buildRoster();
+  await adminDbPool().query("delete from class where class_id = $1", [SMOKE_CLASS.class_id]);
+  await adminDbPool().query(
+    "insert into class (class_id, name, year_group, subject, created_by_pseudonym) values ($1,$2,$3,$4,'smoke-suite')",
+    [SMOKE_CLASS.class_id, SMOKE_CLASS.name, SMOKE_CLASS.year_group, SMOKE_CLASS.subject],
+  );
+  for (const learner_ref of SMOKE_CLASS.learners) {
+    await adminDbPool().query(
+      "insert into class_learner (class_id, learner_ref, display_name, added_by_pseudonym) values ($1,$2,$3,'smoke-suite')",
+      [SMOKE_CLASS.class_id, learner_ref, `Display ${learner_ref}`],
+    );
+  }
+  await adminDbPool().query(
+    "insert into class_topic (class_topic_id, class_id, topic, taught_on, summary) values ($1,$2,$3,$4,$5)",
+    [randomUUID(), SMOKE_CLASS.class_id, SMOKE_CLASS.topic.topic, SMOKE_CLASS.topic.taught_on, SMOKE_CLASS.topic.summary],
+  );
   const config = loadConfig({ AUTH_MODE: "poc", MCP_POC_BEARER_TOKEN: AGENT_TOKEN, RUNTIME_INTERNAL_SERVICE_TOKEN: SERVICE_TOKEN, RUNTIME_API_BASE: RUNTIME_BASE, ROSTER_API_BASE: ROSTER_BASE } as NodeJS.ProcessEnv);
   connector = buildMcpConnector({ config, fetchImpl: injectingFetch });
   await connector.listen({ host: "127.0.0.1", port: 0 });
@@ -92,7 +111,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await connector?.close();
-  await roster?.close();
+  await adminDbPool().query("delete from class where class_id = $1", [SMOKE_CLASS.class_id]).catch(() => undefined);
   await evidence?.close();
   await runtime?.app.close();
 });
@@ -158,18 +177,18 @@ describe("MCP agent connector proof of concept", () => {
     expect(missing.status).toBe(401);
   });
 
-  it("2. reads class://{classId}/recent-topics from the roster stub", async () => {
+  it("2. reads class://{classId}/recent-topics from the roster the Consumer UI writes", async () => {
     const client = await connect();
-    const resource = await client.readResource({ uri: `class://${STUB_CLASS.class_id}/recent-topics` });
+    const resource = await client.readResource({ uri: `class://${SMOKE_CLASS.class_id}/recent-topics` });
     const body = resourceJson(resource);
-    expect(body.class_id).toBe(STUB_CLASS.class_id);
-    expect(body.topics.map((entry: { topic: string }) => entry.topic)).toContain(STUB_CLASS.recent_topics[0]!.topic);
+    expect(body.class_id).toBe(SMOKE_CLASS.class_id);
+    expect(body.topics.map((entry: { topic: string }) => entry.topic)).toContain(SMOKE_CLASS.topic.topic);
     expect(body.source).toMatch(/non-production/);
 
-    const summary = resourceJson(await client.readResource({ uri: `class://${STUB_CLASS.class_id}` }));
-    expect(summary.learner_count).toBe(STUB_CLASS.learners.length);
+    const summary = resourceJson(await client.readResource({ uri: `class://${SMOKE_CLASS.class_id}` }));
+    expect(summary.learner_count).toBe(SMOKE_CLASS.learners.length);
     // The class summary must not hand the agent learner identifiers.
-    expect(JSON.stringify(summary)).not.toContain(STUB_CLASS.learners[0]!.learner_id);
+    expect(JSON.stringify(summary)).not.toContain(SMOKE_CLASS.learners[0]!);
     await client.close();
   });
 
@@ -203,23 +222,25 @@ describe("MCP agent connector proof of concept", () => {
   it("4. assign_quiz creates learner assignments and treats a repeat idempotency_key as a duplicate", async () => {
     const client = await connect();
     const idempotency_key = `smoke-${randomUUID()}`;
-    const first = toolJson(await client.callTool({ name: "assign_quiz", arguments: { object_id: objectId, class_id: STUB_CLASS.class_id, idempotency_key } }));
+    const first = toolJson(await client.callTool({ name: "assign_quiz", arguments: { object_id: objectId, class_id: SMOKE_CLASS.class_id, idempotency_key } }));
     expect(first.duplicate).toBe(false);
-    expect(first.assigned_count).toBe(STUB_CLASS.learners.length);
-    expect(first.learners).toHaveLength(STUB_CLASS.learners.length);
-    for (const learner of first.learners) expect(learner.pseudonym).toMatch(/^[\da-f]{64}$/);
+    expect(first.assigned_count).toBe(SMOKE_CLASS.learners.length);
+    expect(first.pseudonyms).toHaveLength(SMOKE_CLASS.learners.length);
+    for (const pseudonym of first.pseudonyms) expect(pseudonym).toMatch(/^[\da-f]{64}$/);
+    // The result must not hand the agent a name-to-pseudonym mapping for the class.
+    expect(JSON.stringify(first)).not.toContain("Display synthetic-smoke-01");
     // The agent never receives a learner-scoped launch credential.
     const serialised = JSON.stringify(first);
     expect(serialised).not.toMatch(/signed_descriptor|player_url|eyJ/);
-    expect(serialised).not.toContain(STUB_CLASS.learners[0]!.learner_id);
+    expect(serialised).not.toContain(SMOKE_CLASS.learners[0]!);
 
     const assignment = [...store.assignments.values()].find((entry) => entry.object_id === objectId)!;
-    expect(assignment.pseudonyms).toHaveLength(STUB_CLASS.learners.length);
+    expect(assignment.pseudonyms).toHaveLength(SMOKE_CLASS.learners.length);
     // The Runtime store holds pseudonyms only; the platform learner ids used to derive them are not kept.
-    expect(JSON.stringify(assignment)).not.toContain(STUB_CLASS.learners[0]!.learner_id);
+    expect(JSON.stringify(assignment)).not.toContain(SMOKE_CLASS.learners[0]!);
 
     const assignmentsBefore = store.assignments.size;
-    const second = toolJson(await client.callTool({ name: "assign_quiz", arguments: { object_id: objectId, class_id: STUB_CLASS.class_id, idempotency_key } }));
+    const second = toolJson(await client.callTool({ name: "assign_quiz", arguments: { object_id: objectId, class_id: SMOKE_CLASS.class_id, idempotency_key } }));
     expect(second.duplicate).toBe(true);
     expect(second.assignment_id).toBe(first.assignment_id);
     expect(store.assignments.size).toBe(assignmentsBefore);
@@ -228,11 +249,11 @@ describe("MCP agent connector proof of concept", () => {
 
   it("5. a quiz-player completion emits the launched/answered/completed chain through the real evidence pipeline", async () => {
     // Two of the eight assigned learners sit the quiz, through a normal IES-authenticated launch.
-    const sitters = STUB_CLASS.learners.slice(0, 2);
+    const sitters = SMOKE_CLASS.learners.slice(0, 2);
     const answerSets = [["a", "b", "c"], ["a", "b", "a"]];
 
     for (const [index, learner] of sitters.entries()) {
-      const token = await issueIesToken(iesPrivateKey as any, learner.learner_id);
+      const token = await issueIesToken(iesPrivateKey as any, learner);
       const launch = await runtime.app.inject({
         method: "POST", url: "/api/v1/runtime/launches",
         headers: { authorization: `Bearer ${token}`, "idempotency-key": randomUUID() },
@@ -286,14 +307,14 @@ describe("MCP agent connector proof of concept", () => {
     const client = await connect();
     const body = resourceJson(await client.readResource({ uri: `quiz://${objectId}/results` }));
     expect(body.object_id).toBe(objectId);
-    expect(body.assigned_count).toBe(STUB_CLASS.learners.length);
+    expect(body.assigned_count).toBe(SMOKE_CLASS.learners.length);
     expect(body.completed_count).toBe(2);
     // One learner scored 3/3, the other 2/3 — the mean of the real emitted result.score.scaled values.
     expect(body.average_score_scaled).toBeCloseTo(5 / 6, 3);
-    expect(body.not_started_pseudonyms).toHaveLength(STUB_CLASS.learners.length - 2);
+    expect(body.not_started_pseudonyms).toHaveLength(SMOKE_CLASS.learners.length - 2);
     for (const pseudonym of body.not_started_pseudonyms) expect(pseudonym).toMatch(/^[\da-f]{64}$/);
     // Results are pseudonym-keyed; no platform learner identifier appears.
-    for (const learner of STUB_CLASS.learners) expect(JSON.stringify(body)).not.toContain(learner.learner_id);
+    for (const learner of SMOKE_CLASS.learners) expect(JSON.stringify(body)).not.toContain(learner);
     await client.close();
   });
 });

@@ -203,15 +203,15 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         return failure(serviceMessage(error, "The assignment could not be created in LORB."));
       }
 
-      const displayNameByLearnerId = new Map(roster.map((learner) => [learner.learner_id, learner.display_name]));
       const result = {
         assignment_id: batch.assignment_id,
         object_id: batch.object_id,
         class_id: args.class_id,
         assigned_count: batch.assigned_count,
-        // Display-layer resolution only: this mapping lives in the teacher-facing tool result, never
-        // inside a stored xAPI statement. The evidence store holds the pseudonym alone.
-        learners: batch.learners.map((learner) => ({ display_name: displayNameByLearnerId.get(learner.learner_id) ?? "(unknown)", pseudonym: learner.pseudonym })),
+        // Pseudonyms only. Pairing them with learner names here would hand the agent a
+        // re-identification table for the whole class; a teacher who needs that reads it in the
+        // Consumer UI, where the roster already lives and the pairing never leaves the request.
+        pseudonyms: batch.learners.map((learner) => learner.pseudonym),
         results_resource: `quiz://${batch.object_id}/results`,
         duplicate: false,
       };

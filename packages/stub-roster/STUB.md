@@ -16,3 +16,19 @@ Removal blockers: a real roster/entitlement source requires the accountable owne
 (BLK-03), the privacy design for holding class membership (BLK-07), and the
 portfolio-reuse decision (BLK-02). Do not deploy this anywhere but a local dev or
 Railway review environment.
+
+## Superseded by the Runtime API roster (BLK-02, BLK-03 and BLK-07 now implicated)
+
+A persisted roster now exists in the Runtime API (`004_roster.sql`, the
+`/api/v1/admin/classes` routes, and the read-only `/api/v1/internal/roster`
+projection the MCP connector uses). It was built on an explicit instruction to
+build a real roster source rather than extend this synthetic one.
+
+That changes the status of three blockers. They were previously open but not
+implicated, because LORB held no class or membership data at all. They are now
+**open and implicated**: the schema holds class membership, and closing BLK-07 in
+particular is a precondition for this feature holding data about any real person.
+Nothing in that work has been done. This is a proof of concept.
+
+This stub is no longer on the connector's path and is kept only for the
+compose profile and for tests that need a roster with no database behind it.

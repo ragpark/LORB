@@ -13,11 +13,13 @@ import { registerAdminPlayerRoutes } from "./routes/admin/players.js";
 import { registerAdminLaunchPolicyRoutes } from "./routes/admin/launch-policies.js";
 import { registerAdminApprovalRoutes } from "./routes/admin/approvals.js";
 import { registerAdminAuditRoutes } from "./routes/admin/audit.js";
+import { registerAdminClassRoutes } from "./routes/admin/classes.js";
 import { correlationOf, requireAdmin, requireIdempotencyKey, sendAdminError } from "./routes/admin/shared.js";
 import { learningObjectById, learningObjects, packageVersionById, packageVersions, quizContentByObjectId, REPOSITORY } from "./services/catalogue.js";
 import { checkServiceCredential, sendInternalError } from "./routes/internal/service-auth.js";
 import { registerInternalQuizRoutes } from "./routes/internal/quizzes.js";
 import { registerInternalLaunchBatchRoutes } from "./routes/internal/launch-batch.js";
+import { registerInternalRosterRoutes } from "./routes/internal/roster.js";
 
 const problem=(code:string,status:number,correlation_id:string)=>({type:`https://lorb.example/errors/${code}`,title:code==="AUTHENTICATION_EXPIRED"?"Your session has expired":"We could not complete that request",status,code,detail:code==="AUTHENTICATION_EXPIRED"?"Sign in again to continue":"Please check the request and try again",correlation_id,retryable:status>=500,field_errors:[]});
 const defaultConsumerOrigins=["http://localhost:3300","http://localhost:5176","https://lorb-production-consumer.up.railway.app","https://lorb-production-console.up.railway.app","https://lorb-production-beda.up.railway.app"];
@@ -153,11 +155,13 @@ export async function buildRuntime(options:RuntimeOptions={}){
  const internalGuard=(req:any,reply:any,correlation:string)=>{const failure=checkServiceCredential(req,internalServiceToken);if(!failure)return true;void sendInternalError(reply,failure,correlation);return false;};
  registerInternalQuizRoutes(app,internalGuard);
  registerInternalLaunchBatchRoutes(app,{serviceToken:internalServiceToken,privateKey:keys.privateKey,secret,iesIssuer,publicIssuer,playerOrigin,evidenceEndpoint},internalGuard);
+ registerInternalRosterRoutes(app,internalGuard);
  registerAdminRepositoryRoutes(app,adminCtx);
  registerAdminMembershipRoutes(app,adminCtx);
  registerAdminPlayerRoutes(app,adminCtx);
  registerAdminLaunchPolicyRoutes(app,adminCtx);
  registerAdminApprovalRoutes(app,adminCtx);
  registerAdminAuditRoutes(app,adminCtx);
+ registerAdminClassRoutes(app,adminCtx);
  return {app,keys};
 }

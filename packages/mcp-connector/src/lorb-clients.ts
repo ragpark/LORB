@@ -1,6 +1,6 @@
 // AGENT-FACING TRUST DOMAIN — NOT PRODUCTION. Thin HTTP clients for the LORB services this connector
-// depends on. The Runtime internal-service credential is attached *only* to the internal Runtime
-// routes; it is never sent to the roster stub and never returned to the agent.
+// depends on. The Runtime internal-service credential is attached to every internal Runtime route,
+// including the read-only roster projection, and is never returned to the agent.
 import { randomUUID } from "node:crypto";
 import type { QuizDraft } from "../../contracts/src/index.js";
 import type { ConnectorConfig } from "./config.js";
@@ -15,7 +15,10 @@ export class LorbServiceError extends Error {
 
 export interface ClassSummary { class_id: string; name: string; year_group: string; subject: string; learner_count: number }
 export interface RecentTopics { class_id: string; subject: string; year_group: string; topics: Array<{ topic: string; taught_on: string; summary: string }> }
-export interface RosterLearner { learner_id: string; display_name: string }
+/** The internal roster projection returns identifiers only. Display names stay in the roster: the
+ *  agent has no use for them, and a name-to-pseudonym mapping is the one artefact that would undo
+ *  the pseudonymisation this design rests on. */
+export interface RosterLearner { learner_id: string }
 export interface Roster { class_id: string; learners: RosterLearner[] }
 export interface RegisteredQuiz { object_id: string; object_version_id: string; package_version_id: string; package_version: string; content_version: string; question_count: number; title: string }
 export interface BatchLaunchLearner { learner_id: string; pseudonym: string }
@@ -52,9 +55,15 @@ export function createLorbClients(config: ConnectorConfig, fetchImpl: FetchImpl 
   const internal = () => ({ authorization: `Bearer ${config.runtimeInternalServiceToken}` });
 
   return {
-    getClass: (classId) => call("roster", `${config.rosterApiBase}/classes/${encodeURIComponent(classId)}`),
-    getRecentTopics: (classId) => call("roster", `${config.rosterApiBase}/classes/${encodeURIComponent(classId)}/recent-topics`),
-    getRoster: (classId) => call("roster", `${config.rosterApiBase}/classes/${encodeURIComponent(classId)}/roster`),
+    // Roster reads come from the Runtime API's read-only internal projection, so an agent sees the
+    // classes a teacher actually created rather than seed data. Writes are administrator-only and
+    // web-only; there is no roster-mutating path on this connector at all.
+    getClass: (classId) =>
+      call("roster", `${config.runtimeApiBase}/api/v1/internal/roster/classes/${encodeURIComponent(classId)}`, { headers: internal() }),
+    getRecentTopics: (classId) =>
+      call("roster", `${config.runtimeApiBase}/api/v1/internal/roster/classes/${encodeURIComponent(classId)}/recent-topics`, { headers: internal() }),
+    getRoster: (classId) =>
+      call("roster", `${config.runtimeApiBase}/api/v1/internal/roster/classes/${encodeURIComponent(classId)}/roster`, { headers: internal() }),
     createQuiz: (draft, idempotencyKey) =>
       call("runtime", `${config.runtimeApiBase}/api/v1/internal/runtime/quizzes`, {
         method: "POST", headers: { ...internal(), "idempotency-key": idempotencyKey }, body: draft,
