@@ -25,7 +25,7 @@ export interface BatchLaunchLearner { learner_id: string; pseudonym: string }
 export interface BatchLaunch { assignment_id: string; object_id: string; assigned_count: number; created_at: string; learners: BatchLaunchLearner[] }
 export interface ActivityResults { object_id: string; assigned_count: number; completed_count: number; average_score_scaled: number | null; not_started_pseudonyms: string[] }
 
-export interface ClassList { items: ClassSummary[] }
+export interface ClassList { items: ClassSummary[]; linked?: boolean }
 
 /** The verified agent identity, forwarded so the Runtime API can scope the roster to one teacher.
  *  The service credential authenticates the connector, not the person using it. */

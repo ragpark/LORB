@@ -36,6 +36,8 @@ const questionInput = z.object({
 
 export interface McpServerDeps {
   clients: LorbClients;
+  /** The agent principal this request authenticated as, so whoami can report it back. */
+  principal?: { issuer: string; subject: string };
   assignIdempotency: IdempotencyStore<Record<string, unknown>>;
   newId?: () => string;
 }
@@ -117,6 +119,60 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   );
 
   // -------------------------------------------------------------------- tools
+
+  // Identity. An MCP host keeps its access token away from the model, so without this an assistant
+  // cannot tell anyone which principal it presents — and a teacher linking it in the Consumer UI has
+  // to go digging in their identity provider for two values they cannot verify against anything.
+  //
+  // It returns only what is already inside the caller's own token, and never the teacher pseudonym
+  // the principal resolves to: that identifies a different person, and knowing it is not needed to
+  // set up a link.
+  server.registerTool(
+    "whoami",
+    {
+      title: "Show the agent principal this connector sees",
+      description: [
+        "Reports the issuer and subject LORB has authenticated this assistant as, and whether that principal is",
+        "linked to a teacher yet. A teacher pastes these two values into the LORB Consumer UI, under AI",
+        "assistants, to grant this assistant access to their classes. Use this when class or roster lookups come",
+        "back empty, to tell an unlinked assistant apart from a teacher with no classes.",
+      ].join(" "),
+      inputSchema: {},
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async () => {
+      if (!deps.principal) {
+        return json({
+          authenticated: false,
+          detail: "LORB could not determine an identity for this connection, so it cannot be linked to a teacher.",
+        });
+      }
+      // The link status comes from the roster projection rather than being inferred from an empty
+      // class list, which a linked teacher with no classes would also produce.
+      let linked: boolean | undefined;
+      try {
+        linked = (await deps.clients.listClasses()).linked;
+      } catch {
+        linked = undefined;
+      }
+      return json({
+        authenticated: true,
+        issuer: deps.principal.issuer,
+        subject: deps.principal.subject,
+        linked_to_a_teacher: linked ?? "unknown",
+        // Three states, deliberately. Collapsing "unknown" into "linked" would have this tool assert
+        // something it does not know — in the one place someone turns to when nothing else adds up.
+        // Unknown happens when the Runtime API is unreachable, rejects the service credential, or is
+        // mid-deployment on a build that does not report link status yet.
+        next_step:
+          linked === true
+            ? "This assistant is linked. If class lookups are still empty, that teacher has no classes yet."
+            : linked === false
+              ? "Ask the teacher to add this issuer and subject in the LORB Consumer UI under AI assistants. Both must match exactly, including the issuer's trailing slash."
+              : "LORB could not be reached to check whether this assistant is linked. The issuer and subject above are still correct to link with.",
+      });
+    },
+  );
 
   // Discovery. Without this an agent can only read a class whose id it was handed, so every
   // workflow started with a human copying a UUID out of the Consumer UI. Read-only: the roster is

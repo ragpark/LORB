@@ -80,7 +80,12 @@ export function createOidcVerifier(oidc: OidcConfig): TokenVerifier {
     if (oidc.requiredScope && !scopesOf(payload).includes(oidc.requiredScope)) {
       return { ok: false, error: "insufficient_scope" };
     }
-    return { ok: true, issuer: oidc.issuer, subject: typeof payload.sub === "string" ? payload.sub : undefined };
+    // A token carrying no usable subject cannot be resolved to a teacher, so every roster read it
+    // could make would fail closed anyway — and it could never be linked, because there would be
+    // nothing to link. Refusing it here keeps one story: authenticated implies identifiable.
+    const subject = typeof payload.sub === "string" ? payload.sub.trim() : "";
+    if (!subject) return { ok: false, error: "invalid_token" };
+    return { ok: true, issuer: oidc.issuer, subject };
   };
 }
 

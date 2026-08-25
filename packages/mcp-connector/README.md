@@ -204,9 +204,14 @@ come from the identity provider instead — in Auth0, Monitoring → Logs, the `
 successful login through this connector, with the issuer being the tenant URL including its trailing
 slash.
 
-A `whoami` tool returning the verified principal would close that loop, and is deliberately not here
-yet: it would be another addition to the agent-facing surface, and those are worth adding one at a
-time and on purpose.
+The `whoami` tool closes that loop. Ask the assistant which principal it is connecting as and it
+reports the issuer and subject exactly as LORB authenticated them, along with whether that principal
+is linked yet. It returns only what is already inside the caller's own token, and never the teacher
+pseudonym the link resolves to — that identifies a different person and is not needed to set one up.
+
+Without it, a mismatched link is undiagnosable: the class list comes back empty whether the
+principal is unlinked, mistyped, or linked to a teacher who simply has no classes. `whoami`
+separates those cases, which is the difference between a two-minute fix and an afternoon.
 
 ## Resources
 
@@ -220,6 +225,10 @@ Class data comes from `packages/stub-roster`, a non-production stub: LORB-001 ha
 concept of its own.
 
 ## Tools
+
+`whoami` — read-only. Reports the agent principal this connector authenticated, and whether it is
+linked to a teacher. Needed because an MCP host keeps its access token away from the model, so an
+assistant otherwise cannot tell anyone which identity to link.
 
 `list_classes` — read-only. Lists the classes belonging to the teacher this agent principal is
 linked to, with year group, subject and learner count, so a class can be chosen without its

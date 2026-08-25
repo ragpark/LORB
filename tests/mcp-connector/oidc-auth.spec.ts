@@ -91,7 +91,7 @@ describe("OIDC resource-server mode", () => {
     const response = await post(await mintToken());
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.result.tools.map((tool: { name: string }) => tool.name).sort()).toEqual(["assign_quiz", "create_quiz", "list_classes"]);
+    expect(body.result.tools.map((tool: { name: string }) => tool.name).sort()).toEqual(["assign_quiz", "create_quiz", "list_classes", "whoami"]);
   });
 
   /**
@@ -126,6 +126,25 @@ describe("OIDC resource-server mode", () => {
       JSON.stringify({ iss: ISSUER, aud: AUDIENCE, sub: "teacher-0001", scope: SCOPE, exp: Math.floor(Date.now() / 1000) + 300 }),
     ).toString("base64url")}.`;
     expect((await post(unsigned)).status).toBe(401);
+  });
+
+  // A token with no usable subject cannot resolve to a teacher, so it could never be linked and
+  // every roster read it made would fail closed. Accepting it would leave whoami reporting an
+  // authenticated caller with no identity — authenticated must imply identifiable.
+  it("rejects a correctly signed token carrying no subject", async () => {
+    const noSubject = await new SignJWT({ scope: SCOPE })
+      .setProtectedHeader({ alg: "RS256", kid: "idp-key-1" })
+      .setIssuer(ISSUER).setAudience(AUDIENCE).setIssuedAt().setExpirationTime("5m")
+      .sign(signingKey);
+    expect((await post(noSubject)).status).toBe(401);
+  });
+
+  it("rejects a token whose subject is only whitespace", async () => {
+    const blank = await new SignJWT({ scope: SCOPE })
+      .setProtectedHeader({ alg: "RS256", kid: "idp-key-1" })
+      .setIssuer(ISSUER).setAudience(AUDIENCE).setSubject("   ").setIssuedAt().setExpirationTime("5m")
+      .sign(signingKey);
+    expect((await post(blank)).status).toBe(401);
   });
 
   it("returns 403 insufficient_scope for a valid token without the required scope", async () => {
