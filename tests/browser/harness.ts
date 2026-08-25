@@ -88,6 +88,9 @@ function staticServer(root: string): Server {
 }
 
 export async function startHarness(): Promise<Harness> {
+  // The suite drives a real Runtime API, which logs every request. Useful when debugging one test,
+  // overwhelming across the whole run — raise it deliberately rather than living with the noise.
+  process.env.LOG_LEVEL ??= "silent";
   const playerRoot = await assemblePlayerRoot();
   const ies = await generateKeyPair("ES256");
   const store = new MemoryRuntimeStore();
