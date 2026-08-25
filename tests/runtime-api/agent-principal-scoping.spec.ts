@@ -65,6 +65,10 @@ describe("Agent principal scoping", () => {
       secret: Buffer.alloc(32, 11), internalServiceToken: SERVICE_TOKEN,
     });
     pool = new pg.Pool({ connectionString: DATABASE_URL });
+    // This suite asserts on which links exist, and the concurrent-claim case leaves one owned by
+    // whichever teacher won. Without this, a second run against the same database inherits those
+    // rows and fails on assertions that are actually correct.
+    await pool.query("delete from agent_principal_link where agent_issuer = $1", [ISSUER]);
     alice = await issueIesToken(keys.privateKey as never, "synthetic-teacher-alice", "lorb-runtime", IES, { role: "admin" });
     bob = await issueIesToken(keys.privateKey as never, "synthetic-teacher-bob", "lorb-runtime", IES, { role: "admin" });
     aliceClass = await makeClass(alice, "AliceClass");
@@ -73,6 +77,7 @@ describe("Agent principal scoping", () => {
   });
 
   afterAll(async () => {
+    await pool.query("delete from agent_principal_link where agent_issuer = $1", [ISSUER]).catch(() => undefined);
     await runtime.app.close();
     await pool.end();
   });
@@ -148,6 +153,40 @@ describe("Agent principal scoping", () => {
       expect(bobsLinks).toEqual([]);
       const alicesLinks = (await admin("GET", "/api/v1/admin/agent-links", alice)).json().items as Array<{ agent_subject: string }>;
       expect(alicesLinks.map((l) => l.agent_subject)).toContain("auth0|alice");
+    });
+
+    // Two teachers claiming the same unlinked principal at once. Both preliminary reads would see
+    // no active row, so the ownership condition has to live in the write itself or the later
+    // transaction silently takes the link the earlier one just won.
+    it("lets only one of two concurrent claims win", async () => {
+      const subject = `auth0|race-${randomUUID()}`;
+      const [first, second] = await Promise.all([
+        admin("POST", "/api/v1/admin/agent-links", alice, { agent_issuer: ISSUER, agent_subject: subject, label: "alice" }),
+        admin("POST", "/api/v1/admin/agent-links", bob, { agent_issuer: ISSUER, agent_subject: subject, label: "bob" }),
+      ]);
+      const codes = [first.statusCode, second.statusCode].sort();
+      expect(codes).toEqual([201, 409]);
+      // Exactly one live row, and the classes it grants belong to whichever teacher won.
+      const rows = await pool.query(
+        "select teacher_pseudonym from agent_principal_link where agent_issuer = $1 and agent_subject = $2 and revoked_at is null",
+        [ISSUER, subject],
+      );
+      expect(rows.rowCount).toBe(1);
+      const winner = first.statusCode === 201 ? aliceClass : bobClass;
+      const loser = first.statusCode === 201 ? bobClass : aliceClass;
+      const ids = ((await asAgent("/api/v1/internal/roster/classes", subject)).json().items as Array<{ class_id: string }>).map((c) => c.class_id);
+      expect(ids).toContain(winner);
+      expect(ids).not.toContain(loser);
+    });
+
+    // Fastify already decodes route parameters. Decoding them again turns a subject holding a
+    // literal percent sequence into a different string, and its link becomes unrevocable.
+    it("revokes a subject containing a percent sequence", async () => {
+      const subject = "auth0|a%2Fb";
+      expect((await admin("POST", "/api/v1/admin/agent-links", alice, { agent_issuer: ISSUER, agent_subject: subject })).statusCode).toBe(201);
+      const revoke = await admin("DELETE", `/api/v1/admin/agent-links/${encodeURIComponent(ISSUER)}/${encodeURIComponent(subject)}`, alice);
+      expect(revoke.statusCode).toBe(204);
+      expect((await asAgent("/api/v1/internal/roster/classes", subject)).json().items).toEqual([]);
     });
 
     it("refuses to revoke a link the caller does not own", async () => {

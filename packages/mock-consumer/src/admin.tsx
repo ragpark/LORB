@@ -212,7 +212,8 @@ export function AdminWorkspace({config,onSignOut}:{config:Config;onSignOut:()=>v
 
   <section className="agent-links">
    <h2>AI assistants</h2>
-   <p className="notice">An assistant can only see the classes of the teacher who linked it. Until you add one here, it sees nothing at all. Ask the assistant which principal it is connecting as, then paste those two values.</p>
+   <p className="notice">An assistant can only see the classes of the teacher who linked it. Until you add one here, it sees nothing at all.</p>
+   <p className="notice">The two values come from your identity provider, not from the assistant: an MCP host keeps its access token away from the model, so the assistant cannot tell you which subject it is presenting. In Auth0, open Monitoring → Logs and read <code>client_id</code>&#39;s accompanying <code>user_id</code> from any successful login through this connector; the issuer is your tenant URL including its trailing slash.</p>
    <ul className="link-list">
     {links.map(link=><li key={`${link.agent_issuer}|${link.agent_subject}`}>
      <span>{link.label||'Unlabelled assistant'}</span>

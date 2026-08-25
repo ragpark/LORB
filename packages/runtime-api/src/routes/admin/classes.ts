@@ -328,19 +328,23 @@ export function registerAdminClassRoutes(app: FastifyInstance, ctx: ClassRouteCo
     try {
       await withAdminTransaction(async (client) => {
         // One principal, one teacher. Re-pointing a live link at a different account would silently
-        // move an assistant's access between teachers, so it must be revoked first.
-        const existing = await client.query(
-          "select teacher_pseudonym from agent_principal_link where agent_issuer = $1 and agent_subject = $2 and revoked_at is null",
-          [parsed.data.agent_issuer, parsed.data.agent_subject],
-        );
-        if (existing.rows[0] && existing.rows[0].teacher_pseudonym !== principal.pseudonym) throw new AdminAuthError("AGENT_LINK_TAKEN");
-        await client.query(
+        // move an assistant's roster access, so it must be revoked by its owner first.
+        //
+        // The ownership condition lives in the conflicting write, not in a preceding SELECT. Two
+        // teachers claiming the same unlinked principal at once would both see no active row and
+        // both proceed, and an unconditional DO UPDATE would let the later one take the link the
+        // earlier one had just won. Postgres locks the conflicting row for the duration of the
+        // upsert, so deciding there makes the claim atomic: the loser updates nothing.
+        const claimed = await client.query(
           `insert into agent_principal_link (agent_issuer, agent_subject, teacher_pseudonym, label, revoked_at)
            values ($1,$2,$3,$4,null)
            on conflict (agent_issuer, agent_subject)
-           do update set teacher_pseudonym = excluded.teacher_pseudonym, label = excluded.label, revoked_at = null, linked_at = now()`,
+           do update set teacher_pseudonym = excluded.teacher_pseudonym, label = excluded.label, revoked_at = null, linked_at = now()
+           where agent_principal_link.revoked_at is not null
+              or agent_principal_link.teacher_pseudonym = excluded.teacher_pseudonym`,
           [parsed.data.agent_issuer, parsed.data.agent_subject, principal.pseudonym, parsed.data.label ?? ""],
         );
+        if (!claimed.rowCount) throw new AdminAuthError("AGENT_LINK_TAKEN");
         await writeAudit(client, {
           actorPseudonym: principal.pseudonym, actorRole: principal.role, actionType: "agent_link.create",
           targetType: "agent_link", resultingState: { agent_issuer: parsed.data.agent_issuer, label: parsed.data.label },
@@ -361,7 +365,7 @@ export function registerAdminClassRoutes(app: FastifyInstance, ctx: ClassRouteCo
     const revoked = await withAdminTransaction(async (client) => {
       const result = await client.query(
         "update agent_principal_link set revoked_at = now() where agent_issuer = $1 and agent_subject = $2 and teacher_pseudonym = $3 and revoked_at is null",
-        [decodeURIComponent(req.params.issuer), decodeURIComponent(req.params.subject), principal.pseudonym],
+        [req.params.issuer, req.params.subject, principal.pseudonym],
       );
       await writeAudit(client, {
         actorPseudonym: principal.pseudonym, actorRole: principal.role, actionType: "agent_link.revoke",

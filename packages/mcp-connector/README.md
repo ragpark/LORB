@@ -193,7 +193,20 @@ there is no mode-specific bypass to forget about later.
 
 A teacher links and revokes assistants in the Consumer UI administration area. A principal can only
 ever be linked to the classes of the teacher who linked it, and re-pointing somebody else's live
-link is refused rather than silently moving an assistant's access between accounts.
+link is refused rather than silently moving an assistant's access between accounts. That ownership
+condition is enforced inside the conflicting write, so two teachers claiming the same principal at
+once cannot both win it.
+
+Finding the two values is the awkward part, and it is worth being straight about: **you cannot ask
+the assistant.** An MCP host keeps its access token away from the model, so the assistant does not
+know which subject it is presenting, and an unlinked one can see nothing to tell you about. They
+come from the identity provider instead — in Auth0, Monitoring → Logs, the `user_id` on any
+successful login through this connector, with the issuer being the tenant URL including its trailing
+slash.
+
+A `whoami` tool returning the verified principal would close that loop, and is deliberately not here
+yet: it would be another addition to the agent-facing surface, and those are worth adding one at a
+time and on purpose.
 
 ## Resources
 
