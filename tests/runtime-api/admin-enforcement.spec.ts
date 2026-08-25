@@ -10,7 +10,7 @@ import pg from "pg";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
 import { issueIesToken } from "../../packages/stub-ies/src/issuer.js";
 import { decodeJwt } from "jose";
-import { QUIZ_PLAYER, registerQuizObject } from "../../packages/runtime-api/src/services/catalogue.js";
+import { QUIZ_PLAYER, REPOSITORY, registerQuizObject } from "../../packages/runtime-api/src/services/catalogue.js";
 
 const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://lorb:lorb@localhost:5432/lorb_mvp";
 process.env.DATABASE_URL = DATABASE_URL;
@@ -283,18 +283,17 @@ describe("Administration workspace API/DB enforcement", () => {
    * were unaffected because they never consult a policy, which is exactly how it stayed hidden.
    */
   it("25 a launch policy does not override a player the learning object pins", async () => {
-    const repositoryId = await createRepository(tokenA);
     const { playerId, playerVersionId } = await createApprovedActivePlayerVersion(tokenA, tokenB);
     const policy = await admin(tokenA, "POST", "/launch-policies", { display_name: "Pinned Player Policy" });
     const launchPolicyId = policy.json().launch_policy_id as string;
+    // Scoped to a consumer id unique to this run, not to a repository. The quiz has to launch under
+    // the catalogue repository it actually belongs to — see the mismatch case below — and a rule
+    // scoped to that shared repository would then match launches in every later run of this suite.
+    // An ACTIVE policy cannot be deactivated through the API (issue #49), so that would be permanent.
+    const consumerId = `pinned-player-${randomUUID()}`;
     const version = await admin(tokenA, "POST", `/launch-policies/${launchPolicyId}/versions`, {
       semver: "1.0.0",
-      // Scoped to this run's repository. A catch-all rule reproduces the bug just as well and is
-      // what a real deployment is likeliest to have, but an ACTIVE policy persists in the database
-      // and there is no route to deactivate one (issue #49) — so a catch-all here would match every
-      // launch in every later run of this suite, including the case above that asserts no policy
-      // governs it.
-      rules: { rules: [{ priority: 0, match: { repository_id: repositoryId }, route: { player_id: playerId, player_version_id: playerVersionId } }] },
+      rules: { rules: [{ priority: 0, match: { consumer_id: consumerId }, route: { player_id: playerId, player_version_id: playerVersionId } }] },
     });
     const launchPolicyVersionId = version.json().launch_policy_version_id as string;
     for (const action of ["publish", "activate"]) {
@@ -309,29 +308,37 @@ describe("Administration workspace API/DB enforcement", () => {
       questions: [{ stem: "Does the quiz player render this?", options: [{ id: "a", text: "Yes" }, { id: "b", text: "No" }], correct_option_id: "a" }],
     } as never);
     const learnerToken = await issueIesToken(ies.privateKey as never, "synthetic-enforcement-learner-3", "lorb-runtime", urls.ies, {});
-    const launch = await runtime.app.inject({
-      method: "POST", url: "/api/v1/runtime/launches",
-      headers: { authorization: `Bearer ${learnerToken}`, "idempotency-key": randomUUID() },
-      payload: { contract_version: "1.0", consumer_id: "mock-consumer", repository_id: repositoryId, object_id: quiz.object_id, requested_launch_mode: "embedded-iframe", locale: "en-GB" },
-    });
-    expect(launch.statusCode).toBe(201);
+    const launch = (objectId: string, repositoryId: string) =>
+      runtime.app.inject({
+        method: "POST", url: "/api/v1/runtime/launches",
+        headers: { authorization: `Bearer ${learnerToken}`, "idempotency-key": randomUUID() },
+        payload: { contract_version: "1.0", consumer_id: consumerId, repository_id: repositoryId, object_id: objectId, requested_launch_mode: "embedded-iframe", locale: "en-GB" },
+      });
+    const packageUrlOf = (response: { json: () => { signed_descriptor: string } }) =>
+      (decodeJwt(response.json().signed_descriptor) as { package_url: string }).package_url;
 
-    const descriptor = decodeJwt(launch.json().signed_descriptor) as { package_url: string };
-    expect(descriptor.package_url).toBe(`${urls.player}${QUIZ_PLAYER.module_path}`);
-    // The policy's own player is the generic module; reaching it here is the bug.
-    expect(descriptor.package_url).not.toBe(`${urls.player}/module/index.html`);
+    // The fix: the quiz reaches the quiz player even though a policy matched this launch.
+    const pinned = await launch(quiz.object_id, REPOSITORY.repository_id);
+    expect(pinned.statusCode).toBe(201);
+    expect(packageUrlOf(pinned)).toBe(`${urls.player}${QUIZ_PLAYER.module_path}`);
+    expect(packageUrlOf(pinned)).not.toBe(`${urls.player}/module/index.html`);
 
     // The policy still applied and is still recorded — it governs everything except the renderer.
-    const attempt = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/attempts/${launch.json().attempt_id}` });
+    const attempt = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/attempts/${pinned.json().attempt_id}` });
     expect(attempt.json().governed_by_launch_policy).toMatchObject({ launch_policy_id: launchPolicyId });
     expect(attempt.json().package_pinned_by_object).toBe(true);
 
-    // An object that pins nothing still follows the policy, so this fix does not disable the feature.
-    const unpinned = await runtime.app.inject({
-      method: "POST", url: "/api/v1/runtime/launches",
-      headers: { authorization: `Bearer ${learnerToken}`, "idempotency-key": randomUUID() },
-      payload: { contract_version: "1.0", consumer_id: "mock-consumer", repository_id: repositoryId, object_id: randomUUID(), requested_launch_mode: "embedded-iframe", locale: "en-GB" },
-    });
-    expect((decodeJwt(unpinned.json().signed_descriptor) as { package_url: string }).package_url).toBe(`${urls.player}/module/index.html`);
+    // An object that pins nothing still follows the policy, so this is not the feature turned off.
+    const unpinned = await launch(randomUUID(), REPOSITORY.repository_id);
+    expect(packageUrlOf(unpinned)).toBe(`${urls.player}/module/index.html`);
+
+    // A pin must not be usable to escape a different repository's policy. The launch request carries
+    // both identifiers and nothing else forces them to agree, so naming a known quiz alongside a
+    // repository it does not belong to would otherwise bypass that repository's policy.
+    const foreignRepository = await createRepository(tokenA);
+    const mismatched = await launch(quiz.object_id, foreignRepository);
+    expect(packageUrlOf(mismatched)).toBe(`${urls.player}/module/index.html`);
+    const mismatchedAttempt = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/attempts/${mismatched.json().attempt_id}` });
+    expect(mismatchedAttempt.json().package_pinned_by_object).toBeUndefined();
   });
 });
