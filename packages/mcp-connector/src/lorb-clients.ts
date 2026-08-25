@@ -25,11 +25,14 @@ export interface BatchLaunchLearner { learner_id: string; pseudonym: string }
 export interface BatchLaunch { assignment_id: string; object_id: string; assigned_count: number; created_at: string; learners: BatchLaunchLearner[] }
 export interface ActivityResults { object_id: string; assigned_count: number; completed_count: number; average_score_scaled: number | null; not_started_pseudonyms: string[] }
 
+export interface ClassList { items: ClassSummary[] }
+
 /** The verified agent identity, forwarded so the Runtime API can scope the roster to one teacher.
  *  The service credential authenticates the connector, not the person using it. */
 export interface AgentPrincipal { issuer: string; subject: string }
 
 export interface LorbClients {
+  listClasses(): Promise<ClassList>;
   getClass(classId: string): Promise<ClassSummary>;
   getRecentTopics(classId: string): Promise<RecentTopics>;
   getRoster(classId: string): Promise<Roster>;
@@ -68,6 +71,7 @@ export function createLorbClients(config: ConnectorConfig, fetchImpl: FetchImpl 
     // Roster reads come from the Runtime API's read-only internal projection, so an agent sees the
     // classes a teacher actually created rather than seed data. Writes are administrator-only and
     // web-only; there is no roster-mutating path on this connector at all.
+    listClasses: () => call("roster", `${config.runtimeApiBase}/api/v1/internal/roster/classes`, { headers: asPrincipal() }),
     getClass: (classId) =>
       call("roster", `${config.runtimeApiBase}/api/v1/internal/roster/classes/${encodeURIComponent(classId)}`, { headers: asPrincipal() }),
     getRecentTopics: (classId) =>

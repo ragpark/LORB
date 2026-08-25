@@ -221,6 +221,15 @@ concept of its own.
 
 ## Tools
 
+`list_classes` — read-only. Lists the classes belonging to the teacher this agent principal is
+linked to, with year group, subject and learner count, so a class can be chosen without its
+identifier being known in advance. An unlinked principal gets an empty list.
+
+It returns no learner names or identifiers: the projection behind it withholds them, and the tool
+maps an explicit field list rather than passing the row through, so a leak would have to happen
+twice to reach an agent. The roster is created and changed by a signed-in teacher in the Consumer
+UI; nothing on this connector writes to it.
+
 **`create_quiz`** — registers structured question data as a new learning object plus an immutable
 content payload, bound to the fixed, already-reviewed `quiz-player` package version. An agent never
 generates or registers a JavaScript bundle, so there is no per-quiz code-injection surface.
