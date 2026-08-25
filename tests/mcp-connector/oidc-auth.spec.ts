@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { exportJWK, generateKeyPair, SignJWT, type KeyLike } from "jose";
 import type { FastifyInstance } from "fastify";
-import { buildMcpConnector } from "../../packages/mcp-connector/src/app.js";
+import { buildMcpConnector, startupBanner } from "../../packages/mcp-connector/src/app.js";
 import { loadConfig } from "../../packages/mcp-connector/src/config.js";
 
 const ISSUER = "https://idp.lorb-oidc.test";
@@ -144,6 +144,21 @@ describe("OIDC resource-server mode", () => {
     expect(challenge).toContain(`scope="${SCOPE}"`);
   });
 
+  // The banner used to be a constant printed before the configuration loaded, so an OIDC
+  // deployment announced "PoC bearer authentication only" in its logs. That cost real debugging
+  // time against the live Railway service.
+  it("announces the mode it is actually running in", () => {
+    const banner = startupBanner(loadConfig({
+      AUTH_MODE: "oidc", OIDC_ISSUER: ISSUER, OIDC_AUDIENCE: AUDIENCE, OIDC_JWKS_URL: jwksUrl,
+      MCP_PUBLIC_URL: PUBLIC_URL, RUNTIME_INTERNAL_SERVICE_TOKEN: SERVICE_TOKEN,
+    } as NodeJS.ProcessEnv));
+    expect(banner).toContain("OIDC resource-server mode");
+    expect(banner).toContain(ISSUER);
+    expect(banner).toContain(AUDIENCE);
+    expect(banner).not.toContain("PoC pre-shared");
+    expect(banner).toContain("DRAFT, uncertified");
+  });
+
   it("publishes RFC 9728 protected resource metadata naming the authorization server", async () => {
     const response = await fetch(metadataUrl);
     expect(response.status).toBe(200);
@@ -227,6 +242,14 @@ describe("poc mode is unaffected", () => {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
     });
     expect(response.status).toBe(200);
+  });
+
+  it("announces the pre-shared credential, not an identity provider", () => {
+    const banner = startupBanner(loadConfig({ MCP_POC_BEARER_TOKEN: POC_TOKEN, RUNTIME_INTERNAL_SERVICE_TOKEN: SERVICE_TOKEN } as NodeJS.ProcessEnv));
+    expect(banner).toContain("PoC pre-shared bearer authentication");
+    expect(banner).not.toContain("OIDC");
+    // Never print the credential itself.
+    expect(banner).not.toContain(POC_TOKEN);
   });
 
   it("does not serve protected resource metadata", async () => {
