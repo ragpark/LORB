@@ -5,8 +5,8 @@
  * Consumer UI does not: it puts the shell in `<iframe sandbox="allow-scripts">`, so the shell itself
  * gets an opaque origin, and the module the shell then loads is nested two deep.
  *
- * That difference is the whole of issue #48's remaining symptom — a quiz plays from a smart link and
- * shows nothing through the Consumer — and nothing in the suite covered it.
+ * That difference was the whole of issue #48's remaining symptom — a quiz played from a smart link
+ * and showed nothing through the Consumer — and nothing in the suite covered it.
  */
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
@@ -62,24 +62,21 @@ test("a quiz plays when the shell is opened directly, as a smart link opens it",
   await expect(questionVisible(page.frameLocator("#module"))).toBeVisible({ timeout: 10_000 });
 });
 
-// Marked expected-to-fail: this is a known, unfixed defect, and the fix is a change to the
-// postMessage posture that needs the human LORB-001 re-review the README mandates. Recorded as a
-// test rather than a note so it cannot be forgotten, and so it reports loudly the moment it starts
-// passing. Remove the annotation with the fix.
 test("a quiz plays when the shell is embedded in a sandboxed consumer iframe", async ({ page }) => {
-  test.fail();
   const playerUrl = await launchQuiz("synthetic-embedded-1");
   await page.goto(`${PLAYER_ORIGIN}/consumer.html#${encodeURIComponent(playerUrl)}`, { waitUntil: "networkidle" });
   const module = page.frameLocator("#shell").frameLocator("#module");
   await expect(questionVisible(module)).toBeVisible({ timeout: 10_000 });
 });
 
-test("the module can identify the shell when nested two deep", async ({ page }) => {
-  test.fail();
+test("the module can address the shell when nested two deep", async ({ page }) => {
   // The direct cause, isolated. The module resolves the shell's origin from document.referrer, and a
   // document with an opaque origin sends none — so the handshake is abandoned before it is attempted.
   const playerUrl = await launchQuiz("synthetic-embedded-2");
   await page.goto(`${PLAYER_ORIGIN}/consumer.html#${encodeURIComponent(playerUrl)}`, { waitUntil: "networkidle" });
+  // The shell still sends no referrer — that is a browser rule, not something to fix. What matters
+  // is that the module no longer abandons the handshake when it is missing.
   const referrer = await page.frameLocator("#shell").frameLocator("#module").locator("body").evaluate(() => document.referrer);
-  expect(referrer, "the module cannot address the shell without a referrer").not.toBe("");
+  expect(referrer, "a sandboxed shell has an opaque origin and sends no referrer").toBe("");
+  await expect(questionVisible(page.frameLocator("#shell").frameLocator("#module"))).toBeVisible({ timeout: 10_000 });
 });

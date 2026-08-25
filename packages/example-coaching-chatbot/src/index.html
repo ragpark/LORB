@@ -35,7 +35,10 @@
 <script>
 (function () {
   "use strict";
-  var shellOrigin = document.referrer ? new URL(document.referrer).origin : null;
+  // "*" only when the shell has no origin to name — it is sandboxed without allow-same-origin, so it
+  // sends no referrer and no concrete target origin can address it. The shell still accepts a hello
+  // only from its own iframe window carrying the launch nonce. See #59 and #60.
+  var shellOrigin = document.referrer ? new URL(document.referrer).origin : "*";
   // The shell places a per-launch nonce in this document's URL fragment; presenting it in the
   // handshake proves we are the document it navigated to, not a later one in the same iframe.
   var handshakeNonce = (/(?:^#|&)lorb_handshake=([^&]+)/.exec(location.hash) || [])[1];
@@ -55,7 +58,7 @@
     };
   }
 
-  if (shellOrigin && handshakeNonce) {
+  if (handshakeNonce) {
     var channel = new MessageChannel();
     port = channel.port1;
     port.start();
