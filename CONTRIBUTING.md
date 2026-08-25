@@ -31,3 +31,41 @@
 
 See [`docs/specs/README.md`](docs/specs/README.md) for file responsibilities and
 the change lifecycle.
+
+## Invariants
+
+Some properties are not negotiable in a change, because breaking one is not a bug
+in a feature — it is a platform that no longer holds a promise it made. Each has a
+test that fails if the control is removed, listed in
+[`tests/anti-requirements/README-anti-requirements.md`](tests/anti-requirements/README-anti-requirements.md)
+and recorded in [`docs/specs/spec.yaml`](docs/specs/spec.yaml).
+
+Before changing one, understand what it protects. Several exist because the
+obvious implementation was tried and turned out to be wrong.
+
+Two that are easy to break by accident:
+
+- **Do not weaken pseudonymisation to simplify a test.** If a test needs the
+  identifier-to-pseudonym mapping, it is asking the wrong question — no such
+  mapping is stored, and that is the design rather than an omission.
+- **Do not add a second way in.** Every credential path is one somebody has to
+  reason about, and a development shortcut left reachable in a deployed
+  environment is how a platform with good authentication ends up with none.
+
+## Contract changes
+
+These need a review that considers every consumer, not only the caller that
+prompted the change: the launch descriptor schema, the pseudonymisation function
+and its inputs, the error taxonomy, the postMessage protocol, and the xAPI
+statement contract.
+
+## Running the checks
+
+```sh
+pnpm typecheck
+pnpm test              # needs DATABASE_URL for the persistence and roster suites
+pnpm test:browser      # needs the player bundles built first
+```
+
+The persistence suite skips itself without a database, so a green local run
+without one is not the same gate continuous integration applies.
