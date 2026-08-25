@@ -340,5 +340,16 @@ describe("Administration workspace API/DB enforcement", () => {
     expect(packageUrlOf(mismatched)).toBe(`${urls.player}/module/index.html`);
     const mismatchedAttempt = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/attempts/${mismatched.json().attempt_id}` });
     expect(mismatchedAttempt.json().package_pinned_by_object).toBeUndefined();
+
+    // The launch schema accepts a UUID in either case and catalogue keys are lower case, so a client
+    // that upper-cases identifiers must still get its pin. Without normalising, the lookup misses or
+    // the comparison fails, no pin is found, and the quiz quietly gets the generic player again.
+    const shouted = await launch(quiz.object_id.toUpperCase(), REPOSITORY.repository_id.toUpperCase());
+    expect(shouted.statusCode).toBe(201);
+    expect(packageUrlOf(shouted)).toBe(`${urls.player}${QUIZ_PLAYER.module_path}`);
+
+    // Mixed case across the two must not accidentally satisfy the repository check either.
+    const mixed = await launch(quiz.object_id, REPOSITORY.repository_id.toUpperCase());
+    expect(packageUrlOf(mixed)).toBe(`${urls.player}${QUIZ_PLAYER.module_path}`);
   });
 });
