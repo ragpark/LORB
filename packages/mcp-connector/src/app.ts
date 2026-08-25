@@ -8,7 +8,7 @@ import {
   PROTECTED_RESOURCE_METADATA_PATH_INSERTED,
   wwwAuthenticate,
 } from "./auth.js";
-import { createLorbClients, type FetchImpl, type LorbClients } from "./lorb-clients.js";
+import { createLorbClients, type AgentPrincipal, type FetchImpl, type LorbClients } from "./lorb-clients.js";
 import { IdempotencyStore } from "./idempotency.js";
 import { CONNECTOR_NAME, CONNECTOR_VERSION, createMcpServer } from "./mcp-server.js";
 import type { ConnectorConfig } from "./config.js";
@@ -22,6 +22,14 @@ export interface ConnectorOptions {
   newId?: () => string;
   /** Overrides token validation. Tests only — production always builds one from config. */
   verifyToken?: import("./auth.js").TokenVerifier;
+}
+
+declare module "fastify" {
+  interface FastifyRequest {
+    /** Set by the authentication hook from the verified token; read when building this request's
+     *  LORB clients. Absent means unlinked, which the Runtime API answers with an empty roster. */
+    agentPrincipal?: AgentPrincipal;
+  }
 }
 
 const JSONRPC_UNAUTHORIZED = -32001;
@@ -45,7 +53,6 @@ export function startupBanner(config: ConnectorConfig): string {
 
 export function buildMcpConnector(options: ConnectorOptions) {
   const { config } = options;
-  const clients = options.clients ?? createLorbClients(config, options.fetchImpl);
   const assignIdempotency = new IdempotencyStore<Record<string, unknown>>();
   const app = Fastify({ logger: false, bodyLimit: 262144 });
   const verifyToken = options.verifyToken ?? createVerifier(config);
@@ -90,7 +97,13 @@ export function buildMcpConnector(options: ConnectorOptions) {
   app.addHook("onRequest", async (req, reply) => {
     if (!req.url.startsWith("/mcp")) return;
     const outcome = await verifyToken(req.headers.authorization);
-    if (outcome.ok) return;
+    if (outcome.ok) {
+      // Carry the verified principal to the handler. Discarding it here was the bug: the connector
+      // holds one service credential for every agent session, so without the caller's own identity
+      // the Runtime API had nothing to scope the roster by and served every teacher's classes.
+      req.agentPrincipal = outcome.issuer && outcome.subject ? { issuer: outcome.issuer, subject: outcome.subject } : undefined;
+      return;
+    }
     // insufficient_scope is a 403 per RFC 6750 §3.1: the token is valid, the grant is not enough.
     const status = outcome.error === "insufficient_scope" ? 403 : 401;
     return reply
@@ -104,7 +117,10 @@ export function buildMcpConnector(options: ConnectorOptions) {
     // Stateless: one MCP server and transport per request. No session state to leak between agent
     // sessions, and nothing to clean up if a host disconnects mid-call.
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    const server = createMcpServer({ clients, assignIdempotency, newId: options.newId });
+    // Clients are built per request so the roster reads carry this caller's principal. An injected
+    // client layer (tests) is used as-is.
+    const requestClients = options.clients ?? createLorbClients(config, options.fetchImpl, req.agentPrincipal);
+    const server = createMcpServer({ clients: requestClients, assignIdempotency, newId: options.newId });
     reply.raw.on("close", () => {
       void transport.close();
       void server.close();

@@ -164,3 +164,8 @@ dt {
 .results table{border-collapse:collapse;width:100%;margin-bottom:1rem}
 .results th,.results td{text-align:left;padding:.35rem .5rem;border-bottom:1px solid rgba(128,128,128,.35)}
 @media (max-width:60rem){.admin-columns{grid-template-columns:1fr}}
+.agent-links{margin-top:2.5rem;border-top:1px solid rgba(128,128,128,.35);padding-top:1.5rem}
+.link-list{list-style:none;padding:0;margin:0 0 1rem}
+.link-list li{display:flex;align-items:center;gap:.75rem;padding:.35rem 0;flex-wrap:wrap}
+.link-list code{font-size:.85em;opacity:.75}
+.link-list button{margin-left:auto}

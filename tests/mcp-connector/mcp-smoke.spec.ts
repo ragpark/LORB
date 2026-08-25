@@ -20,6 +20,7 @@ import type { FastifyInstance } from "fastify";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
 import { buildEvidence, registerEvidenceRoutes } from "../../packages/evidence-api/src/app.js";
 import { adminDbPool } from "../../packages/runtime-api/src/db/pool.js";
+import { POC_PRINCIPAL } from "../../packages/mcp-connector/src/auth.js";
 import { buildMcpConnector } from "../../packages/mcp-connector/src/app.js";
 import { loadConfig } from "../../packages/mcp-connector/src/config.js";
 import { store } from "../../packages/runtime-api/src/core.js";
@@ -102,6 +103,15 @@ beforeAll(async () => {
     "insert into class_topic (class_topic_id, class_id, topic, taught_on, summary) values ($1,$2,$3,$4,$5)",
     [randomUUID(), SMOKE_CLASS.class_id, SMOKE_CLASS.topic.topic, SMOKE_CLASS.topic.taught_on, SMOKE_CLASS.topic.summary],
   );
+  // The agent principal must be linked to the class owner before the connector can see anything.
+  // A teacher does this once in the Consumer UI; here it stands in for that step. Without it every
+  // roster read below 404s, which is the point of the scoping.
+  await adminDbPool().query(
+    `insert into agent_principal_link (agent_issuer, agent_subject, teacher_pseudonym, label)
+     values ($1,$2,'smoke-suite','smoke suite')
+     on conflict (agent_issuer, agent_subject) do update set teacher_pseudonym = excluded.teacher_pseudonym, revoked_at = null`,
+    [POC_PRINCIPAL.issuer, POC_PRINCIPAL.subject],
+  );
   const config = loadConfig({ AUTH_MODE: "poc", MCP_POC_BEARER_TOKEN: AGENT_TOKEN, RUNTIME_INTERNAL_SERVICE_TOKEN: SERVICE_TOKEN, RUNTIME_API_BASE: RUNTIME_BASE, ROSTER_API_BASE: ROSTER_BASE } as NodeJS.ProcessEnv);
   connector = buildMcpConnector({ config, fetchImpl: injectingFetch });
   await connector.listen({ host: "127.0.0.1", port: 0 });
@@ -112,6 +122,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await connector?.close();
   await adminDbPool().query("delete from class where class_id = $1", [SMOKE_CLASS.class_id]).catch(() => undefined);
+  await adminDbPool().query("delete from agent_principal_link where agent_issuer = $1 and agent_subject = $2", [POC_PRINCIPAL.issuer, POC_PRINCIPAL.subject]).catch(() => undefined);
   await evidence?.close();
   await runtime?.app.close();
 });

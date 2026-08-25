@@ -41,6 +41,9 @@ const ADMIN_ERROR_STATUS: Record<string, number> = {
   CLASS_EMPTY: 409,
   LEARNER_REF_INVALID: 400,
   LEARNER_NOT_FOUND: 404,
+  AGENT_LINK_INVALID: 400,
+  AGENT_LINK_TAKEN: 409,
+  AGENT_LINK_NOT_FOUND: 404,
 };
 
 const ADMIN_ERROR_TITLE: Record<string, string> = {
@@ -59,6 +62,8 @@ const ADMIN_ERROR_TITLE: Record<string, string> = {
   CLASS_EMPTY: "Add at least one learner to the class before assigning work",
   LEARNER_REF_INVALID: "One or more learner identifiers are not in a supported shape",
   LEARNER_NOT_FOUND: "That learner is not in this class",
+  AGENT_LINK_TAKEN: "That assistant is already linked to another account",
+  AGENT_LINK_NOT_FOUND: "That assistant is not linked to your account",
 };
 
 export function adminProblem(code: string, correlation_id: string, status = ADMIN_ERROR_STATUS[code] ?? 400) {
