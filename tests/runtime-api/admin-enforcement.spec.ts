@@ -9,6 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
 import { issueIesToken } from "../../packages/stub-ies/src/issuer.js";
+import { decodeJwt } from "jose";
+import { QUIZ_PLAYER, registerQuizObject } from "../../packages/runtime-api/src/services/catalogue.js";
 
 const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://lorb:lorb@localhost:5432/lorb_mvp";
 process.env.DATABASE_URL = DATABASE_URL;
@@ -269,5 +271,67 @@ describe("Administration workspace API/DB enforcement", () => {
     });
     const unmatchedAttempt = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/attempts/${unmatchedLaunch.json().attempt_id}` });
     expect(unmatchedAttempt.json().governed_by_launch_policy).toBeUndefined();
+  });
+
+  /**
+   * A launch policy routes a player for content that does not care which one renders it. Quiz
+   * content does care: only the quiz player can present and mark it, and create_quiz tells the
+   * teacher it is rendered by that fixed, already-reviewed package version.
+   *
+   * The bug this covers shipped as issue #48: a matching policy overrode the pinned player, so a
+   * quiz authored through MCP launched into a generic shell with nothing to display. Smart links
+   * were unaffected because they never consult a policy, which is exactly how it stayed hidden.
+   */
+  it("25 a launch policy does not override a player the learning object pins", async () => {
+    const repositoryId = await createRepository(tokenA);
+    const { playerId, playerVersionId } = await createApprovedActivePlayerVersion(tokenA, tokenB);
+    const policy = await admin(tokenA, "POST", "/launch-policies", { display_name: "Pinned Player Policy" });
+    const launchPolicyId = policy.json().launch_policy_id as string;
+    const version = await admin(tokenA, "POST", `/launch-policies/${launchPolicyId}/versions`, {
+      semver: "1.0.0",
+      // Scoped to this run's repository. A catch-all rule reproduces the bug just as well and is
+      // what a real deployment is likeliest to have, but an ACTIVE policy persists in the database
+      // and there is no route to deactivate one (issue #49) — so a catch-all here would match every
+      // launch in every later run of this suite, including the case above that asserts no policy
+      // governs it.
+      rules: { rules: [{ priority: 0, match: { repository_id: repositoryId }, route: { player_id: playerId, player_version_id: playerVersionId } }] },
+    });
+    const launchPolicyVersionId = version.json().launch_policy_version_id as string;
+    for (const action of ["publish", "activate"]) {
+      const req = await admin(tokenA, "POST", `/launch-policies/${launchPolicyId}/versions/${launchPolicyVersionId}/${action}`);
+      const approvalRequestId = req.json().approval_request_id as string;
+      await admin(tokenB, "POST", `/approval-requests/${approvalRequestId}/approve`);
+      await admin(tokenA, "POST", `/approval-requests/${approvalRequestId}/execute`);
+    }
+
+    const quiz = registerQuizObject({
+      title: "Pinned player check",
+      questions: [{ stem: "Does the quiz player render this?", options: [{ id: "a", text: "Yes" }, { id: "b", text: "No" }], correct_option_id: "a" }],
+    } as never);
+    const learnerToken = await issueIesToken(ies.privateKey as never, "synthetic-enforcement-learner-3", "lorb-runtime", urls.ies, {});
+    const launch = await runtime.app.inject({
+      method: "POST", url: "/api/v1/runtime/launches",
+      headers: { authorization: `Bearer ${learnerToken}`, "idempotency-key": randomUUID() },
+      payload: { contract_version: "1.0", consumer_id: "mock-consumer", repository_id: repositoryId, object_id: quiz.object_id, requested_launch_mode: "embedded-iframe", locale: "en-GB" },
+    });
+    expect(launch.statusCode).toBe(201);
+
+    const descriptor = decodeJwt(launch.json().signed_descriptor) as { package_url: string };
+    expect(descriptor.package_url).toBe(`${urls.player}${QUIZ_PLAYER.module_path}`);
+    // The policy's own player is the generic module; reaching it here is the bug.
+    expect(descriptor.package_url).not.toBe(`${urls.player}/module/index.html`);
+
+    // The policy still applied and is still recorded — it governs everything except the renderer.
+    const attempt = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/attempts/${launch.json().attempt_id}` });
+    expect(attempt.json().governed_by_launch_policy).toMatchObject({ launch_policy_id: launchPolicyId });
+    expect(attempt.json().package_pinned_by_object).toBe(true);
+
+    // An object that pins nothing still follows the policy, so this fix does not disable the feature.
+    const unpinned = await runtime.app.inject({
+      method: "POST", url: "/api/v1/runtime/launches",
+      headers: { authorization: `Bearer ${learnerToken}`, "idempotency-key": randomUUID() },
+      payload: { contract_version: "1.0", consumer_id: "mock-consumer", repository_id: repositoryId, object_id: randomUUID(), requested_launch_mode: "embedded-iframe", locale: "en-GB" },
+    });
+    expect((decodeJwt(unpinned.json().signed_descriptor) as { package_url: string }).package_url).toBe(`${urls.player}/module/index.html`);
   });
 });
