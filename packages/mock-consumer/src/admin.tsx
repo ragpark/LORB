@@ -13,6 +13,7 @@ export interface ClassLearner{learner_ref:string;display_name:string}
 export interface ClassTopic{topic:string;taught_on:string;summary:string}
 export interface ClassDetail extends ClassSummary{learners:ClassLearner[];topics:ClassTopic[]}
 export interface LearnerResult{learner_ref:string;display_name:string;attempted:boolean;completed:boolean;scaled:number|null}
+export interface AgentLink{agent_issuer:string;agent_subject:string;label:string;linked_at:string}
 export interface AssignmentResults{assignment_id:string;object_id:string;assigned_at:string;learner_count:number;attempted_count:number;learners:LearnerResult[]}
 
 /** The synthetic IES only mints tokens for subjects matching this shape, and the roster only accepts
@@ -24,6 +25,7 @@ export function AdminWorkspace({config,onSignOut}:{config:Config;onSignOut:()=>v
  const [selected,setSelected]=useState<ClassDetail>();
  const [results,setResults]=useState<AssignmentResults[]>();
  const [objects,setObjects]=useState<Array<{object_id:string;title?:string;status:string}>>([]);
+ const [links,setLinks]=useState<AgentLink[]>([]);
  const [error,setError]=useState('');
  const [busy,setBusy]=useState(false);
 
@@ -36,7 +38,25 @@ export function AdminWorkspace({config,onSignOut}:{config:Config;onSignOut:()=>v
   setResults(undefined);
  });
 
- useEffect(()=>{void loadClasses();void run(async()=>{
+ const loadLinks=()=>run(async()=>{setLinks((await adminRequest<{items:AgentLink[]}>(config,'agent-links')).items)});
+
+ const linkAgent=(form:HTMLFormElement)=>run(async()=>{
+  const data=new FormData(form);
+  await adminRequest(config,'agent-links',{method:'POST',body:JSON.stringify({
+   agent_issuer:String(data.get('agent_issuer')??'').trim(),
+   agent_subject:String(data.get('agent_subject')??'').trim(),
+   label:String(data.get('label')??'').trim()||undefined,
+  })});
+  form.reset();
+  await loadLinks();
+ });
+
+ const revokeAgent=(link:AgentLink)=>run(async()=>{
+  await adminRequest(config,`agent-links/${encodeURIComponent(link.agent_issuer)}/${encodeURIComponent(link.agent_subject)}`,{method:'DELETE'});
+  await loadLinks();
+ });
+
+ useEffect(()=>{void loadClasses();void loadLinks();void run(async()=>{
   setObjects((await adminRequest<{items:Array<{object_id:string;title?:string;status:string}>}>(config,'learning-objects')).items);
  })},[]);
 
@@ -189,6 +209,26 @@ export function AdminWorkspace({config,onSignOut}:{config:Config;onSignOut:()=>v
     </>}
    </div>
   </div>
+
+  <section className="agent-links">
+   <h2>AI assistants</h2>
+   <p className="notice">An assistant can only see the classes of the teacher who linked it. Until you add one here, it sees nothing at all.</p>
+   <p className="notice">The two values come from your identity provider, not from the assistant: an MCP host keeps its access token away from the model, so the assistant cannot tell you which subject it is presenting. In Auth0, open Monitoring → Logs and read <code>client_id</code>&#39;s accompanying <code>user_id</code> from any successful login through this connector; the issuer is your tenant URL including its trailing slash.</p>
+   <ul className="link-list">
+    {links.map(link=><li key={`${link.agent_issuer}|${link.agent_subject}`}>
+     <span>{link.label||'Unlabelled assistant'}</span>
+     <code>{link.agent_subject}</code>
+     <button onClick={()=>void revokeAgent(link)} disabled={busy} aria-label={`Revoke ${link.label||link.agent_subject}`}>Revoke</button>
+    </li>)}
+    {links.length===0&&<li className="empty">No assistants linked. Any assistant connecting to LORB currently sees no classes.</li>}
+   </ul>
+   <form onSubmit={e=>{e.preventDefault();void linkAgent(e.currentTarget)}}>
+    <label>Label<input name="label" maxLength={120} placeholder="Claude on my laptop"/></label>
+    <label>Issuer<input name="agent_issuer" required maxLength={256} placeholder="https://your-tenant.us.auth0.com/"/></label>
+    <label>Subject<input name="agent_subject" required maxLength={256} placeholder="auth0|..."/></label>
+    <button type="submit" disabled={busy}>Link assistant</button>
+   </form>
+  </section>
  </section>;
 }
 

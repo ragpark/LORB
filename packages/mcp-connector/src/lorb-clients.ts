@@ -25,6 +25,10 @@ export interface BatchLaunchLearner { learner_id: string; pseudonym: string }
 export interface BatchLaunch { assignment_id: string; object_id: string; assigned_count: number; created_at: string; learners: BatchLaunchLearner[] }
 export interface ActivityResults { object_id: string; assigned_count: number; completed_count: number; average_score_scaled: number | null; not_started_pseudonyms: string[] }
 
+/** The verified agent identity, forwarded so the Runtime API can scope the roster to one teacher.
+ *  The service credential authenticates the connector, not the person using it. */
+export interface AgentPrincipal { issuer: string; subject: string }
+
 export interface LorbClients {
   getClass(classId: string): Promise<ClassSummary>;
   getRecentTopics(classId: string): Promise<RecentTopics>;
@@ -34,7 +38,7 @@ export interface LorbClients {
   getActivityResults(objectId: string): Promise<ActivityResults>;
 }
 
-export function createLorbClients(config: ConnectorConfig, fetchImpl: FetchImpl = globalThis.fetch as unknown as FetchImpl): LorbClients {
+export function createLorbClients(config: ConnectorConfig, fetchImpl: FetchImpl = globalThis.fetch as unknown as FetchImpl, principal?: AgentPrincipal): LorbClients {
   async function call<T>(service: string, url: string, init: { method?: string; headers?: Record<string, string>; body?: unknown } = {}): Promise<T> {
     const headers: Record<string, string> = { accept: "application/json", "x-correlation-id": randomUUID(), ...(init.headers ?? {}) };
     let body: string | undefined;
@@ -53,17 +57,23 @@ export function createLorbClients(config: ConnectorConfig, fetchImpl: FetchImpl 
   }
 
   const internal = () => ({ authorization: `Bearer ${config.runtimeInternalServiceToken}` });
+  // Sent on roster reads only. An absent principal resolves to no teacher, and the Runtime API
+  // answers with an empty roster rather than everyone's — the fail-closed direction.
+  const asPrincipal = () => ({
+    ...internal(),
+    ...(principal ? { "x-lorb-agent-issuer": principal.issuer, "x-lorb-agent-subject": principal.subject } : {}),
+  });
 
   return {
     // Roster reads come from the Runtime API's read-only internal projection, so an agent sees the
     // classes a teacher actually created rather than seed data. Writes are administrator-only and
     // web-only; there is no roster-mutating path on this connector at all.
     getClass: (classId) =>
-      call("roster", `${config.runtimeApiBase}/api/v1/internal/roster/classes/${encodeURIComponent(classId)}`, { headers: internal() }),
+      call("roster", `${config.runtimeApiBase}/api/v1/internal/roster/classes/${encodeURIComponent(classId)}`, { headers: asPrincipal() }),
     getRecentTopics: (classId) =>
-      call("roster", `${config.runtimeApiBase}/api/v1/internal/roster/classes/${encodeURIComponent(classId)}/recent-topics`, { headers: internal() }),
+      call("roster", `${config.runtimeApiBase}/api/v1/internal/roster/classes/${encodeURIComponent(classId)}/recent-topics`, { headers: asPrincipal() }),
     getRoster: (classId) =>
-      call("roster", `${config.runtimeApiBase}/api/v1/internal/roster/classes/${encodeURIComponent(classId)}/roster`, { headers: internal() }),
+      call("roster", `${config.runtimeApiBase}/api/v1/internal/roster/classes/${encodeURIComponent(classId)}/roster`, { headers: asPrincipal() }),
     createQuiz: (draft, idempotencyKey) =>
       call("runtime", `${config.runtimeApiBase}/api/v1/internal/runtime/quizzes`, {
         method: "POST", headers: { ...internal(), "idempotency-key": idempotencyKey }, body: draft,

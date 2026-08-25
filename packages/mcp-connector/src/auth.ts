@@ -23,6 +23,8 @@ export interface AuthOutcome {
   error?: "invalid_request" | "invalid_token" | "insufficient_scope";
   /** Subject of a validated token, for logging. Never a raw credential. */
   subject?: string;
+  /** The provider that asserted the subject. Paired with it to identify the agent principal. */
+  issuer?: string;
 }
 
 /**
@@ -78,9 +80,17 @@ export function createOidcVerifier(oidc: OidcConfig): TokenVerifier {
     if (oidc.requiredScope && !scopesOf(payload).includes(oidc.requiredScope)) {
       return { ok: false, error: "insufficient_scope" };
     }
-    return { ok: true, subject: typeof payload.sub === "string" ? payload.sub : undefined };
+    return { ok: true, issuer: oidc.issuer, subject: typeof payload.sub === "string" ? payload.sub : undefined };
   };
 }
+
+/**
+ * The principal a `poc` deployment presents. There is no identity provider and therefore no real
+ * user behind the shared token, but the roster scoping downstream must not have a mode-specific
+ * bypass — so `poc` gets a fixed, obviously-synthetic principal that has to be linked to a teacher
+ * like any other. An unlinked one sees nothing, in both modes.
+ */
+export const POC_PRINCIPAL = { issuer: "urn:lorb:poc", subject: "local-dev" } as const;
 
 /** Pre-shared bearer token. Local dev and CI only — there is no identity provider behind it. */
 export function createPocVerifier(expected: string): TokenVerifier {
@@ -88,7 +98,7 @@ export function createPocVerifier(expected: string): TokenVerifier {
     const presented = bearerFrom(authorization);
     if (!presented) return { ok: false, error: "invalid_request" };
     if (!tokenMatches(presented, expected)) return { ok: false, error: "invalid_token" };
-    return { ok: true };
+    return { ok: true, issuer: POC_PRINCIPAL.issuer, subject: POC_PRINCIPAL.subject };
   };
 }
 

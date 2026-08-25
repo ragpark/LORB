@@ -166,6 +166,48 @@ This does **not** close BLK-08. It is a necessary step in the direction BLK-08 h
 synthetic IES can never be the answer for a real person — but the privacy and security design work
 those blockers name is still outstanding.
 
+### Agent principals and roster scoping
+
+**NEEDS HUMAN LORB-001 RE-REVIEW.** This is the first identity link between the two domains above.
+
+The connector holds one internal service credential for every agent session. That credential
+authenticates the *connector*, not the person using it, so on its own it cannot scope anything —
+and for a time it did not: the internal roster projection served every active class to any caller
+holding it, which in `oidc` mode meant any authenticated teacher could read any other teacher's
+class metadata and pass those UUIDs to the `class://` resources and `assign_quiz`.
+
+Scoping needs the agent's identity to resolve to a teacher, and it cannot be computed. A teacher's
+classes are owned by `HMAC(iesIssuer | iesSubject | "admin")`, derived from the synthetic IES
+identity they sign into the Consumer UI with; an agent authenticates through a different provider
+with a different subject. Nothing joins the two, deliberately.
+
+So the link is **explicit and teacher-created**. The connector forwards the principal it verified
+(`x-lorb-agent-issuer`, `x-lorb-agent-subject`) alongside the service token; the Runtime API resolves
+it through `agent_principal_link` and scopes every roster read to that teacher. It is never inferred
+from a matching email or a shared claim.
+
+It fails closed in both directions. An unlinked principal gets an empty class list and a 404 on any
+class it names — including one whose UUID it already knows. `poc` mode is not exempt: it presents a
+fixed synthetic principal (`urn:lorb:poc` / `local-dev`) that must be linked like any other, so
+there is no mode-specific bypass to forget about later.
+
+A teacher links and revokes assistants in the Consumer UI administration area. A principal can only
+ever be linked to the classes of the teacher who linked it, and re-pointing somebody else's live
+link is refused rather than silently moving an assistant's access between accounts. That ownership
+condition is enforced inside the conflicting write, so two teachers claiming the same principal at
+once cannot both win it.
+
+Finding the two values is the awkward part, and it is worth being straight about: **you cannot ask
+the assistant.** An MCP host keeps its access token away from the model, so the assistant does not
+know which subject it is presenting, and an unlinked one can see nothing to tell you about. They
+come from the identity provider instead — in Auth0, Monitoring → Logs, the `user_id` on any
+successful login through this connector, with the issuer being the tenant URL including its trailing
+slash.
+
+A `whoami` tool returning the verified principal would close that loop, and is deliberately not here
+yet: it would be another addition to the agent-facing surface, and those are worth adding one at a
+time and on purpose.
+
 ## Resources
 
 | URI | Returns |

@@ -34,8 +34,17 @@ describe("Class roster administration", () => {
       ...(payload === undefined ? {} : { payload: payload as object }),
     });
 
-  const internal = (url: string, token: string | null = SERVICE_TOKEN) =>
-    runtime.app.inject({ method: "GET", url, headers: token ? { authorization: `Bearer ${token}` } : {} });
+  // The connector sends its service token plus the principal it verified. The projection scopes to
+  // the teacher that principal is linked to, so both are needed for a read to return anything.
+  const AGENT = { issuer: "https://idp.class-roster.test/", subject: "auth0|roster-suite" };
+  const internal = (url: string, token: string | null = SERVICE_TOKEN, principal: { issuer: string; subject: string } | null = AGENT) =>
+    runtime.app.inject({
+      method: "GET", url,
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(principal ? { "x-lorb-agent-issuer": principal.issuer, "x-lorb-agent-subject": principal.subject } : {}),
+      },
+    });
 
   const newClass = async (name = "9B Science") => {
     const created = await admin("POST", "/api/v1/admin/classes", { name, year_group: "Year 9", subject: "Science" });
@@ -53,6 +62,10 @@ describe("Class roster administration", () => {
     adminToken = await issueIesToken(keys.privateKey as never, "synthetic-roster-admin", "lorb-runtime", IES, { role: "admin" });
     otherTeacherToken = await issueIesToken(keys.privateKey as never, "synthetic-roster-other-teacher", "lorb-runtime", IES, { role: "admin" });
     learnerToken = await issueIesToken(keys.privateKey as never, "synthetic-roster-learner", "lorb-runtime", IES, {});
+    // Link the agent principal to this suite's admin, so the roster projection has a teacher to
+    // scope to. Without it every internal read fails closed, which is covered separately in
+    // tests/runtime-api/agent-principal-scoping.spec.ts.
+    await admin("POST", "/api/v1/admin/agent-links", { agent_issuer: AGENT.issuer, agent_subject: AGENT.subject, label: "roster suite" });
   });
 
   afterAll(async () => {

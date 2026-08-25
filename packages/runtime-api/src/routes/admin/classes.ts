@@ -49,6 +49,12 @@ const addTopicsSchema = z.object({
 
 const assignSchema = z.object({ object_id: z.string().uuid() }).strict();
 
+const linkAgentSchema = z.object({
+  agent_issuer: z.string().min(1).max(256),
+  agent_subject: z.string().min(1).max(256),
+  label: z.string().max(120).optional(),
+}).strict();
+
 export interface ClassRouteContext extends AdminRouteContext {
   /** The same secret, issuer and purpose the IES-authenticated launch path uses. Results are joined
    *  to a class by recomputing pseudonyms with these; no mapping table is kept. */
@@ -291,6 +297,84 @@ export function registerAdminClassRoutes(app: FastifyInstance, ctx: ClassRouteCo
       if (error instanceof AdminAuthError) return sendAdminError(reply, error.code, correlation);
       throw error;
     }
+  });
+
+  // ---------------------------------------------------------------- agent principals
+  //
+  // A teacher links the AI assistant they use to their own LORB account. Until they do, that
+  // assistant sees no classes at all — the connector holds one service credential for every agent
+  // session, so it cannot scope anything by itself.
+  //
+  // A principal can only ever be linked to the pseudonym of the teacher making the request. There
+  // is deliberately no route that links a principal to somebody else's classes.
+
+  app.get("/api/v1/admin/agent-links", async (req, reply) => {
+    const principal = await requireAdmin(req, reply, ctx, "agent_link.list", "agent_link");
+    if (!principal) return;
+    const rows = (await adminDbPool().query(
+      "select agent_issuer, agent_subject, label, linked_at from agent_principal_link where teacher_pseudonym = $1 and revoked_at is null order by linked_at desc",
+      [principal.pseudonym],
+    )).rows;
+    return { items: rows, next_cursor: null, correlation_id: correlationOf(req) };
+  });
+
+  app.post("/api/v1/admin/agent-links", async (req, reply) => {
+    const principal = await requireAdmin(req, reply, ctx, "agent_link.create", "agent_link");
+    if (!principal) return;
+    const correlation = correlationOf(req);
+    if (!requireIdempotencyKey(req, reply)) return;
+    const parsed = linkAgentSchema.safeParse(req.body);
+    if (!parsed.success) return sendAdminError(reply, "AGENT_LINK_INVALID", correlation);
+    try {
+      await withAdminTransaction(async (client) => {
+        // One principal, one teacher. Re-pointing a live link at a different account would silently
+        // move an assistant's roster access, so it must be revoked by its owner first.
+        //
+        // The ownership condition lives in the conflicting write, not in a preceding SELECT. Two
+        // teachers claiming the same unlinked principal at once would both see no active row and
+        // both proceed, and an unconditional DO UPDATE would let the later one take the link the
+        // earlier one had just won. Postgres locks the conflicting row for the duration of the
+        // upsert, so deciding there makes the claim atomic: the loser updates nothing.
+        const claimed = await client.query(
+          `insert into agent_principal_link (agent_issuer, agent_subject, teacher_pseudonym, label, revoked_at)
+           values ($1,$2,$3,$4,null)
+           on conflict (agent_issuer, agent_subject)
+           do update set teacher_pseudonym = excluded.teacher_pseudonym, label = excluded.label, revoked_at = null, linked_at = now()
+           where agent_principal_link.revoked_at is not null
+              or agent_principal_link.teacher_pseudonym = excluded.teacher_pseudonym`,
+          [parsed.data.agent_issuer, parsed.data.agent_subject, principal.pseudonym, parsed.data.label ?? ""],
+        );
+        if (!claimed.rowCount) throw new AdminAuthError("AGENT_LINK_TAKEN");
+        await writeAudit(client, {
+          actorPseudonym: principal.pseudonym, actorRole: principal.role, actionType: "agent_link.create",
+          targetType: "agent_link", resultingState: { agent_issuer: parsed.data.agent_issuer, label: parsed.data.label },
+          outcome: "ALLOWED", correlationId: correlation,
+        });
+      });
+      return reply.code(201).send({ ...parsed.data, correlation_id: correlation });
+    } catch (error) {
+      if (error instanceof AdminAuthError) return sendAdminError(reply, error.code, correlation);
+      throw error;
+    }
+  });
+
+  app.delete<{ Params: { issuer: string; subject: string } }>("/api/v1/admin/agent-links/:issuer/:subject", async (req, reply) => {
+    const principal = await requireAdmin(req, reply, ctx, "agent_link.revoke", "agent_link");
+    if (!principal) return;
+    const correlation = correlationOf(req);
+    const revoked = await withAdminTransaction(async (client) => {
+      const result = await client.query(
+        "update agent_principal_link set revoked_at = now() where agent_issuer = $1 and agent_subject = $2 and teacher_pseudonym = $3 and revoked_at is null",
+        [req.params.issuer, req.params.subject, principal.pseudonym],
+      );
+      await writeAudit(client, {
+        actorPseudonym: principal.pseudonym, actorRole: principal.role, actionType: "agent_link.revoke",
+        targetType: "agent_link", resultingState: { revoked: result.rowCount ?? 0 }, outcome: "ALLOWED", correlationId: correlation,
+      });
+      return result.rowCount ?? 0;
+    });
+    if (!revoked) return sendAdminError(reply, "AGENT_LINK_NOT_FOUND", correlation);
+    return reply.code(204).send();
   });
 
   /** Results for one class, taken from the evidence outbox. The outbox holds pseudonymous actors
