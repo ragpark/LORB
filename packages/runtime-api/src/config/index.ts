@@ -293,7 +293,7 @@ function readIdentity(production: boolean, publicIssuer: string, problems: strin
 }
 
 function readLrs(production: boolean, problems: string[]): LrsConfig {
-  const endpoint = env("LRS_ENDPOINT") ?? env("STUB_LRS_URL");
+  const endpoint = env("LRS_ENDPOINT") ?? env("DEVELOPMENT_LRS_URL");
   if (!endpoint) {
     if (production) problems.push("LRS_ENDPOINT is required in production");
     return { endpoint: "", auth: { kind: "none" }, xapiVersion: "1.0.3", timeoutMs: 10000 };

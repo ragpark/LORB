@@ -35,7 +35,7 @@ noted as such below):
 
 - **Section 14's Publisher UI cross-slice update was not implemented.** No such package exists in
   this repository (the existing packages are `runtime-api`, `learner-portal`, `ops-console`,
-  `player-shell`, `stub-ies`, `stub-lrs`, `evidence-api`, `evidence-forwarder`, `contracts`,
+  `player-shell`, `dev-identity`, `dev-lrs`, `evidence-api`, `evidence-forwarder`, `contracts`,
   `example-module`, `test-client`). There is nothing to add repository-scoped ABAC to.
 - **A `GET /api/v1/admin/whoami` endpoint was added** beyond Section 8's literal endpoint list. It
   is structurally required for Section 12's UI-layer self-approval disablement — the client cannot

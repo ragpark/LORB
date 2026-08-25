@@ -1,0 +1,17 @@
+# Development learning record store. It keeps statements in memory so a developer can see what the
+# forwarder actually delivered. Never a deployment target: point LRS_ENDPOINT at the real learning
+# record store in every environment that is not somebody's laptop.
+FROM node:20-bookworm-slim
+
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+WORKDIR /app
+
+COPY package.json pnpm-workspace.yaml ./
+RUN pnpm install --no-frozen-lockfile --ignore-scripts
+
+COPY packages/dev-lrs ./packages/dev-lrs
+COPY tsconfig.json ./
+
+ENV NODE_ENV=development
+EXPOSE 5000
+CMD ["pnpm", "exec", "tsx", "packages/dev-lrs/src/server.ts"]

@@ -26,9 +26,9 @@ import { loadConfig } from "../../packages/mcp-connector/src/config.js";
 import { MemoryRuntimeStore } from "../../packages/runtime-api/src/store/index.js";
 import { MemoryCatalogueStore } from "../../packages/runtime-api/src/catalogue/index.js";
 import { quizStatementChain, type ShellContext } from "../../packages/quiz-player/src/statements.js";
-import { issueIesToken } from "../../packages/stub-ies/src/issuer.js";
+import { issueIesToken } from "../../packages/dev-identity/src/issuer.js";
 import { forwardPending } from "../../packages/evidence-forwarder/src/worker.js";
-import { receiveStatement } from "../../packages/stub-lrs/src/receiver.js";
+import { receiveStatement } from "../../packages/dev-lrs/src/receiver.js";
 
 const AGENT_TOKEN = "poc-agent-bearer-token-0123456789abcdef";
 const SERVICE_TOKEN = "runtime-internal-service-token-0123456789ab";
@@ -129,7 +129,7 @@ afterAll(async () => {
   await runtime?.app.close();
 });
 
-describe("MCP agent connector proof of concept", () => {
+describe("MCP agent connector", () => {
   let objectId: string;
 
   it("1. completes MCP initialize and tools/list against the PoC bearer token", async () => {
@@ -259,7 +259,7 @@ describe("MCP agent connector proof of concept", () => {
     const body = resourceJson(resource);
     expect(body.class_id).toBe(SMOKE_CLASS.class_id);
     expect(body.topics.map((entry: { topic: string }) => entry.topic)).toContain(SMOKE_CLASS.topic.topic);
-    expect(body.source).toMatch(/non-production/);
+    expect(body.source).toBe("lorb-roster");
 
     const summary = resourceJson(await client.readResource({ uri: `class://${SMOKE_CLASS.class_id}` }));
     expect(summary.learner_count).toBe(SMOKE_CLASS.learners.length);

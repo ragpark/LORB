@@ -78,7 +78,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     async (uri, variables) => {
       const classId = String(variables.classId);
       const topics = await deps.clients.getRecentTopics(classId);
-      return { contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify({ ...topics, source: "stub-roster (non-production)" }, null, 2) }] };
+      return { contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify({ ...topics, source: "lorb-roster" }, null, 2) }] };
     },
   );
 
@@ -94,7 +94,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       const classId = String(variables.classId);
       const summary = await deps.clients.getClass(classId);
       // Learner identifiers and display names are deliberately not exposed on this resource.
-      return { contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify({ ...summary, source: "stub-roster (non-production)" }, null, 2) }] };
+      return { contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify({ ...summary, source: "lorb-evidence" }, null, 2) }] };
     },
   );
 

@@ -10,7 +10,7 @@
  */
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { issueIesToken } from "../../packages/stub-ies/src/issuer.js";
+import { issueIesToken } from "../../packages/dev-identity/src/issuer.js";
 
 import { addFixturePage, IES_ISSUER, PLAYER_ORIGIN, REPOSITORY_ID, startHarness, type Harness } from "./harness.js";
 

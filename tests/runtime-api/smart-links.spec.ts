@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { decodeJwt, generateKeyPair } from "jose";
 import { describe, expect, it } from "vitest";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
-import { issueIesToken } from "../../packages/stub-ies/src/issuer.js";
+import { issueIesToken } from "../../packages/dev-identity/src/issuer.js";
 import { MemoryRuntimeStore } from "../../packages/runtime-api/src/store/index.js";
 import { MemoryCatalogueStore } from "../../packages/runtime-api/src/catalogue/index.js";
 

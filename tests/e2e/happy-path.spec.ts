@@ -7,9 +7,9 @@ import { decodeJwt, generateKeyPair } from "jose";
 import { randomUUID } from "node:crypto";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
 import { buildEvidence } from "../../packages/evidence-api/src/app.js";
-import { issueIesToken } from "../../packages/stub-ies/src/issuer.js";
+import { issueIesToken } from "../../packages/dev-identity/src/issuer.js";
 import { forwardPending } from "../../packages/evidence-forwarder/src/worker.js";
-import { receiveStatement, resetStatements, storedStatements } from "../../packages/stub-lrs/src/receiver.js";
+import { receiveStatement, resetStatements, storedStatements } from "../../packages/dev-lrs/src/receiver.js";
 import { MemoryRuntimeStore } from "../../packages/runtime-api/src/store/index.js";
 import { MemoryCatalogueStore } from "../../packages/runtime-api/src/catalogue/index.js";
 

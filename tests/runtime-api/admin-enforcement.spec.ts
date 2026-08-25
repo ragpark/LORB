@@ -8,7 +8,7 @@ import { generateKeyPair } from "jose";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
-import { issueIesToken } from "../../packages/stub-ies/src/issuer.js";
+import { issueIesToken } from "../../packages/dev-identity/src/issuer.js";
 import { decodeJwt } from "jose";
 import { MemoryCatalogueStore, QUIZ_PLAYER } from "../../packages/runtime-api/src/catalogue/index.js";
 import { MemoryRuntimeStore } from "../../packages/runtime-api/src/store/index.js";

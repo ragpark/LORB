@@ -39,7 +39,7 @@ describe("learner portal deployment", () => {
   });
 
   it("does not bake a development sign-in endpoint into the image", () => {
-    expect(dockerfile).not.toContain("ARG VITE_STUB_IES_LOGIN_URL");
+    expect(dockerfile).not.toContain("ARG VITE_DEVELOPMENT_IDENTITY_LOGIN_URL");
     expect(dockerfile).not.toContain("ARG VITE_DEVELOPMENT_LOGIN_URL");
   });
 

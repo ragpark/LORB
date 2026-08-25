@@ -13,7 +13,7 @@ import fs from "node:fs";
 import { descriptorSchema } from "../../packages/contracts/src/index.js";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
 import { buildEvidence } from "../../packages/evidence-api/src/app.js";
-import { issueIesToken } from "../../packages/stub-ies/src/issuer.js";
+import { issueIesToken } from "../../packages/dev-identity/src/issuer.js";
 import { originAllowed, transition } from "../../packages/runtime-api/src/core.js";
 import { MemoryRuntimeStore } from "../../packages/runtime-api/src/store/index.js";
 import { MemoryCatalogueStore } from "../../packages/runtime-api/src/catalogue/index.js";

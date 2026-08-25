@@ -17,6 +17,6 @@ export async function apiRequest<T>(base:string,path:string,options:ApiRequestOp
  data=discardFields(data,new Set(discardResponseFields));
  log.push({direction:'inbound',method,url:url.toString(),correlationId,status:response.status,duration:performance.now()-start,errorCode:response.ok?undefined:(data as ApiProblem).code}); if(log.length>100)log.splice(0,log.length-100);
  if(containsSensitiveField(data)) throw new SuspectedLeakError();
- if(!response.ok){const problem=data as ApiProblem;if(['AUTHENTICATION_EXPIRED','SESSION_EXPIRED'].includes(problem.code)) window.location.assign(import.meta.env.VITE_STUB_IES_LOGIN_URL??'/sign-in');throw problem;}
+ if(!response.ok){const problem=data as ApiProblem;if(['AUTHENTICATION_EXPIRED','SESSION_EXPIRED'].includes(problem.code)) window.location.assign(import.meta.env.VITE_DEVELOPMENT_IDENTITY_LOGIN_URL??'/sign-in');throw problem;}
  return data as T;
 }

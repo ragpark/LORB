@@ -1,66 +1,97 @@
-# LOCAL DEV ONLY. DRAFT — NOT CERTIFIED. Do not deploy this stack to a shared environment.
+# Local development stack.
+#
+# This brings up the whole platform on one machine: Postgres, the Runtime and Evidence APIs, the
+# Player Shell with its bundled content packages, a development identity provider, a development
+# learning record store, and the agent connector.
+#
+# It is a development convenience, not a deployment topology. Every service here runs with
+# NODE_ENV=development, which is the only environment in which the platform will accept an ephemeral
+# signing key, a development identity provider, or the connector's pre-shared token. Set NODE_ENV to
+# production and each of those refuses to start, which is the point.
 services:
   postgres:
     image: postgres:16
     environment:
       POSTGRES_USER: lorb
       POSTGRES_PASSWORD: lorb
-      POSTGRES_DB: lorb_mvp
+      POSTGRES_DB: lorb
     ports: ["5432:5432"]
     volumes:
-      - ./packages/runtime-api/src/db/migrations:/docker-entrypoint-initdb.d:ro
+      - lorb-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lorb -d lorb"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
-  # Runtime API. The MVP evidence store is process-local in-memory state that the Evidence API
-  # imports directly from the Runtime API's core module, and the Evidence API verifies launch
-  # descriptors with the Runtime's own signing key — so src/server.ts mounts both route sets on this
-  # one listener. Restarting this service loses all attempts, evidence, and agent-authored quizzes.
+  # The Runtime API, with the Evidence API mounted on the same listener. Both write to Postgres, so
+  # attempts, evidence and registered content survive a restart of this container.
   runtime-api:
     build: { context: ., dockerfile: Dockerfile }
     environment:
+      NODE_ENV: development
       PORT: "3000"
       RUNTIME_PUBLIC_ISSUER: http://localhost:3000
       PLAYER_SHELL_ORIGIN: http://localhost:3200
       EVIDENCE_API_ENDPOINT: http://localhost:3000/api/v1/evidence/statements
-      IES_ISSUER: http://stub-ies:4000
-      IES_JWKS_URL: http://stub-ies:4000/.well-known/jwks.json
-      DATABASE_URL: postgres://lorb:lorb@postgres:5432/lorb_mvp
+      ALLOWED_CONSUMER_ORIGINS: http://localhost:3300,http://localhost:5173,http://localhost:5176
+      OIDC_ISSUER: http://dev-identity:4000
+      OIDC_JWKS_URL: http://dev-identity:4000/.well-known/jwks.json
+      ALLOW_SYNTHETIC_IDENTITY: "true"
+      DATABASE_URL: postgres://lorb:lorb@postgres:5432/lorb
+      SEED_EXAMPLE_CONTENT: "true"
+      LRS_ENDPOINT: http://dev-lrs:5000
       PSEUDONYM_TENANT_SECRET: ${PSEUDONYM_TENANT_SECRET:?set PSEUDONYM_TENANT_SECRET to 32 random bytes as hex}
-      # Credential for the internal service-to-service launch surface. Never issued to a browser,
-      # never shared with the agent-facing MCP bearer token.
+      # Credential for the internal service-to-service surface. Never issued to a browser, and never
+      # the same value as the agent-facing bearer token below.
       RUNTIME_INTERNAL_SERVICE_TOKEN: ${RUNTIME_INTERNAL_SERVICE_TOKEN:?set RUNTIME_INTERNAL_SERVICE_TOKEN}
     ports: ["3000:3000"]
-    depends_on: [postgres, stub-ies]
+    depends_on:
+      postgres: { condition: service_healthy }
+      dev-identity: { condition: service_started }
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
-  # STUB — NOT PRODUCTION. Synthetic identity simulator.
-  stub-ies:
-    build: { context: ., dockerfile: Dockerfile.stub-ies }
+  # Development identity provider. It accepts a subject and mints a short-lived token; there is no
+  # password and no consent, which is why the platform refuses it outside development.
+  dev-identity:
+    build: { context: ., dockerfile: Dockerfile.dev-identity }
     environment:
       PORT: "4000"
-      IES_PUBLIC_ISSUER: http://stub-ies:4000
+      IES_PUBLIC_ISSUER: http://dev-identity:4000
     ports: ["4000:4000"]
 
-  # STUB — NOT PRODUCTION. Synthetic class/roster simulator; LORB-001 has no roster concept.
-  stub-roster:
-    build: { context: ., dockerfile: Dockerfile.stub-roster }
+  # Development learning record store, so the evidence forwarder has somewhere real to deliver to.
+  dev-lrs:
+    build: { context: ., dockerfile: Dockerfile.dev-lrs }
     environment:
-      PORT: "4100"
-    ports: ["4100:4100"]
+      PORT: "5000"
+    ports: ["5000:5000"]
 
-  # Player Shell plus the bundled content packages, including the shared quiz-player.
+  # Player Shell plus the bundled content packages, including the shared quiz player.
   player-shell:
     build: { context: ., dockerfile: Dockerfile.player-shell }
     ports: ["3200:8080"]
 
-  # Agent-facing MCP server. PoC bearer authentication only — see packages/mcp-connector/README.md.
+  # The agent-facing MCP server. Pre-shared bearer token in development; a deployment must configure
+  # AUTH_MODE=oidc, and the connector refuses to start in production without it.
   mcp-connector:
     build: { context: ., dockerfile: Dockerfile.mcp-connector }
     environment:
+      NODE_ENV: development
       PORT: "4200"
-      AUTH_MODE: poc
-      MCP_POC_BEARER_TOKEN: ${MCP_POC_BEARER_TOKEN:?set MCP_POC_BEARER_TOKEN to at least 32 characters}
+      AUTH_MODE: shared-token
+      MCP_SHARED_BEARER_TOKEN: ${MCP_SHARED_BEARER_TOKEN:-${MCP_POC_BEARER_TOKEN:?set MCP_SHARED_BEARER_TOKEN to at least 32 characters}}
       RUNTIME_INTERNAL_SERVICE_TOKEN: ${RUNTIME_INTERNAL_SERVICE_TOKEN:?set RUNTIME_INTERNAL_SERVICE_TOKEN}
       RUNTIME_API_BASE: http://runtime-api:3000
       EVIDENCE_API_BASE: http://runtime-api:3000
-      ROSTER_API_BASE: http://stub-roster:4100
+      ROSTER_API_BASE: http://runtime-api:3000
     ports: ["4200:4200"]
-    depends_on: [runtime-api, stub-roster]
+    depends_on:
+      runtime-api: { condition: service_started }
+
+volumes:
+  lorb-postgres:

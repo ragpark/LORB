@@ -8,7 +8,7 @@ import { allowsDevelopmentSignIn,ENVIRONMENT_LABELS,environmentNotice,isEnvironm
 
 const runtimeBase=import.meta.env.VITE_RUNTIME_API_BASE??'http://localhost:3000/api/v1/runtime';
 const evidenceBase=import.meta.env.VITE_EVIDENCE_API_BASE??'http://localhost:3100/api/v1/evidence';
-const developmentLoginUrl=import.meta.env.VITE_DEVELOPMENT_LOGIN_URL??import.meta.env.VITE_STUB_IES_LOGIN_URL;
+const developmentLoginUrl=import.meta.env.VITE_DEVELOPMENT_LOGIN_URL??import.meta.env.VITE_DEVELOPMENT_IDENTITY_LOGIN_URL;
 // A deployed console signs its operator in through the institution's own provider. The development
 // login below exists so `pnpm dev` needs no identity provider, and is unreachable anywhere else.
 const oidc=import.meta.env.VITE_OIDC_ISSUER&&import.meta.env.VITE_OIDC_CLIENT_ID

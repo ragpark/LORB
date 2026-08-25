@@ -15,7 +15,7 @@ real Runtime and Evidence pipeline, not a mock of it.
 | Principal | The teacher's agent session | One learner, one launch |
 | Credential | Pre-shared bearer token, `AUTH_MODE=poc` | Synthetic IES ES256 token, `aud: lorb-runtime` |
 | Lifetime | Per environment, static | Ten minutes |
-| Issued by | Environment configuration | `packages/stub-ies` |
+| Issued by | Environment configuration | `packages/dev-identity` |
 
 They share no token, no scope, and no signing key. The agent's bearer token never reaches a launch
 descriptor or an IES token, and an IES token is never accepted here. `loadConfig` refuses to start if
@@ -344,7 +344,7 @@ pnpm install && pnpm build
 set -a; . ./.env; set +a   # loads the three secrets from step 1
 
 PORT=4000 IES_PUBLIC_ISSUER=http://localhost:4000 \
-  node dist/packages/stub-ies/src/server.js &
+  node dist/packages/dev-identity/src/server.js &
 PORT=4100 \
   node dist/packages/stub-roster/src/server.js &
 PORT=3000 RUNTIME_PUBLIC_ISSUER=http://localhost:3000 \

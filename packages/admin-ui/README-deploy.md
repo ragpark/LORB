@@ -21,7 +21,7 @@ is prohibited.** Do not present this service as production-ready or connect it t
 8. Configure the other required `VITE_*` variables for the non-production environment (see below). API
    URLs must reference non-production services only.
 9. Deploy or redeploy the service, then verify the DRAFT banner and `RAILWAY-NON-PROD` environment
-   label remain visible, and sign-in succeeds against the non-production `stub-ies` deployment.
+   label remain visible, and sign-in succeeds against the non-production `dev-identity` deployment.
 
 Every `VITE_*` variable is embedded into the static bundle at build time. Changing any of these Railway
 variables therefore requires a rebuild/redeploy; restarting an existing image is not sufficient.
@@ -30,7 +30,7 @@ variables therefore requires a rebuild/redeploy; restarting an existing image is
 
 - `VITE_ADMIN_API_BASE` — the Runtime API's admin prefix (for example,
   `https://runtime-nonprod.example/api/v1/admin`).
-- `VITE_STUB_IES_LOGIN_URL` — the non-production `stub-ies` dev-login endpoint (for example,
+- `VITE_DEVELOPMENT_IDENTITY_LOGIN_URL` — the non-production `dev-identity` dev-login endpoint (for example,
   `https://ies-nonprod.example/dev-login`).
 - `VITE_ENVIRONMENT_LABEL` — must be `RAILWAY-NON-PROD` on this deployment.
 

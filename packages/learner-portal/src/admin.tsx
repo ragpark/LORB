@@ -3,9 +3,7 @@
 // A learner is identified here by the identifier their identity provider issues, and never paired
 // with their LORB pseudonym in storage — results are matched by recomputing the pseudonym at read
 // time, so no standing re-identification table exists. See 004_roster.sql.
-// Roster administration: classes, learners, taught topics, assignment and results. This is the
-// consumer's own surface — the roster belongs to the LMS, not to LORB — but it is stored by the
-// Runtime API, which is why BLK-02, BLK-03 and BLK-07 are implicated. See stub-roster/STUB.md.
+
 import {useEffect,useState} from 'react';
 import {adminRequest} from './admin-api.js';
 import {ApiProblem} from './api.js';

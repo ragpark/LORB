@@ -22,5 +22,5 @@ export function readConfig(env:ImportMetaEnv=import.meta.env):Config{
  // A deployed portal must have a provider. Without this check a misconfigured deployment would fall
  // through to the development sign-in and hand out learner sessions to anyone who asked.
  if(!oidc&&environment!=='DEVELOPMENT')throw new Error('VITE_OIDC_ISSUER and VITE_OIDC_CLIENT_ID are required outside a development environment.');
- return {runtimeApiBase,adminApiBase,runtimeIssuer,jwksUrl:env.VITE_JWKS_URL??'http://localhost:3000/api/v1/runtime/jwks',playerShellOrigin,developmentLoginUrl:env.VITE_DEVELOPMENT_LOGIN_URL??env.VITE_STUB_IES_LOGIN_URL??'http://localhost:4000/dev-login',identityIssuer:env.VITE_OIDC_ISSUER??env.VITE_STUB_IES_ISSUER??'http://localhost:4000',environment,allowedShellOrigins:new Set(origins),oidc};
+ return {runtimeApiBase,adminApiBase,runtimeIssuer,jwksUrl:env.VITE_JWKS_URL??'http://localhost:3000/api/v1/runtime/jwks',playerShellOrigin,developmentLoginUrl:env.VITE_DEVELOPMENT_LOGIN_URL??env.VITE_DEVELOPMENT_IDENTITY_LOGIN_URL??'http://localhost:4000/dev-login',identityIssuer:env.VITE_OIDC_ISSUER??env.VITE_DEVELOPMENT_IDENTITY_ISSUER??'http://localhost:4000',environment,allowedShellOrigins:new Set(origins),oidc};
 }

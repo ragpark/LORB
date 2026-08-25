@@ -26,7 +26,7 @@ Use Node 20 LTS and pnpm 9. Run `pnpm install`, then `pnpm --filter admin-ui dev
 permitted `VITE_*` variables from `.env.example`; `VITE_ENVIRONMENT_LABEL` must be `LOCAL-DEV`. The
 workspace is available at `http://localhost:5176` and requires the Runtime API (with `DATABASE_URL`,
 `ADMIN_ALLOWED_ROLES`, and `ADMIN_APPROVAL_REQUIRED_FOR` set — see the root `.env.example`) and the
-`stub-ies` synthetic identity service running alongside it.
+`dev-identity` synthetic identity service running alongside it.
 
 ## Railway non-production
 

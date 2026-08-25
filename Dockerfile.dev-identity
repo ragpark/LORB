@@ -1,3 +1,8 @@
+# The development identity provider.
+#
+# It mints a short-lived token for whatever subject it is given, so it stands in for a real provider
+# during local work and in nothing else. The Runtime API accepts it only when ALLOW_SYNTHETIC_IDENTITY
+# is set, which production configuration refuses outright.
 FROM node:20-bookworm-slim AS build
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 WORKDIR /app
@@ -10,10 +15,12 @@ COPY packages ./packages
 COPY src ./src
 RUN pnpm exec tsc -p tsconfig.build.json
 FROM node:20-bookworm-slim
-ENV NODE_ENV=production
+# Development only: this image has no password, no consent and no user directory behind it. The
+# platform refuses to trust it when its own NODE_ENV is production.
+ENV NODE_ENV=development
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 USER node
 EXPOSE 4000
-CMD ["node","dist/packages/stub-ies/src/server.js"]
+CMD ["node","dist/packages/dev-identity/src/server.js"]

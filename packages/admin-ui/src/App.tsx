@@ -10,7 +10,7 @@ import { ENVIRONMENT_LABELS, environmentNotice, isEnvironmentLabel, session as p
 import { isSelfApproval } from './lib/separation-of-duties.js';
 
 const ADMIN_API_BASE = import.meta.env.VITE_ADMIN_API_BASE ?? 'http://localhost:3000/api/v1/admin';
-const DEVELOPMENT_LOGIN_URL = import.meta.env.VITE_DEVELOPMENT_LOGIN_URL ?? import.meta.env.VITE_STUB_IES_LOGIN_URL ?? 'http://localhost:4000/dev-login';
+const DEVELOPMENT_LOGIN_URL = import.meta.env.VITE_DEVELOPMENT_LOGIN_URL ?? import.meta.env.VITE_DEVELOPMENT_IDENTITY_LOGIN_URL ?? 'http://localhost:4000/dev-login';
 const ENVIRONMENT = import.meta.env.VITE_ENVIRONMENT_LABEL ?? 'DEVELOPMENT';
 
 /**

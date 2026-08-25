@@ -25,7 +25,7 @@ current Runtime request path remains in-memory.
 | Runtime API | `railway.json` | `https://<runtime-host>` |
 | Learner Portal | `railway.learner-portal.json` | `https://<consumer-host>` |
 | Player Shell and example package | `railway.player-shell.json` | `https://<shell-host>` |
-| Synthetic IES | `railway.stub-ies.json` | `https://<ies-host>` |
+| Synthetic IES | `railway.dev-identity.json` | `https://<ies-host>` |
 
 Do not use Railway private `*.railway.internal` names: the browser must reach
 every endpoint. Use exact origins (scheme plus host, with no path or trailing
@@ -60,8 +60,8 @@ tab and add exactly these variables (using the example domains above):
 VITE_RUNTIME_API_BASE=https://lorb-runtime.up.railway.app/api/v1/runtime
 VITE_JWKS_URL=https://lorb-runtime.up.railway.app/api/v1/runtime/jwks
 VITE_PLAYER_SHELL_ORIGIN=https://lorb-shell.up.railway.app
-VITE_STUB_IES_ISSUER=https://lorb-ies.up.railway.app
-VITE_STUB_IES_LOGIN_URL=https://lorb-ies.up.railway.app/dev-login
+VITE_DEVELOPMENT_IDENTITY_ISSUER=https://lorb-ies.up.railway.app
+VITE_DEVELOPMENT_IDENTITY_LOGIN_URL=https://lorb-ies.up.railway.app/dev-login
 VITE_ENVIRONMENT_LABEL=RAILWAY-NON-PROD
 VITE_ALLOWED_SHELL_ORIGINS=https://lorb-shell.up.railway.app
 ```
@@ -116,7 +116,7 @@ Player Shell opens. Do not define `PORT` on any service; Railway injects it.
 ## Synthetic IES configuration
 
 On the **Synthetic IES service only**, set **Settings -> Build -> Railway Config
-File** to `/railway.stub-ies.json`. Then add this one variable in that service's
+File** to `/railway.dev-identity.json`. Then add this one variable in that service's
 **Variables** tab:
 
 ```text
@@ -124,7 +124,7 @@ IES_PUBLIC_ISSUER=https://lorb-ies.up.railway.app
 ```
 
 This must exactly equal Runtime's `IES_ISSUER` and Consumer's
-`VITE_STUB_IES_ISSUER`. The synthetic IES is strictly non-production.
+`VITE_DEVELOPMENT_IDENTITY_ISSUER`. The synthetic IES is strictly non-production.
 
 ## Player Shell configuration
 
@@ -144,8 +144,8 @@ Before redeploying, the Railway canvas should contain the following settings:
 | Learner Portal | `VITE_JWKS_URL` | Runtime API domain plus `/api/v1/runtime/jwks` |
 | Learner Portal | `VITE_PLAYER_SHELL_ORIGIN` | Player Shell domain only |
 | Learner Portal | `VITE_ALLOWED_SHELL_ORIGINS` | Player Shell domain only |
-| Learner Portal | `VITE_STUB_IES_ISSUER` | Synthetic IES domain only |
-| Learner Portal | `VITE_STUB_IES_LOGIN_URL` | Synthetic IES domain plus `/dev-login` |
+| Learner Portal | `VITE_DEVELOPMENT_IDENTITY_ISSUER` | Synthetic IES domain only |
+| Learner Portal | `VITE_DEVELOPMENT_IDENTITY_LOGIN_URL` | Synthetic IES domain plus `/dev-login` |
 | Runtime API | `ALLOWED_CONSUMER_ORIGINS` | Learner Portal domain only |
 | Runtime API | `RUNTIME_PUBLIC_ISSUER` | Runtime API's own domain only |
 | Runtime API | `PLAYER_SHELL_ORIGIN` | Player Shell domain only |
