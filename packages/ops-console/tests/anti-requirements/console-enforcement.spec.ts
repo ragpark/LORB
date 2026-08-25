@@ -18,7 +18,7 @@ describe('LORB-001 console enforcement controls',()=>{
  it('5 attaches X-Correlation-ID to every API request',()=>expect(api).toContain("'X-Correlation-ID':correlationId"));
  it('6 attaches an Idempotency-Key to state-changing requests',()=>expect(api).toContain("method!=='GET'&&!headers['Idempotency-Key']"));
  it('7 fixes launch mode and en-GB locale',()=>{expect(app).toContain('disabled value="embedded-iframe"');expect(app).toContain('value="en-GB" readOnly')});
- it('8 preserves statement provenance in replay contracts',()=>{const evidence=readFileSync(new URL('../../../evidence-api/src/app.ts',import.meta.url),'utf8');expect(evidence).toContain('statement_id!==row.statement_id')});
+ it('8 preserves statement provenance in replay contracts',()=>{const evidence=readFileSync(new URL('../../../evidence-api/src/app.ts',import.meta.url),'utf8');expect(evidence).toContain('store.requeueStatement(request.params.outboxId, statementId)')});
  it('9 redirects expired sessions to stub sign-in',()=>expect(api).toContain("['AUTHENTICATION_EXPIRED','SESSION_EXPIRED']"));
  it('10 does not use unsafe HTML rendering',()=>expect(app).not.toContain(['dangerously','SetInnerHTML'].join('')));
  it('11 has no wildcard messaging or CORS patterns',()=>{expect(app).not.toMatch(/window\.open\(['"]\*/);expect(app).not.toContain("postMessage('*'");expect(app).not.toContain('Access-Control-Allow-Origin: *')});

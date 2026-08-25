@@ -23,8 +23,8 @@ import { adminDbPool } from "../../packages/runtime-api/src/db/pool.js";
 import { POC_PRINCIPAL } from "../../packages/mcp-connector/src/auth.js";
 import { buildMcpConnector } from "../../packages/mcp-connector/src/app.js";
 import { loadConfig } from "../../packages/mcp-connector/src/config.js";
-import { store } from "../../packages/runtime-api/src/core.js";
-import { resetCatalogue } from "../../packages/runtime-api/src/services/catalogue.js";
+import { MemoryRuntimeStore } from "../../packages/runtime-api/src/store/index.js";
+import { MemoryCatalogueStore } from "../../packages/runtime-api/src/catalogue/index.js";
 import { quizStatementChain, type ShellContext } from "../../packages/quiz-player/src/statements.js";
 import { issueIesToken } from "../../packages/stub-ies/src/issuer.js";
 import { forwardPending } from "../../packages/evidence-forwarder/src/worker.js";
@@ -62,6 +62,8 @@ let evidence: FastifyInstance;
 let connector: FastifyInstance;
 let connectorUrl: string;
 let iesPrivateKey: CryptoKey | Uint8Array;
+let store: MemoryRuntimeStore;
+let catalogue: MemoryCatalogueStore;
 
 /** Routes the connector's outbound HTTP through the in-process LORB services. */
 const injectingFetch = async (input: string, init: { method?: string; headers?: Record<string, string>; body?: string } = {}) => {
@@ -79,15 +81,15 @@ const toolJson = (result: any) => JSON.parse(result.content[0].text as string);
 const resourceJson = (result: { contents: Array<Record<string, unknown>> }) => JSON.parse(String(result.contents[0]!.text));
 
 beforeAll(async () => {
-  store.attempts.clear(); store.launches.clear(); store.idempotency.clear(); store.outbox.clear(); store.assignments.clear();
-  resetCatalogue();
+  store = new MemoryRuntimeStore();
+  catalogue = new MemoryCatalogueStore();
   const ies = await generateKeyPair("ES256");
   iesPrivateKey = ies.privateKey as unknown as CryptoKey;
-  runtime = await buildRuntime({ iesKey: ies.publicKey, secret: Buffer.alloc(32, 9), internalServiceToken: SERVICE_TOKEN, publicIssuer: RUNTIME_BASE, playerOrigin: "http://player.smoke.test" });
-  // The Evidence API shares the Runtime's in-memory store and verifies descriptors with the Runtime's
-  // own key, so it is mounted on the Runtime instance here exactly as src/server.ts does in the PoC host.
-  evidence = await buildEvidence(runtime.keys.privateKey, RUNTIME_BASE);
-  registerEvidenceRoutes(runtime.app as any, runtime.keys.privateKey, RUNTIME_BASE);
+  runtime = await buildRuntime({ iesKey: ies.publicKey, secret: Buffer.alloc(32, 9), internalServiceToken: SERVICE_TOKEN, publicIssuer: RUNTIME_BASE, playerOrigin: "http://player.smoke.test", store, catalogue });
+  // The Evidence API shares the Runtime's store and verifies descriptors with the Runtime's own key
+  // ring, so it is mounted on the Runtime instance here exactly as src/server.ts does.
+  evidence = await buildEvidence(runtime.ring, RUNTIME_BASE, store);
+  registerEvidenceRoutes(runtime.app as any, runtime.ring, { issuer: RUNTIME_BASE, store });
   await adminDbPool().query("delete from class where class_id = $1", [SMOKE_CLASS.class_id]);
   await adminDbPool().query(
     "insert into class (class_id, name, year_group, subject, created_by_pseudonym) values ($1,$2,$3,$4,'smoke-suite')",
@@ -309,16 +311,16 @@ describe("MCP agent connector proof of concept", () => {
     expect(serialised).not.toMatch(/signed_descriptor|player_url|eyJ/);
     expect(serialised).not.toContain(SMOKE_CLASS.learners[0]!);
 
-    const assignment = [...store.assignments.values()].find((entry) => entry.object_id === objectId)!;
+    const assignment = (await store.assignmentsForObject(objectId))[0]!;
     expect(assignment.pseudonyms).toHaveLength(SMOKE_CLASS.learners.length);
     // The Runtime store holds pseudonyms only; the platform learner ids used to derive them are not kept.
     expect(JSON.stringify(assignment)).not.toContain(SMOKE_CLASS.learners[0]!);
 
-    const assignmentsBefore = store.assignments.size;
+    const assignmentsBefore = (await store.assignmentsForObject(objectId)).length;
     const second = toolJson(await client.callTool({ name: "assign_quiz", arguments: { object_id: objectId, class_id: SMOKE_CLASS.class_id, idempotency_key } }));
     expect(second.duplicate).toBe(true);
     expect(second.assignment_id).toBe(first.assignment_id);
-    expect(store.assignments.size).toBe(assignmentsBefore);
+    expect((await store.assignmentsForObject(objectId)).length).toBe(assignmentsBefore);
     await client.close();
   });
 
@@ -364,17 +366,19 @@ describe("MCP agent connector proof of concept", () => {
       }
 
       // Statement UUID deduplication (evidence layer) still holds on a replay.
-      const outboxBefore = store.outbox.size;
+      const outboxBefore = (await store.listOutbox({})).length;
       await evidence.inject({ method: "POST", url: "/api/v1/evidence/statements", headers: { authorization: `Bearer ${descriptor}`, "idempotency-key": chain[0]!.id }, payload: chain[0] });
-      expect(store.outbox.size).toBe(outboxBefore);
+      expect((await store.listOutbox({})).length).toBe(outboxBefore);
 
-      const attempt = store.attempts.get(claims.attempt_id)!;
-      attempt.status = "STARTED";
+      await store.transitionAttempt(claims.attempt_id, "STARTED");
       expect((await runtime.app.inject({ method: "POST", url: `/api/v1/runtime/attempts/${claims.attempt_id}/complete`, headers: { authorization: `Bearer ${descriptor}`, "idempotency-key": randomUUID() } })).statusCode).toBe(200);
     }
 
-    await forwardPending(receiveStatement);
-    const forwarded = [...store.outbox.values()].filter((row: any) => row.status === "FORWARDED");
+    await forwardPending((payload, row) => receiveStatement(payload, row.statement_id), {
+      store,
+      forwarder: { enabled: true, pollIntervalMs: 1000, batchSize: 50, maxAttempts: 5, baseBackoffMs: 100, maxBackoffMs: 1000 },
+    });
+    const forwarded = (await store.listOutbox({ status: "FORWARDED" }));
     expect(forwarded.length).toBe(10);
   });
 

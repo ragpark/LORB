@@ -13,7 +13,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { decodeJwt } from "jose";
 import { issueIesToken } from "../../packages/stub-ies/src/issuer.js";
-import { store } from "../../packages/runtime-api/src/core.js";
+
 import {
   addFixturePage,
   IES_ISSUER,
@@ -69,11 +69,11 @@ async function launch(objectId: string, subject: string) {
   return { playerUrl: body.player_url as string, attemptId: body.attempt_id as string, descriptor: decodeJwt(body.signed_descriptor) };
 }
 
-const attemptStatus = (attemptId: string) => store.attempts.get(attemptId)?.status;
+const attemptStatus = async (attemptId: string) => (await harness.store.getAttempt(attemptId))?.status;
 
-const statementsFor = (objectId: string) =>
-  [...store.outbox.values()]
-    .map((row) => (row as { payload: any }).payload)
+const statementsFor = async (objectId: string) =>
+  (await harness.store.listOutbox({}))
+    .map((row) => row.payload as any)
     .filter((statement) => String(statement?.object?.id ?? "").includes(objectId));
 
 async function openLaunch(page: Page, playerUrl: string) {
@@ -105,7 +105,7 @@ test("a quiz launch drives the full xAPI verb chain through the shell", async ({
   expect(assigned.statusCode).toBe(201);
 
   const { playerUrl, attemptId } = await launch(objectId, "synthetic-browser-01");
-  expect(attemptStatus(attemptId)).toBe("CREATED");
+  expect(await attemptStatus(attemptId)).toBe("CREATED");
 
   const module = await openLaunch(page, playerUrl);
   // Reaching the questions at all proves the whole handshake: module.hello with the launch nonce,
@@ -118,9 +118,9 @@ test("a quiz launch drives the full xAPI verb chain through the shell", async ({
   await module.getByRole("button", { name: "Submit quiz" }).click();
   await expect(module.getByText("You scored 1 out of 2.")).toBeVisible();
 
-  await expect.poll(() => attemptStatus(attemptId), { timeout: 10000 }).toBe("COMPLETED");
+  await expect.poll(async () => attemptStatus(attemptId), { timeout: 10000 }).toBe("COMPLETED");
 
-  const statements = statementsFor(objectId);
+  const statements = await statementsFor(objectId);
   expect(statements.map((s) => s.verb.display["en-GB"])).toEqual(["launched", "answered", "answered", "completed"]);
   expect(statements.filter((s) => s.verb.display["en-GB"] === "answered").map((s) => s.result)).toEqual([
     { response: "a", success: true },
@@ -144,7 +144,7 @@ test("a plain native-web-package module completes through the same channel", asy
   await module.locator("#complete").click();
   // example-module has no build step and no framework: it exercises the handshake from a script that
   // runs during parsing, which is the case that first broke the shell's navigation detection.
-  await expect.poll(() => attemptStatus(attemptId), { timeout: 10000 }).toBe("COMPLETED");
+  await expect.poll(async () => attemptStatus(attemptId), { timeout: 10000 }).toBe("COMPLETED");
 });
 
 test("a document that replaces the module in its own iframe cannot take over the session", async ({ page }) => {
@@ -170,7 +170,7 @@ test("a document that replaces the module in its own iframe cannot take over the
   // used to identify the loaded document — the regression this test exists to guard.
   expect(await page.locator("#module").getAttribute("src")).toContain("/module/index.html");
   expect(stolen).toHaveLength(0);
-  expect(attemptStatus(attemptId)).toBe("CREATED");
+  expect(await attemptStatus(attemptId)).toBe("CREATED");
 });
 
 test("a document with no launch nonce cannot open a channel, even before one exists", async ({ page }) => {
@@ -206,6 +206,6 @@ test("a document with no launch nonce cannot open a channel, even before one exi
   await page.waitForTimeout(2000);
 
   expect(stolen).toHaveLength(0);
-  expect(attemptStatus(attemptId)).toBe("CREATED");
-  expect(statementsFor(objectId)).toHaveLength(0);
+  expect(await attemptStatus(attemptId)).toBe("CREATED");
+  expect(await statementsFor(objectId)).toHaveLength(0);
 });

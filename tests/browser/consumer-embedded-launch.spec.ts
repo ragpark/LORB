@@ -11,7 +11,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { issueIesToken } from "../../packages/stub-ies/src/issuer.js";
-import { registerQuizObject } from "../../packages/runtime-api/src/services/catalogue.js";
+
 import { addFixturePage, IES_ISSUER, PLAYER_ORIGIN, REPOSITORY_ID, startHarness, type Harness } from "./harness.js";
 
 let harness: Harness;
@@ -36,7 +36,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => harness?.stop());
 
 async function launchQuiz(subject: string) {
-  const quiz = registerQuizObject({
+  const quiz = await harness.catalogue.registerQuiz({
     title: "Consumer-embedded launch",
     questions: [{ stem: "Did this render?", options: [{ id: "a", text: "Yes" }, { id: "b", text: "No" }], correct_option_id: "a" }],
   } as never);

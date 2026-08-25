@@ -1,6 +1,7 @@
-// STUB — NOT PRODUCTION — BLOCKED BY BLK-03, BLK-07, BLK-08, BLK-09, BLK-11. Administration workspace Wave 1 RBAC/ABAC.
+// Administration RBAC and repository-scoped ABAC.
 import { jwtVerify } from "jose";
 import { computePseudonym } from "./pseudonym-service.js";
+import { allowedAdminRoles } from "./identity.js";
 
 export class AdminAuthError extends Error {
   constructor(readonly code: string) {
@@ -14,27 +15,53 @@ export interface AdminPrincipal {
   platformAdmin: boolean;
 }
 
+export interface AdminAuthOptions {
+  /** The audience the provider mints Runtime tokens for. */
+  audience?: string;
+  /** Signature algorithms the provider is configured to use; RS256 for most real providers. */
+  algorithms?: string[];
+  /** Claim carrying the platform role, where a provider is configured to emit a non-default one. */
+  roleClaim?: string;
+  platformAdminClaim?: string;
+}
+
+/**
+ * Reads a role from the configured claim, accepting both shapes providers emit: a single string, and
+ * an array of assigned roles.
+ */
+function roleFrom(payload: Record<string, unknown>, claim: string, allowed: string[]): string | undefined {
+  const raw = payload[claim];
+  if (typeof raw === "string") return allowed.includes(raw) ? raw : undefined;
+  if (Array.isArray(raw)) return raw.find((value): value is string => typeof value === "string" && allowed.includes(value));
+  return undefined;
+}
+
 export async function authenticateAdmin(
   authorizationHeader: string | undefined,
-  iesKey: unknown,
-  iesIssuer: string,
+  identityKey: unknown,
+  identityIssuer: string,
   tenantSecret: Buffer,
+  options: AdminAuthOptions = {},
 ): Promise<AdminPrincipal> {
   const token = authorizationHeader?.replace(/^Bearer /, "");
   if (!token) throw new AdminAuthError("AUTHENTICATION_EXPIRED");
   let payload;
   try {
-    payload = (await jwtVerify(token, iesKey as never, { issuer: iesIssuer, audience: "lorb-runtime", algorithms: ["ES256"] })).payload;
+    payload = (await jwtVerify(token, identityKey as never, {
+      issuer: identityIssuer,
+      audience: options.audience ?? "lorb-runtime",
+      algorithms: options.algorithms ?? ["ES256", "RS256"],
+      clockTolerance: 30,
+    })).payload;
   } catch {
     throw new AdminAuthError("AUTHENTICATION_EXPIRED");
   }
   const sub = payload.sub as string | undefined;
   if (!sub) throw new AdminAuthError("AUTHENTICATION_EXPIRED");
-  const role = payload.role as string | undefined;
-  const allowedRoles = (process.env.ADMIN_ALLOWED_ROLES ?? "admin").split(",").map((r) => r.trim()).filter(Boolean);
-  if (!role || !allowedRoles.includes(role)) throw new AdminAuthError("ADMIN_AUDIT_DENIED");
-  const pseudonym = computePseudonym(tenantSecret, iesIssuer, sub, "admin");
-  return { pseudonym, role, platformAdmin: payload.platform_admin === true };
+  const role = roleFrom(payload as Record<string, unknown>, options.roleClaim ?? process.env.OIDC_ROLE_CLAIM ?? "role", allowedAdminRoles());
+  if (!role) throw new AdminAuthError("ADMIN_AUDIT_DENIED");
+  const pseudonym = computePseudonym(tenantSecret, identityIssuer, sub, "admin");
+  return { pseudonym, role, platformAdmin: (payload as Record<string, unknown>)[options.platformAdminClaim ?? process.env.OIDC_PLATFORM_ADMIN_CLAIM ?? "platform_admin"] === true };
 }
 
 const membershipRank: Record<string, number> = { repository_reader: 1, repository_operator: 2, repository_owner: 3 };

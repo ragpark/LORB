@@ -1,4 +1,4 @@
-// STUB — NOT PRODUCTION — BLOCKED BY BLK-03, BLK-07, BLK-08, BLK-09, BLK-11. Administration workspace Wave 1 route helpers.
+// Administration route helpers: authentication, authorisation, audit and the error contract.
 import { randomUUID } from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { AdminAuthError, authenticateAdmin, type AdminPrincipal } from "../../services/admin-authz.js";
@@ -6,10 +6,15 @@ import { writeAudit, type QueryableClient } from "../../services/audit-writer.js
 import { withAdminTransaction } from "../../db/pool.js";
 
 export interface AdminRouteContext {
+  /** Key material for the configured identity provider: a remote JWKS, or an injected key in tests. */
   iesKey: unknown;
   iesIssuer: string;
   tenantSecret: Buffer;
   playerModuleOriginAllowlist: string[];
+  /** The audience the provider mints Runtime tokens for. Defaults to lorb-runtime. */
+  audience?: string;
+  /** Signature algorithms accepted from the provider. */
+  algorithms?: string[];
 }
 
 const ADMIN_ERROR_STATUS: Record<string, number> = {
@@ -93,7 +98,7 @@ export function sendAdminError(reply: FastifyReply, code: string, correlation: s
 export async function requireAdmin(req: FastifyRequest, reply: FastifyReply, ctx: AdminRouteContext, actionType: string, targetType: string): Promise<AdminPrincipal | undefined> {
   const correlation = correlationOf(req);
   try {
-    return await authenticateAdmin(req.headers.authorization, ctx.iesKey, ctx.iesIssuer, ctx.tenantSecret);
+    return await authenticateAdmin(req.headers.authorization, ctx.iesKey, ctx.iesIssuer, ctx.tenantSecret, { audience: ctx.audience, algorithms: ctx.algorithms });
   } catch (error) {
     const code = error instanceof AdminAuthError ? error.code : "AUTHENTICATION_EXPIRED";
     await withAdminTransaction((client) =>
