@@ -5,19 +5,16 @@ ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml ./
-# pnpm resolves workspace dependencies from each package manifest at install
-# time. Copy every frontend manifest before installing so their build-only
-# React, Vite, and type packages are present when the workspace build runs.
-COPY packages/ops-console/package.json ./packages/ops-console/package.json
-COPY packages/learner-portal/package.json ./packages/learner-portal/package.json
-# The workspace tsc build below also compiles packages/mcp-connector, whose MCP SDK dependency must
-# therefore be installed before `COPY packages` — same reason as the frontend manifests above.
-COPY packages/mcp-connector/package.json ./packages/mcp-connector/package.json
-RUN pnpm install --no-frozen-lockfile
-COPY tsconfig.json tsconfig.build.json ./
-COPY src ./src
+COPY package.json pnpm-workspace.yaml tsconfig.json tsconfig.build.json ./
+# The whole workspace, before installing. This used to be a hand-written list of the manifests the
+# root build happens to need, kept short so a source change did not invalidate the install layer.
+# That list is a second copy of the dependency graph, and it drifted the moment a package was added:
+# `@lorb/web-auth` arrived as a dependency of learner-portal, nothing copied its manifest, and every
+# image build died in `pnpm install` with ERR_PNPM_WORKSPACE_PKG_NOT_FOUND. A list that has to be
+# updated by whoever remembers is not worth the layer cache it buys.
 COPY packages ./packages
+COPY src ./src
+RUN pnpm install --no-frozen-lockfile
 RUN pnpm build && pnpm prune --prod
 
 FROM node:20-bookworm-slim AS runtime
