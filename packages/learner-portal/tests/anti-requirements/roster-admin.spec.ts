@@ -7,7 +7,7 @@ import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {sanitise} from '../../src/security.js';
-import {LEARNER_REF} from '../../src/admin.js';
+import {LEARNER_REF,adminErrorMessage} from '../../src/admin.js';
 import {readConfig} from '../../src/config.js';
 
 const root=resolve(fileURLToPath(new URL('../../src',import.meta.url)));
@@ -55,6 +55,28 @@ describe('roster administration',()=>{
   const config=readConfig({VITE_ENVIRONMENT_LABEL:'DEVELOPMENT'} as never);
   expect(config.adminApiBase).toMatch(/\/api\/v1\/admin$/);
   expect(config.adminApiBase).not.toBe(config.runtimeApiBase);
+ });
+
+ // An expired administration token is what a teacher hits when they spend a few minutes fetching an
+ // assistant's issuer and subject before pressing "Link assistant". Reported as a bare code it reads
+ // as though the assistant itself was rejected.
+ it('says what an expired administration session means and how to recover',()=>{
+  const copy=adminErrorMessage('AUTHENTICATION_EXPIRED');
+  expect(copy).toMatch(/expired/i);
+  expect(copy).toMatch(/sign in again/i);
+  expect(copy).not.toContain('AUTHENTICATION_EXPIRED');
+ });
+
+ it('still names an unrecognised code rather than swallowing it',()=>{
+  expect(adminErrorMessage('SOME_NEW_CODE')).toContain('SOME_NEW_CODE');
+ });
+
+ it('offers re-authentication, and drops the spent token, instead of dead-ending on the 401',()=>{
+  const admin=read('admin.tsx');
+  expect(admin).toContain('Sign in again');
+  expect(admin).toContain('adminTokenStore.clear()');
+  // The action that hit the expiry is replayed, so nothing typed into the link form is lost.
+  expect(admin).toContain('pending.current=work');
  });
 
  it('renders learner names as text, never as markup',()=>{

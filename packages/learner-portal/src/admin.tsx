@@ -4,7 +4,7 @@
 // with their LORB pseudonym in storage — results are matched by recomputing the pseudonym at read
 // time, so no standing re-identification table exists. See 004_roster.sql.
 
-import {useEffect,useState} from 'react';
+import {useEffect,useRef,useState} from 'react';
 import {adminRequest} from './admin-api.js';
 import {ApiProblem} from './api.js';
 import type {Config} from './config.js';
@@ -22,7 +22,31 @@ export interface AssignmentResults{assignment_id:string;object_id:string;assigne
  *  roster entry and that learner's own sign-in derive the same pseudonym. Enforced again server-side. */
 export const LEARNER_REF=/^[A-Za-z\d._:-]{1,128}$/;
 
-export function AdminWorkspace({config,onSignOut}:{config:Config;onSignOut:()=>void}){
+/**
+ * Administration error copy.
+ *
+ * The administration area is reached by a teacher, not a developer: a bare `AGENT_LINK_TAKEN` or
+ * `AUTHENTICATION_EXPIRED` on screen tells them nothing about what to do next. The codes remain the
+ * contract with the API — this is only how they are said out loud.
+ */
+const adminErrorCopy:Record<string,string>={
+ AUTHENTICATION_EXPIRED:'Your administration session has expired. Sign in again to continue \u2014 anything you have typed is still here.',
+ ADMIN_AUDIT_DENIED:'Your account does not have teacher access to this area.',
+ ADMIN_REQUEST_INVALID:'Check the details you entered and try again.',
+ AGENT_LINK_INVALID:'Check the issuer and subject. Both are required, and each must be 256 characters or fewer.',
+ AGENT_LINK_TAKEN:'That assistant is already linked to another account.',
+ AGENT_LINK_NOT_FOUND:'That assistant is not linked to your account.',
+ CLASS_NOT_FOUND:'That class no longer exists. Refresh and try again.',
+ CLASS_REQUEST_INVALID:'Check the class details and try again.',
+ CLASS_EMPTY:'Add at least one learner to the class before assigning work.',
+ LEARNER_REF_INVALID:'That learner identifier is not in a supported shape. Use letters, digits, and . _ : - only.',
+ LEARNER_NOT_FOUND:'That learner is not in this class.',
+};
+export const adminErrorMessage=(code:string)=>adminErrorCopy[code]??`We could not complete that request (${code}).`;
+
+export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;onSignOut:()=>void;
+ /** Re-authenticates the teacher after the administration session expires. Defaults to the development sign-in. */
+ onSignInAgain?:()=>Promise<void>}){
  const [classes,setClasses]=useState<ClassSummary[]>([]);
  const [selected,setSelected]=useState<ClassDetail>();
  const [results,setResults]=useState<AssignmentResults[]>();
@@ -31,8 +55,44 @@ export function AdminWorkspace({config,onSignOut}:{config:Config;onSignOut:()=>v
  const [error,setError]=useState('');
  const [busy,setBusy]=useState(false);
 
- const fail=(e:unknown)=>setError(e instanceof ApiProblem?e.code:'UNKNOWN_ERROR');
- const run=async(work:()=>Promise<void>)=>{setBusy(true);setError('');try{await work()}catch(e){fail(e)}finally{setBusy(false)}};
+ /**
+  * Expiry is a state of the workspace, not one more error message.
+  *
+  * The administration token is short-lived and nothing renews it, so a teacher who spends a few
+  * minutes reading an assistant's issuer and subject off another screen comes back to a session that
+  * has already expired: the next action \u2014 linking that assistant, typically \u2014 fails 401 with
+  * AUTHENTICATION_EXPIRED. Reported as a bare code it looks like the assistant was rejected. So the
+  * expired session is held separately, the work that hit it is kept, and signing in again replays it
+  * rather than asking the teacher to retype what is still on screen.
+  */
+ const [expired,setExpired]=useState(false);
+ const pending=useRef<(()=>Promise<void>)|undefined>(undefined);
+
+ const fail=(e:unknown,work?:()=>Promise<void>)=>{
+  const code=e instanceof ApiProblem?e.code:'UNKNOWN_ERROR';
+  if(code==='AUTHENTICATION_EXPIRED'){
+   // The token is spent; holding on to it only produces the same 401 on the next action.
+   adminTokenStore.clear();
+   pending.current=work;
+   setExpired(true);
+   setError('');
+   return;
+  }
+  setError(adminErrorMessage(code));
+ };
+ const run=async(work:()=>Promise<void>)=>{setBusy(true);setError('');try{await work();setExpired(false)}catch(e){fail(e,work)}finally{setBusy(false)}};
+
+ const signInAgain=async()=>{
+  const work=pending.current;
+  setBusy(true);setError('');
+  try{
+   await (onSignInAgain?onSignInAgain():adminSignIn(config,'teacher-a'));
+   pending.current=undefined;
+   setExpired(false);
+   if(work)await work();
+   await loadEverything();
+  }catch(e){fail(e,work)}finally{setBusy(false)}
+ };
 
  const loadClasses=()=>run(async()=>{setClasses((await adminRequest<{items:ClassSummary[]}>(config,'classes')).items)});
  const openClass=(classId:string)=>run(async()=>{
@@ -58,9 +118,14 @@ export function AdminWorkspace({config,onSignOut}:{config:Config;onSignOut:()=>v
   await loadLinks();
  });
 
- useEffect(()=>{void loadClasses();void loadLinks();void run(async()=>{
+ const loadObjects=()=>run(async()=>{
   setObjects((await adminRequest<{items:Array<{object_id:string;title?:string;status:string}>}>(config,'learning-objects')).items);
- })},[]);
+ });
+
+ /** Everything the workspace shows, reloaded together after a fresh sign-in. */
+ async function loadEverything(){await loadClasses();await loadLinks();await loadObjects()}
+
+ useEffect(()=>{void loadEverything()},[]);
 
  const createClass=(form:HTMLFormElement)=>run(async()=>{
   const data=new FormData(form);
@@ -126,7 +191,11 @@ export function AdminWorkspace({config,onSignOut}:{config:Config;onSignOut:()=>v
    <button onClick={onSignOut}>Sign out of administration</button>
   </div>
   <p className="notice">Learner identifiers must match the identifier your identity provider issues for that learner, for example <code>9b-01</code>. A display name is shown to you only and never reaches a launch or an evidence statement.</p>
-  {error&&<p role="alert" className="admin-error">{error}</p>}
+  {expired&&<div role="alert" className="admin-error admin-expired">
+   <p>{adminErrorMessage('AUTHENTICATION_EXPIRED')}</p>
+   <button onClick={()=>void signInAgain()} disabled={busy}>Sign in again</button>
+  </div>}
+  {error&&!expired&&<p role="alert" className="admin-error">{error}</p>}
 
   <div className="admin-columns">
    <div>
