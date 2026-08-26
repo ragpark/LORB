@@ -73,6 +73,80 @@ The role claim is how an administrator is distinguished from a learner. Configur
 emit `role` (or set `OIDC_ROLE_CLAIM`) on the tokens it mints for administrators; a token without
 one gets 403 on every administration route, which is the correct outcome for a learner's token.
 
+#### 4a. Auth0
+
+The section above is what any provider needs. This is the same thing done in an Auth0 tenant, where
+three of its defaults are the difference between a sign-in that works and one that completes and is
+then rejected on every request: no refresh token unless offline access is allowed, no custom claim
+unless it is namespaced, and an issuer whose trailing slash is part of the identifier.
+
+**The API.** Applications → APIs → Create API. Its *Identifier* is what every surface sends as its
+audience and what the Runtime API checks: put it in `OIDC_AUDIENCE` and in each front end's
+`VITE_OIDC_AUDIENCE`. Signing algorithm RS256, which `OIDC_ALGORITHMS` already accepts. Turn on
+**Allow Offline Access**: without it Auth0 mints no refresh token, and the administration area can
+only recover an expired session by sending the teacher back to the provider — losing whatever they
+had typed, which for the assistant-linking form is the whole of the work.
+
+**The applications.** One Single Page Application per front end — learner portal, administration
+workspace, operations console — each with Allowed Callback URLs, Allowed Web Origins and Allowed
+Logout URLs set to that surface's own origin. No client secret: a public client in a browser cannot
+keep one. Refresh Token Rotation on. Nothing needs to be overridden in the client configuration,
+because the endpoints the platform calls (`/authorize`, `/oauth/token`, `/v2/logout?client_id&returnTo`)
+are Auth0's own shapes and are what `OidcClient` uses by default.
+
+**The role claim, which Auth0 will not deliver by default.** Auth0 drops custom claims that are not
+namespaced, silently: a claim named `role` never reaches the token, and every administration route
+answers 403 to a teacher who signed in perfectly well. Assign the role in Auth0's RBAC, then add a
+post-login Action that copies it onto the access token under a namespaced name:
+
+```js
+exports.onExecutePostLogin = async (event, api) => {
+  const roles = event.authorization?.roles ?? [];
+  if (roles.length) api.accessToken.setCustomClaim('https://lorb.example/role', roles);
+};
+```
+
+and point the platform at that name:
+
+```
+OIDC_ROLE_CLAIM=https://lorb.example/role
+ADMIN_ALLOWED_ROLES=admin
+```
+
+The claim may be a single string or an array of assigned roles; both are read. The same namespacing
+applies to `OIDC_PLATFORM_ADMIN_CLAIM`, which must arrive as a boolean `true`.
+
+**The trailing slash, which is load-bearing.** Auth0's issuer is `https://your-tenant.eu.auth0.com/`
+*with* the slash, and an issuer is matched byte for byte — it is an identifier, not a base URL. An
+`OIDC_ISSUER` missing that slash rejects every token with `AUTHENTICATION_EXPIRED`, which reads on
+screen as an expired session rather than as a configuration error, and does so from the first
+request. Take the value from a decoded token's `iss` claim rather than from the dashboard heading.
+`OIDC_JWKS_URL` can stay unset: it is derived correctly from the issuer either way.
+
+**The agent connector** needs its own API, whose identifier is the connector's `/mcp` URL. Its
+`OIDC_ISSUER` is the same tenant issuer, trailing slash included.
+
+Two settings worth choosing deliberately rather than accepting: the API's **token expiration**, which
+is a day by default and is what decides how often a teacher meets the re-authentication prompt
+mid-task; and, if you enable RBAC on the API, **Add Permissions in the Access Token**, which the
+platform reads as scopes.
+
+Once the API exists, mint one token and read what it actually says, rather than transcribing values
+from the dashboard. Authorize a machine-to-machine application for the API to get the credentials
+below; the alternative is diagnosing a 401 that names none of these fields:
+
+```sh
+TOKEN=$(curl -s https://your-tenant.eu.auth0.com/oauth/token \
+  -H 'content-type: application/json' \
+  -d '{"grant_type":"client_credentials","client_id":"…","client_secret":"…",
+       "audience":"https://runtime.lorb.example/api"}' | jq -r .access_token)
+echo "$TOKEN" | cut -d. -f2 | base64 -d 2>/dev/null | jq '{iss, aud, exp}'
+```
+
+`iss` is `OIDC_ISSUER` exactly as printed, trailing slash and all; `aud` is `OIDC_AUDIENCE`. A
+client-credentials token carries no user and so no role claim — to check that, sign in as a teacher
+in the portal and read the same fields out of the token the browser holds.
+
 ### 5. Configure and start the Runtime API
 
 Every setting is listed in `.env.example`. The ones a production process refuses to start without:
