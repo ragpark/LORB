@@ -84,7 +84,13 @@ services:
       NODE_ENV: development
       PORT: "4200"
       AUTH_MODE: shared-token
-      MCP_SHARED_BEARER_TOKEN: ${MCP_SHARED_BEARER_TOKEN:-${MCP_POC_BEARER_TOKEN:?set MCP_SHARED_BEARER_TOKEN to at least 32 characters}}
+      # A plain fallback, with no required-variable inside it. A nested `${A:-${B:?...}}` is evaluated
+      # eagerly by some Compose versions, which fail on B even when A is set — that is precisely what
+      # happened here: it validated locally and refused on the runner. The rule itself is not lost by
+      # dropping it: the connector refuses to start unless this token is at least 32 characters, and
+      # unlike a compose expression that check also applies to every other way the container is run.
+      # The old name is still honoured for a deployment part-way through the rename.
+      MCP_SHARED_BEARER_TOKEN: ${MCP_SHARED_BEARER_TOKEN:-${MCP_POC_BEARER_TOKEN:-}}
       RUNTIME_INTERNAL_SERVICE_TOKEN: ${RUNTIME_INTERNAL_SERVICE_TOKEN:?set RUNTIME_INTERNAL_SERVICE_TOKEN}
       RUNTIME_API_BASE: http://runtime-api:3000
       EVIDENCE_API_BASE: http://runtime-api:3000
