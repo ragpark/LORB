@@ -16,7 +16,7 @@ import { decodeJwt } from "jose";
 import { MemoryCatalogueStore, QUIZ_PLAYER } from "../../packages/runtime-api/src/catalogue/index.js";
 import { MemoryRuntimeStore } from "../../packages/runtime-api/src/store/index.js";
 
-const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://lorb:lorb@localhost:5432/lorb_mvp";
+const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://lorb:lorb@localhost:5432/lorb";
 process.env.DATABASE_URL = DATABASE_URL;
 process.env.ADMIN_ALLOWED_ROLES = "admin";
 process.env.ADMIN_APPROVAL_REQUIRED_FOR =

@@ -207,12 +207,12 @@ describeIfDatabase("Postgres runtime store", () => {
 
   it("never hands the same statement to two forwarder replicas", async () => {
     const statementId = randomUUID();
-    await store.enqueueStatement({
+    expect(await store.enqueueStatement({
       outbox_id: randomUUID(), statement_id: statementId, repository_id: repositoryId,
       attempt_id: randomUUID(), package_version_id: packageVersionId, object_id: objectId,
       actor_pseudonym: "c".repeat(64), verb_id: "http://adlnet.gov/expapi/verbs/completed",
       payload: { id: statementId }, created_at: new Date().toISOString(), correlation_id: randomUUID(),
-    });
+    })).toBe(true);
 
     const [first, second] = await Promise.all([
       store.claimDueStatements("replica-one", 50),
@@ -220,7 +220,15 @@ describeIfDatabase("Postgres runtime store", () => {
     ]);
     const claimedByBoth = first!.filter((row) => second!.some((other) => other.statement_id === row.statement_id));
     expect(claimedByBoth).toHaveLength(0);
-    expect([...first!, ...second!].filter((row) => row.statement_id === statementId)).toHaveLength(1);
+
+    // Asserted together with the row's own state rather than on the claim count alone. A claim that
+    // comes back without this statement is otherwise indistinguishable from three different
+    // failures — the row was never due, it was claimed by something else, or the batch window did
+    // not reach it — and the count alone names none of them.
+    const claimed = [...first!, ...second!].filter((row) => row.statement_id === statementId);
+    const stored = await store.getOutboxByStatement(statementId);
+    expect({ claims: claimed.length, status: stored?.status, attempts: stored?.attempts, claimed_by_one_of: claimed[0]?.status })
+      .toEqual({ claims: 1, status: "IN_FLIGHT", attempts: 1, claimed_by_one_of: "IN_FLIGHT" });
   });
 
   it("refuses to rewrite the payload of an accepted statement", async () => {

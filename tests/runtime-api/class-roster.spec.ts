@@ -14,7 +14,7 @@ import { MemoryRuntimeStore } from "../../packages/runtime-api/src/store/index.j
 import { MemoryCatalogueStore } from "../../packages/runtime-api/src/catalogue/index.js";
 import { xapiVerbs } from "../../packages/contracts/src/index.js";
 
-const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://lorb:lorb@localhost:5432/lorb_mvp";
+const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://lorb:lorb@localhost:5432/lorb";
 process.env.DATABASE_URL = DATABASE_URL;
 process.env.ADMIN_ALLOWED_ROLES = "admin";
 
