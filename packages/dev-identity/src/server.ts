@@ -7,14 +7,19 @@
  */
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import { exportJWK, generateKeyPair } from "jose";
-import { DEV_IDENTITY_KID, issueIesToken } from "./issuer.js";
+import { calculateJwkThumbprint, exportJWK, generateKeyPair } from "jose";
+import { issueIesToken } from "./issuer.js";
 import { devJwks } from "./jwks.js";
 
 const issuer = (process.env.IES_PUBLIC_ISSUER ?? "http://localhost:4000").replace(/\/$/, "");
 const { privateKey, publicKey } = await generateKeyPair("ES256", { extractable: true });
+const publicJwk = await exportJWK(publicKey);
+// The key names itself: an RFC 7638 thumbprint, so the identifier changes when the key does. This
+// provider's key pair is generated per process, and a relying party caches a JWKS by `kid` — see
+// DEV_IDENTITY_KID for what a fixed identifier does to sign-in after a restart.
+const kid = await calculateJwkThumbprint(publicJwk);
 // Built from the same identifier the issuer stamps, so the two cannot drift apart.
-const jwks = devJwks(await exportJWK(publicKey));
+const jwks = devJwks(publicJwk, kid);
 
 /**
  * The same identifier shape the roster accepts, so a learner added to a class and that learner's own
@@ -26,7 +31,7 @@ const SUBJECT = /^[A-Za-z\d._:-]{1,128}$/;
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true, methods: ["GET", "POST"] });
 
-app.get("/health", async () => ({ status: "ok", kid: DEV_IDENTITY_KID }));
+app.get("/health", async () => ({ status: "ok", kid }));
 app.get("/.well-known/jwks.json", async () => jwks);
 
 app.post("/dev-login", async (req, reply) => {
@@ -47,7 +52,7 @@ app.post("/dev-login", async (req, reply) => {
   const claims = role === "admin" ? { role: "admin", ...(platformAdmin ? { platform_admin: true } : {}) } : {};
 
   return {
-    access_token: await issueIesToken(privateKey, subject, "lorb-runtime", issuer, claims),
+    access_token: await issueIesToken(privateKey, subject, "lorb-runtime", issuer, claims, kid),
     token_type: "Bearer",
     expires_in: 600,
   };
