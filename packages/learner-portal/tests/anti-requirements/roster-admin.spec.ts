@@ -79,6 +79,17 @@ describe('roster administration',()=>{
   expect(admin).toContain('pending.current=work');
  });
 
+ // A `run` nested inside another handles the failure itself and returns normally, so the outer one
+ // treats an expired refresh as a success and clears the sign-in prompt it just raised: the teacher
+ // is left looking at stale data with no way back in. Composite actions therefore compose the raw
+ // fetches, which throw, and each handler owns exactly one `run`.
+ it('never nests one run inside another, so an expiry during a refresh survives the action',()=>{
+  const admin=read('admin.tsx');
+  for(const nested of ['await loadClasses()','await loadLinks()','await loadObjects()','await openClass(','await showResults()'])
+   expect(admin).not.toContain(nested);
+  expect(admin).toContain('await fetchLinks()');
+ });
+
  it('renders learner names as text, never as markup',()=>{
   expect(read('admin.tsx')).not.toContain('dangerouslySetInnerHTML');
  });

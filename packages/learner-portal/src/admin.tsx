@@ -80,6 +80,13 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
   }
   setError(adminErrorMessage(code));
  };
+ /**
+  * One action, one `run`. The work it is given must reach every request it makes: a `run` nested
+  * inside another handles the failure itself and then returns normally, so the outer one treats a
+  * request that expired as a success and clears the prompt it just raised. That is why the loads
+  * below come in two forms — a raw `fetch*` that throws, composed freely inside an action, and a
+  * `load*` that wraps exactly one of them for a handler that is the whole action.
+  */
  const run=async(work:()=>Promise<void>)=>{setBusy(true);setError('');try{await work();setExpired(false)}catch(e){fail(e,work)}finally{setBusy(false)}};
 
  const signInAgain=async()=>{
@@ -90,17 +97,28 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
    pending.current=undefined;
    setExpired(false);
    if(work)await work();
-   await loadEverything();
+   await fetchEverything();
   }catch(e){fail(e,work)}finally{setBusy(false)}
  };
 
- const loadClasses=()=>run(async()=>{setClasses((await adminRequest<{items:ClassSummary[]}>(config,'classes')).items)});
- const openClass=(classId:string)=>run(async()=>{
+ const fetchClasses=async()=>{setClasses((await adminRequest<{items:ClassSummary[]}>(config,'classes')).items)};
+ const fetchClass=async(classId:string)=>{
   setSelected(await adminRequest<ClassDetail>(config,`classes/${encodeURIComponent(classId)}`));
   setResults(undefined);
- });
+ };
+ const fetchLinks=async()=>{setLinks((await adminRequest<{items:AgentLink[]}>(config,'agent-links')).items)};
+ const fetchObjects=async()=>{
+  setObjects((await adminRequest<{items:Array<{object_id:string;title?:string;status:string}>}>(config,'learning-objects')).items);
+ };
+ const fetchResults=async(classId:string)=>{
+  setResults((await adminRequest<{items:AssignmentResults[]}>(config,`classes/${encodeURIComponent(classId)}/results`)).items);
+ };
+ /** Everything the workspace shows, reloaded together after a fresh sign-in. */
+ const fetchEverything=async()=>{await fetchClasses();await fetchLinks();await fetchObjects()};
 
- const loadLinks=()=>run(async()=>{setLinks((await adminRequest<{items:AgentLink[]}>(config,'agent-links')).items)});
+ const loadClasses=()=>run(fetchClasses);
+ const openClass=(classId:string)=>run(()=>fetchClass(classId));
+ const loadLinks=()=>run(fetchLinks);
 
  const linkAgent=(form:HTMLFormElement)=>run(async()=>{
   const data=new FormData(form);
@@ -110,22 +128,15 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
    label:String(data.get('label')??'').trim()||undefined,
   })});
   form.reset();
-  await loadLinks();
+  await fetchLinks();
  });
 
  const revokeAgent=(link:AgentLink)=>run(async()=>{
   await adminRequest(config,`agent-links/${encodeURIComponent(link.agent_issuer)}/${encodeURIComponent(link.agent_subject)}`,{method:'DELETE'});
-  await loadLinks();
+  await fetchLinks();
  });
 
- const loadObjects=()=>run(async()=>{
-  setObjects((await adminRequest<{items:Array<{object_id:string;title?:string;status:string}>}>(config,'learning-objects')).items);
- });
-
- /** Everything the workspace shows, reloaded together after a fresh sign-in. */
- async function loadEverything(){await loadClasses();await loadLinks();await loadObjects()}
-
- useEffect(()=>{void loadEverything()},[]);
+ useEffect(()=>{void run(fetchEverything)},[]);
 
  const createClass=(form:HTMLFormElement)=>run(async()=>{
   const data=new FormData(form);
@@ -135,7 +146,7 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
    subject:String(data.get('subject')??'')||undefined,
   })});
   form.reset();
-  await loadClasses();
+  await fetchClasses();
  });
 
  const addLearner=(form:HTMLFormElement)=>run(async()=>{
@@ -147,15 +158,15 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
    method:'POST',body:JSON.stringify({learners:[{learner_ref,display_name:String(data.get('display_name')??'').trim()}]}),
   });
   form.reset();
-  await openClass(selected.class_id);
-  await loadClasses();
+  await fetchClass(selected.class_id);
+  await fetchClasses();
  });
 
  const removeLearner=(learnerRef:string)=>run(async()=>{
   if(!selected)return;
   await adminRequest(config,`classes/${encodeURIComponent(selected.class_id)}/learners/${encodeURIComponent(learnerRef)}`,{method:'DELETE'});
-  await openClass(selected.class_id);
-  await loadClasses();
+  await fetchClass(selected.class_id);
+  await fetchClasses();
  });
 
  const addTopic=(form:HTMLFormElement)=>run(async()=>{
@@ -169,18 +180,18 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
    }]}),
   });
   form.reset();
-  await openClass(selected.class_id);
+  await fetchClass(selected.class_id);
  });
 
  const assign=(objectId:string)=>run(async()=>{
   if(!selected)return;
   await adminRequest(config,`classes/${encodeURIComponent(selected.class_id)}/assignments`,{method:'POST',body:JSON.stringify({object_id:objectId})});
-  await showResults();
+  await fetchResults(selected.class_id);
  });
 
  const showResults=()=>run(async()=>{
   if(!selected)return;
-  setResults((await adminRequest<{items:AssignmentResults[]}>(config,`classes/${encodeURIComponent(selected.class_id)}/results`)).items);
+  await fetchResults(selected.class_id);
  });
 
  const titleFor=(objectId:string)=>objects.find(o=>o.object_id===objectId)?.title??objectId;
