@@ -331,20 +331,33 @@ export class PostgresRuntimeStore implements RuntimeStore {
    * passed over instead of blocking, so throughput scales with replicas and no statement is claimed
    * twice. Rows left IN_FLIGHT by a worker that died are reclaimed after a stall window.
    */
-  async claimDueStatements(worker: string, limit: number, now = new Date()): Promise<OutboxRow[]> {
+  /**
+   * `now` exists for tests that drive the clock. Left unset — which is how a forwarder normally calls
+   * this — the database decides what is due, and that is deliberate rather than incidental.
+   *
+   * A row's `next_attempt_at` is written by Postgres at microsecond precision, and a JavaScript Date
+   * carries milliseconds. Comparing the two means a statement enqueued and claimed within the same
+   * millisecond can be a fraction of a millisecond in the future and get skipped, and across replicas
+   * it means each one decides what is due by its own clock. Neither loses evidence — the next poll
+   * picks the row up — but a queue whose notion of "now" comes from its clients is a queue that
+   * behaves differently depending on which client asked.
+   */
+  async claimDueStatements(worker: string, limit: number, now?: Date): Promise<OutboxRow[]> {
     const result = await this.pool.query(
-      `with due as (
-         select outbox_id from evidence_outbox
-         where (status in ('PENDING','FAILED') and next_attempt_at <= $1)
-            or (status = 'IN_FLIGHT' and claimed_at < $1::timestamptz - interval '5 minutes')
+      `with moment as (select coalesce($1::timestamptz, now()) as at),
+       due as (
+         select outbox_id from evidence_outbox, moment
+         where (status in ('PENDING','FAILED') and next_attempt_at <= moment.at)
+            or (status = 'IN_FLIGHT' and claimed_at < moment.at - interval '5 minutes')
          order by next_attempt_at asc
          limit $2
          for update skip locked
        )
-       update evidence_outbox set status = 'IN_FLIGHT', attempts = attempts + 1, claimed_at = $1, claimed_by = $3
+       update evidence_outbox set status = 'IN_FLIGHT', attempts = attempts + 1,
+         claimed_at = (select at from moment), claimed_by = $3
        where outbox_id in (select outbox_id from due)
        returning ${OUTBOX_COLUMNS}`,
-      [now.toISOString(), limit, worker],
+      [now?.toISOString() ?? null, limit, worker],
     );
     return result.rows.map(toOutbox);
   }

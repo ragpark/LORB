@@ -231,6 +231,27 @@ describeIfDatabase("Postgres runtime store", () => {
       .toEqual({ claims: 1, status: "IN_FLIGHT", attempts: 1, claimed_by_one_of: "IN_FLIGHT" });
   });
 
+  it("treats a statement as due the instant it is enqueued", async () => {
+    // The claim used to compare `next_attempt_at`, written by Postgres at microsecond precision,
+    // against a JavaScript Date truncated to milliseconds. Enqueue and claim inside the same
+    // millisecond and the row sat a fraction of a millisecond in the future, so nobody claimed it —
+    // which is exactly how the test above failed on a fast runner while passing everywhere else.
+    // Fifty rounds with no delay between the write and the claim makes that window near-certain to
+    // be hit at least once if the comparison ever goes back to a client's clock.
+    for (let round = 0; round < 50; round += 1) {
+      const statementId = randomUUID();
+      await store.enqueueStatement({
+        outbox_id: randomUUID(), statement_id: statementId, repository_id: repositoryId,
+        attempt_id: randomUUID(), package_version_id: packageVersionId, object_id: objectId,
+        actor_pseudonym: "f".repeat(64), verb_id: "http://adlnet.gov/expapi/verbs/completed",
+        payload: { id: statementId }, created_at: new Date().toISOString(), correlation_id: randomUUID(),
+      });
+      await store.claimDueStatements(`due-${round}`, 500);
+      const stored = await store.getOutboxByStatement(statementId);
+      expect({ round, status: stored?.status }).toEqual({ round, status: "IN_FLIGHT" });
+    }
+  });
+
   it("refuses to rewrite the payload of an accepted statement", async () => {
     const statementId = randomUUID();
     const outboxId = randomUUID();
