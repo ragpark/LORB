@@ -152,6 +152,8 @@ dt {
 .admin-head{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap}
 .admin-columns{display:grid;grid-template-columns:minmax(16rem,1fr) minmax(0,2fr);gap:2rem;align-items:start}
 .admin-error{color:#8a1c1c;font-weight:600}
+.admin-expired{display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;border:1px solid #8a1c1c;border-radius:.25rem;padding:.75rem}
+.admin-expired p{margin:0}
 .class-list,.learner-list,.topic-list,.assign-list{list-style:none;padding:0;margin:0 0 1rem}
 .class-list button{display:flex;flex-direction:column;gap:.15rem;width:100%;text-align:left;padding:.6rem .75rem;margin-bottom:.4rem}
 .class-list button[aria-current="true"]{outline:2px solid currentColor}
