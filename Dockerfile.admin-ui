@@ -35,7 +35,8 @@ ENV VITE_OIDC_AUDIENCE=${VITE_OIDC_AUDIENCE}
 ENV VITE_OIDC_SCOPE=${VITE_OIDC_SCOPE}
 ENV VITE_ENVIRONMENT_LABEL=${VITE_ENVIRONMENT_LABEL}
 
-# Railway deployment of this image is expressly limited to non-production.
+# The environment this image is built for, declared rather than inferred. Outside development it
+# must name a real identity provider: there is no fallback sign-in to fall back to.
 RUN case "${VITE_ENVIRONMENT_LABEL}" in \
         PRODUCTION|STAGING|DEVELOPMENT) : ;; \
         *) echo "VITE_ENVIRONMENT_LABEL must be PRODUCTION, STAGING or DEVELOPMENT" >&2; exit 1 ;; \
