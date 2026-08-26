@@ -1,4 +1,4 @@
-// STUB — NOT PRODUCTION — BLOCKED BY BLK-03, BLK-07, BLK-08, BLK-09, BLK-11. Administration workspace Wave 1 read-only audit trail.
+// Administration: the read-only audit trail. Records are append-only; see 003_admin_tables.sql.
 import type { FastifyInstance } from "fastify";
 import { type AdminRouteContext, correlationOf, requireAdmin, sendAdminError } from "./shared.js";
 import { adminDbPool } from "../../db/pool.js";

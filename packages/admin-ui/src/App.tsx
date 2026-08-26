@@ -5,14 +5,20 @@ import * as Tabs from '@radix-ui/react-tabs';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { adminApiRequest, AdminApiError, diagnostics } from './lib/api-client.js';
-import { session, signInAdmin, installTabCloseClear } from './lib/auth.js';
+import { session, signInForDevelopment, adminOidcClient, adoptProviderSession, installTabCloseClear } from './lib/auth.js';
+import { ENVIRONMENT_LABELS, environmentNotice, isEnvironmentLabel, session as providerSession } from '@lorb/web-auth';
 import { isSelfApproval } from './lib/separation-of-duties.js';
 
 const ADMIN_API_BASE = import.meta.env.VITE_ADMIN_API_BASE ?? 'http://localhost:3000/api/v1/admin';
-const STUB_LOGIN_URL = import.meta.env.VITE_STUB_IES_LOGIN_URL ?? 'http://localhost:4000/dev-login';
-const ENVIRONMENT = import.meta.env.VITE_ENVIRONMENT_LABEL ?? 'LOCAL-DEV';
+const DEVELOPMENT_LOGIN_URL = import.meta.env.VITE_DEVELOPMENT_LOGIN_URL ?? import.meta.env.VITE_DEVELOPMENT_IDENTITY_LOGIN_URL ?? 'http://localhost:4000/dev-login';
+const ENVIRONMENT = import.meta.env.VITE_ENVIRONMENT_LABEL ?? 'DEVELOPMENT';
 
-export const DRAFT_BANNER = 'DRAFT — LORB-001 ADMINISTRATION WORKSPACE — NOT PRODUCTION. Synthetic identities only. Not a certified administrative surface.';
+/**
+ * The notice a non-production workspace carries. Production shows none: an administrator needs to
+ * know when the records in front of them are *not* real, and a banner that is always there stops
+ * being read long before the one time it matters.
+ */
+export const ENVIRONMENT_NOTICE = isEnvironmentLabel(ENVIRONMENT) ? environmentNotice(ENVIRONMENT) : undefined;
 
 type Page = 'signin' | 'overview' | 'repositories' | 'repository-detail' | 'learning-objects' | 'players' | 'player-detail' | 'launch-policies' | 'launch-policy-detail' | 'audit' | 'approvals';
 type Row = Record<string, unknown>;
@@ -55,23 +61,39 @@ function useWhoAmI() {
 }
 
 function SignIn({ onSignedIn }: { onSignedIn: () => void }) {
-  const [subject, setSubject] = useState('synthetic-admin-a');
+  const [subject, setSubject] = useState('administrator-a');
   const [error, setError] = useState('');
-  const identities = ['synthetic-admin-a', 'synthetic-admin-b'];
-  const submit = async () => {
+  const oidc = useMemo(() => adminOidcClient(), []);
+
+  // A configured provider is the only way in wherever one exists. The local identities below are
+  // reachable only in a development build that has no provider at all.
+  const identities = ['administrator-a', 'administrator-b'];
+  const submitDevelopment = async () => {
     try {
-      await signInAdmin(STUB_LOGIN_URL, subject);
+      await signInForDevelopment(DEVELOPMENT_LOGIN_URL, subject, ENVIRONMENT);
       onSignedIn();
     } catch (e) {
       setError(errorMessage(e));
     }
   };
+
+  if (oidc) {
+    return (
+      <section className="sign-in">
+        <h1>Sign in to the Administration workspace</h1>
+        <p>You will be taken to your organisation&rsquo;s identity provider.</p>
+        {error && <p role="alert" className="error-text">{error}</p>}
+        <button onClick={() => void oidc.signIn().catch((e) => setError(errorMessage(e)))}>Continue to sign in</button>
+      </section>
+    );
+  }
+
   return (
     <section className="sign-in">
-      <h1>Continue with a synthetic administrator identity</h1>
-      <p>This is a non-production administration workspace. Synthetic identities only.</p>
+      <h1>Sign in to the Administration workspace</h1>
+      <p>No identity provider is configured for this environment, so a local administrator is used.</p>
       <label>
-        Synthetic administrator
+        Administrator
         <select value={subject} onChange={(e) => setSubject(e.target.value)}>
           {identities.map((id) => (
             <option key={id} value={id}>
@@ -81,7 +103,7 @@ function SignIn({ onSignedIn }: { onSignedIn: () => void }) {
         </select>
       </label>
       {error && <p role="alert" className="error-text">{error}</p>}
-      <button onClick={() => void submit()}>Sign in as administrator</button>
+      <button onClick={() => void submitDevelopment()}>Sign in as administrator</button>
     </section>
   );
 }
@@ -884,22 +906,36 @@ const nav: [Page, string][] = [
 ];
 
 export function App() {
-  const invalidEnvironment = !['LOCAL-DEV', 'RAILWAY-NON-PROD'].includes(ENVIRONMENT);
+  const invalidEnvironment = !ENVIRONMENT_LABELS.includes(ENVIRONMENT as never);
   const [page, setPage] = useState<Page>(session.getToken() ? 'overview' : 'signin');
   const [selectedId, setSelectedId] = useState<string>('');
   const [lastApprovalRequestId, setLastApprovalRequestId] = useState<string>('');
   const whoami = useWhoAmI();
+  const [signInError, setSignInError] = useState('');
   useEffect(() => installTabCloseClear(), []);
+
+  // Completes a provider redirect if this load is one. Called unconditionally: the client reports
+  // false when the URL is not a callback, so there is nothing to branch on before asking.
+  useEffect(() => {
+    const oidc = adminOidcClient();
+    if (!oidc) return;
+    void oidc.completeSignIn()
+      .then((completed) => {
+        const token = providerSession.token;
+        if (completed && token) {
+          adoptProviderSession(token);
+          setPage('overview');
+        }
+      })
+      .catch((e) => setSignInError(errorMessage(e)));
+  }, []);
 
   if (invalidEnvironment) {
     return (
-      <>
-        <div className="draft-banner" role="status">{DRAFT_BANNER}</div>
-        <main className="fatal">
-          <h1>Environment configuration error</h1>
-          <p>VITE_ENVIRONMENT_LABEL must be LOCAL-DEV or RAILWAY-NON-PROD.</p>
-        </main>
-      </>
+      <main className="fatal">
+        <h1>Environment configuration error</h1>
+        <p>VITE_ENVIRONMENT_LABEL must be one of {ENVIRONMENT_LABELS.join(', ')}.</p>
+      </main>
     );
   }
 
@@ -910,21 +946,22 @@ export function App() {
 
   return (
     <div className="app">
-      <div className="draft-banner" role="status">{DRAFT_BANNER}</div>
+      {ENVIRONMENT_NOTICE && <div className="environment-notice" role="status">{ENVIRONMENT_NOTICE}</div>}
+      {signInError && <div className="error-text" role="alert">{signInError}</div>}
       <a className="skip" href="#main">Skip to content</a>
       <header>
         <div className="brand">
           <span className="mark">L</span>
           <div>
             <strong>LORB Administration</strong>
-            <small>DRAFT workspace</small>
+            <small>Administration workspace</small>
           </div>
         </div>
         <span className="env">● {ENVIRONMENT}</span>
         {page !== 'signin' && (
           <div className="operator">
             <span>
-              <small>SYNTHETIC ADMINISTRATOR</small>
+              <small>ADMINISTRATOR</small>
               {whoami.data?.pseudonym ?? '…'}
             </span>
             <button

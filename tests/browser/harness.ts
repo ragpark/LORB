@@ -9,13 +9,15 @@
  * tokens in-process, so the suite generates the key pair itself and signs tokens with the stub issuer.
  */
 import { createReadStream, existsSync } from "node:fs";
-import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { join, normalize, resolve } from "node:path";
+import { dirname, join, normalize, resolve } from "node:path";
 import { generateKeyPair, type KeyLike } from "jose";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
 import { registerEvidenceRoutes } from "../../packages/evidence-api/src/app.js";
+import { MemoryRuntimeStore } from "../../packages/runtime-api/src/store/index.js";
+import { MemoryCatalogueStore } from "../../packages/runtime-api/src/catalogue/index.js";
 
 export const RUNTIME_PORT = 3010;
 export const PLAYER_PORT = 3210;
@@ -43,6 +45,8 @@ const CONTENT_TYPES: Record<string, string> = {
 
 export interface Harness {
   runtime: Awaited<ReturnType<typeof buildRuntime>>;
+  store: MemoryRuntimeStore;
+  catalogue: MemoryCatalogueStore;
   iesPrivateKey: KeyLike;
   /** Absolute path of the assembled static root, so a test can add its own fixture pages. */
   playerRoot: string;
@@ -84,9 +88,16 @@ function staticServer(root: string): Server {
 }
 
 export async function startHarness(): Promise<Harness> {
+  // The suite drives a real Runtime API, which logs every request. Useful when debugging one test,
+  // overwhelming across the whole run — raise it deliberately rather than living with the noise.
+  process.env.LOG_LEVEL ??= "silent";
   const playerRoot = await assemblePlayerRoot();
   const ies = await generateKeyPair("ES256");
+  const store = new MemoryRuntimeStore();
+  const catalogue = new MemoryCatalogueStore();
   const runtime = await buildRuntime({
+    store,
+    catalogue,
     iesKey: ies.publicKey,
     iesIssuer: IES_ISSUER,
     secret: Buffer.alloc(32, 11),
@@ -95,7 +106,7 @@ export async function startHarness(): Promise<Harness> {
     evidenceEndpoint: `${RUNTIME_ORIGIN}/api/v1/evidence/statements`,
     internalServiceToken: INTERNAL_SERVICE_TOKEN,
   });
-  registerEvidenceRoutes(runtime.app, runtime.keys.privateKey, RUNTIME_ORIGIN);
+  registerEvidenceRoutes(runtime.app, runtime.ring, { issuer: RUNTIME_ORIGIN, store });
   await runtime.app.listen({ host: "127.0.0.1", port: RUNTIME_PORT });
 
   const player = staticServer(playerRoot);
@@ -103,6 +114,8 @@ export async function startHarness(): Promise<Harness> {
 
   return {
     runtime,
+    store,
+    catalogue,
     iesPrivateKey: ies.privateKey,
     playerRoot,
     async stop() {
@@ -115,5 +128,9 @@ export async function startHarness(): Promise<Harness> {
 
 /** Writes a fixture page into the served root. Test-only; nothing here ships. */
 export async function addFixturePage(harness: Harness, path: string, html: string): Promise<void> {
-  await writeFile(join(harness.playerRoot, path), html, "utf8");
+  const file = join(harness.playerRoot, path);
+  // A fixture may sit under its own directory, because a module's package path is part of what is
+  // being tested and not every one of them lives at the root.
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, html, "utf8");
 }

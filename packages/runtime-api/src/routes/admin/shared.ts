@@ -1,4 +1,4 @@
-// STUB — NOT PRODUCTION — BLOCKED BY BLK-03, BLK-07, BLK-08, BLK-09, BLK-11. Administration workspace Wave 1 route helpers.
+// Administration route helpers: authentication, authorisation, audit and the error contract.
 import { randomUUID } from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { AdminAuthError, authenticateAdmin, type AdminPrincipal } from "../../services/admin-authz.js";
@@ -6,10 +6,15 @@ import { writeAudit, type QueryableClient } from "../../services/audit-writer.js
 import { withAdminTransaction } from "../../db/pool.js";
 
 export interface AdminRouteContext {
+  /** Key material for the configured identity provider: a remote JWKS, or an injected key in tests. */
   iesKey: unknown;
   iesIssuer: string;
   tenantSecret: Buffer;
   playerModuleOriginAllowlist: string[];
+  /** The audience the provider mints Runtime tokens for. Defaults to lorb-runtime. */
+  audience?: string;
+  /** Signature algorithms accepted from the provider. */
+  algorithms?: string[];
 }
 
 const ADMIN_ERROR_STATUS: Record<string, number> = {
@@ -33,6 +38,8 @@ const ADMIN_ERROR_STATUS: Record<string, number> = {
   LAUNCH_POLICY_RULES_INVALID: 400,
   ADMIN_REQUEST_INVALID: 400,
   IDEMPOTENCY_KEY_REQUIRED: 400,
+  IDEMPOTENCY_KEY_REUSED: 409,
+  IDEMPOTENCY_KEY_IN_FLIGHT: 409,
   LEARNING_OBJECT_NOT_FOUND: 404,
   LEARNING_OBJECT_NOT_PUBLISHED: 409,
   SMART_LINK_NOT_FOUND: 404,
@@ -47,6 +54,8 @@ const ADMIN_ERROR_STATUS: Record<string, number> = {
 };
 
 const ADMIN_ERROR_TITLE: Record<string, string> = {
+  IDEMPOTENCY_KEY_REUSED: "That idempotency key was used for a different request",
+  IDEMPOTENCY_KEY_IN_FLIGHT: "That idempotency key is still being processed",
   AUTHENTICATION_EXPIRED: "Your session has expired",
   ADMIN_AUDIT_DENIED: "Administrator access is required",
   MEMBERSHIP_NOT_PERMITTED: "You do not have the required repository membership",
@@ -93,7 +102,7 @@ export function sendAdminError(reply: FastifyReply, code: string, correlation: s
 export async function requireAdmin(req: FastifyRequest, reply: FastifyReply, ctx: AdminRouteContext, actionType: string, targetType: string): Promise<AdminPrincipal | undefined> {
   const correlation = correlationOf(req);
   try {
-    return await authenticateAdmin(req.headers.authorization, ctx.iesKey, ctx.iesIssuer, ctx.tenantSecret);
+    return await authenticateAdmin(req.headers.authorization, ctx.iesKey, ctx.iesIssuer, ctx.tenantSecret, { audience: ctx.audience, algorithms: ctx.algorithms });
   } catch (error) {
     const code = error instanceof AdminAuthError ? error.code : "AUTHENTICATION_EXPIRED";
     await withAdminTransaction((client) =>

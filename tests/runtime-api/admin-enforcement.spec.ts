@@ -1,18 +1,22 @@
-// Administration workspace (Wave 1) API/DB-side anti-requirements — Section 13 of the brief.
-// Requires Postgres (docker compose up -d, matching the project's existing DATABASE_URL convention
-// in .env.example) with migrations 001_mvp.sql and 003_admin_tables.sql applied.
-// UI-side controls (banner, pseudonym-only display, sessionStorage, no dangerouslySetInnerHTML, the
-// Simulate tooltip, etc.) are tested in packages/admin-ui/tests/anti-requirements/admin-ui-enforcement.spec.ts.
+// Administration enforcement, on the side that cannot be bypassed: the API and the database.
+//
+// Needs Postgres with the migrations applied (`pnpm db:setup`). Several of the properties here are
+// enforced by triggers and constraints rather than by application code — immutability of a published
+// player version, immutability of published launch-policy rules, the append-only audit trail, and
+// the self-approval check — so a run without a database would not exercise them at all.
+//
+// UI-side controls are covered in packages/admin-ui/tests/anti-requirements/.
 import { randomUUID } from "node:crypto";
 import { generateKeyPair } from "jose";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
-import { issueIesToken } from "../../packages/stub-ies/src/issuer.js";
+import { issueIesToken } from "../../packages/dev-identity/src/issuer.js";
 import { decodeJwt } from "jose";
-import { QUIZ_PLAYER, REPOSITORY, registerQuizObject } from "../../packages/runtime-api/src/services/catalogue.js";
+import { MemoryCatalogueStore, QUIZ_PLAYER } from "../../packages/runtime-api/src/catalogue/index.js";
+import { MemoryRuntimeStore } from "../../packages/runtime-api/src/store/index.js";
 
-const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://lorb:lorb@localhost:5432/lorb_mvp";
+const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://lorb:lorb@localhost:5432/lorb";
 process.env.DATABASE_URL = DATABASE_URL;
 process.env.ADMIN_ALLOWED_ROLES = "admin";
 process.env.ADMIN_APPROVAL_REQUIRED_FOR =
@@ -26,12 +30,19 @@ describe("Administration workspace API/DB enforcement", () => {
   let tokenA: string;
   let tokenB: string;
   let nonAdminToken: string;
+  let catalogue: MemoryCatalogueStore;
+  let catalogueRepositoryId: string;
 
   beforeAll(async () => {
     const keys = await generateKeyPair("ES256");
     ies.privateKey = keys.privateKey;
     ies.publicKey = keys.publicKey;
-    runtime = await buildRuntime({ iesKey: keys.publicKey, iesIssuer: urls.ies, playerOrigin: urls.player, secret: Buffer.alloc(32, 3) });
+    catalogue = new MemoryCatalogueStore();
+    catalogueRepositoryId = (await catalogue.defaultRepository())!.repository_id;
+    runtime = await buildRuntime({
+      iesKey: keys.publicKey, iesIssuer: urls.ies, playerOrigin: urls.player,
+      secret: Buffer.alloc(32, 3), store: new MemoryRuntimeStore(), catalogue,
+    });
     pool = new pg.Pool({ connectionString: DATABASE_URL });
     tokenA = await issueIesToken(keys.privateKey as never, "synthetic-enforcement-a", "lorb-runtime", urls.ies, { role: "admin" });
     tokenB = await issueIesToken(keys.privateKey as never, "synthetic-enforcement-b", "lorb-runtime", urls.ies, { role: "admin" });
@@ -252,11 +263,16 @@ describe("Administration workspace API/DB enforcement", () => {
       await admin(tokenA, "POST", `/approval-requests/${approvalRequestId}/execute`);
     }
     const learnerToken = await issueIesToken(ies.privateKey as never, "synthetic-enforcement-learner-2", "lorb-runtime", urls.ies, {});
+    // A launch resolves a registered object; an unknown identifier is refused rather than routed.
+    const routed = await catalogue.registerObject({
+      repository_id: repositoryId, title: "Resolver target",
+      module_path: "/module/index.html", semver: "1.0.0", sha256: "b".repeat(64),
+    });
     const launch = await runtime.app.inject({
       method: "POST",
       url: "/api/v1/runtime/launches",
       headers: { authorization: `Bearer ${learnerToken}`, "idempotency-key": randomUUID() },
-      payload: { contract_version: "1.0", consumer_id: "enforcement-test", repository_id: repositoryId, object_id: randomUUID(), requested_launch_mode: "embedded-iframe", locale: "en-GB" },
+      payload: { contract_version: "1.0", consumer_id: "enforcement-test", repository_id: repositoryId, object_id: routed.object_id, requested_launch_mode: "embedded-iframe", locale: "en-GB" },
     });
     expect(launch.statusCode).toBe(201);
     const attempt = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/attempts/${launch.json().attempt_id}` });
@@ -303,10 +319,15 @@ describe("Administration workspace API/DB enforcement", () => {
       await admin(tokenA, "POST", `/approval-requests/${approvalRequestId}/execute`);
     }
 
-    const quiz = registerQuizObject({
+    const quiz = await catalogue.registerQuiz({
       title: "Pinned player check",
       questions: [{ stem: "Does the quiz player render this?", options: [{ id: "a", text: "Yes" }, { id: "b", text: "No" }], correct_option_id: "a" }],
     } as never);
+    // An object that pins no shared player, so a policy is free to route its renderer.
+    const generic = await catalogue.registerObject({
+      repository_id: catalogueRepositoryId, title: "Generic activity",
+      module_path: "/module/index.html", semver: "1.0.0", sha256: "a".repeat(64),
+    });
     const learnerToken = await issueIesToken(ies.privateKey as never, "synthetic-enforcement-learner-3", "lorb-runtime", urls.ies, {});
     const launch = (objectId: string, repositoryId: string) =>
       runtime.app.inject({
@@ -318,7 +339,7 @@ describe("Administration workspace API/DB enforcement", () => {
       (decodeJwt(response.json().signed_descriptor) as { package_url: string }).package_url;
 
     // The fix: the quiz reaches the quiz player even though a policy matched this launch.
-    const pinned = await launch(quiz.object_id, REPOSITORY.repository_id);
+    const pinned = await launch(quiz.object_id, catalogueRepositoryId);
     expect(pinned.statusCode).toBe(201);
     expect(packageUrlOf(pinned)).toBe(`${urls.player}${QUIZ_PLAYER.module_path}`);
     expect(packageUrlOf(pinned)).not.toBe(`${urls.player}/module/index.html`);
@@ -329,27 +350,33 @@ describe("Administration workspace API/DB enforcement", () => {
     expect(attempt.json().package_pinned_by_object).toBe(true);
 
     // An object that pins nothing still follows the policy, so this is not the feature turned off.
-    const unpinned = await launch(randomUUID(), REPOSITORY.repository_id);
+    const unpinned = await launch(generic.object_id, catalogueRepositoryId);
+    expect(unpinned.statusCode).toBe(201);
     expect(packageUrlOf(unpinned)).toBe(`${urls.player}/module/index.html`);
 
     // A pin must not be usable to escape a different repository's policy. The launch request carries
     // both identifiers and nothing else forces them to agree, so naming a known quiz alongside a
-    // repository it does not belong to would otherwise bypass that repository's policy.
+    // repository it does not belong to has to be refused outright rather than resolved to whichever
+    // package one of the two identifiers happens to name.
     const foreignRepository = await createRepository(tokenA);
     const mismatched = await launch(quiz.object_id, foreignRepository);
-    expect(packageUrlOf(mismatched)).toBe(`${urls.player}/module/index.html`);
-    const mismatchedAttempt = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/attempts/${mismatched.json().attempt_id}` });
-    expect(mismatchedAttempt.json().package_pinned_by_object).toBeUndefined();
+    expect(mismatched.statusCode).toBe(404);
+    expect(mismatched.json().code).toBe("OBJECT_NOT_FOUND");
+
+    // An object that is in no repository at all is refused too: a launch never silently substitutes
+    // a default package for content nobody registered.
+    const unknown = await launch(randomUUID(), catalogueRepositoryId);
+    expect(unknown.statusCode).toBe(404);
 
     // The launch schema accepts a UUID in either case and catalogue keys are lower case, so a client
     // that upper-cases identifiers must still get its pin. Without normalising, the lookup misses or
     // the comparison fails, no pin is found, and the quiz quietly gets the generic player again.
-    const shouted = await launch(quiz.object_id.toUpperCase(), REPOSITORY.repository_id.toUpperCase());
+    const shouted = await launch(quiz.object_id.toUpperCase(), catalogueRepositoryId.toUpperCase());
     expect(shouted.statusCode).toBe(201);
     expect(packageUrlOf(shouted)).toBe(`${urls.player}${QUIZ_PLAYER.module_path}`);
 
     // Mixed case across the two must not accidentally satisfy the repository check either.
-    const mixed = await launch(quiz.object_id, REPOSITORY.repository_id.toUpperCase());
+    const mixed = await launch(quiz.object_id, catalogueRepositoryId.toUpperCase());
     expect(packageUrlOf(mixed)).toBe(`${urls.player}${QUIZ_PLAYER.module_path}`);
   });
 });

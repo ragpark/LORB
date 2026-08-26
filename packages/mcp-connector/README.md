@@ -1,8 +1,4 @@
-# mcp-connector
-
-> **DRAFT — HUMAN REVIEW REQUIRED — NOT CERTIFIED — LOCAL DEV ONLY.** This is a proof of concept at
-> the same maturity level as the rest of this repository. It makes no compliance claim, resolves no
-> open blocker, and must not be deployed to a shared or production environment.
+# Agent connector
 
 A remote MCP server (streamable HTTP transport) that lets a teacher's AI agent draft a quiz, register
 it as a LORB learning object, assign it to a class, and read back aggregated results — through LORB's
@@ -13,22 +9,27 @@ real Runtime and Evidence pipeline, not a mock of it.
 | | Agent-facing (this package) | Learner-facing (existing) |
 |---|---|---|
 | Principal | The teacher's agent session | One learner, one launch |
-| Credential | Pre-shared bearer token, `AUTH_MODE=poc` | Synthetic IES ES256 token, `aud: lorb-runtime` |
-| Lifetime | Per environment, static | Ten minutes |
-| Issued by | Environment configuration | `packages/stub-ies` |
+| Credential | A token from your identity provider, `AUTH_MODE=oidc` | A token from the same provider, `aud: lorb-runtime` |
+| Lifetime | The provider's | Minutes |
+| Scope | One teacher's classes, through an explicit link | One learner, one launch |
 
-They share no token, no scope, and no signing key. The agent's bearer token never reaches a launch
-descriptor or an IES token, and an IES token is never accepted here. `loadConfig` refuses to start if
-the agent token and the Runtime internal-service credential are configured to the same value.
+They share no token, no scope, and no signing key. The agent's token never reaches a launch descriptor
+or a learner access token, and a learner token is never accepted here. Configuration refuses to start
+if the agent credential and the Runtime internal-service credential are the same value.
 
 ### Two authentication modes
 
-| | `AUTH_MODE=poc` | `AUTH_MODE=oidc` |
+| | `AUTH_MODE=oidc` (default) | `AUTH_MODE=shared-token` |
 |---|---|---|
-| Credential | One pre-shared bearer token per environment | A token issued by an identity provider you already run |
-| Validated by | Constant-time comparison | Signature against the provider's JWKS, plus `iss`, `aud` and expiry |
-| Discovery | None | RFC 9728 metadata at `/.well-known/oauth-protected-resource` |
-| Suitable for | Local development and CI | Anything a real person uses |
+| Credential | A token issued by an identity provider you already run | One pre-shared bearer token per environment |
+| Validated by | Signature against the provider's JWKS, plus `iss`, `aud` and expiry | Constant-time comparison |
+| Discovery | RFC 9728 metadata at `/.well-known/oauth-protected-resource` | None |
+| Suitable for | Every deployed environment | Local development and continuous integration only |
+
+`shared-token` is refused outright when `NODE_ENV` is `production` or `staging`: a single pre-shared
+token has no identity behind it, cannot be scoped to one teacher, cannot be revoked for one agent, and
+names nobody in an audit record. `poc` is still accepted as the previous name for this mode, so an
+existing development environment keeps working without an edit.
 
 **In `oidc` mode this connector is an OAuth resource server and nothing else.** It validates tokens
 and publishes metadata. It never issues, refreshes, stores, or exchanges a credential, and it holds
@@ -53,9 +54,9 @@ confused-deputy problem the MCP authorization specification calls out. Making it
 cannot be quietly forgotten. Register this connector as its own API/resource in your provider and use
 that identifier.
 
-Two further guards, both fail-closed at startup: the issuer must be `https`, and
-`MCP_POC_BEARER_TOKEN` must be **absent** in `oidc` mode, so a pre-shared token cannot linger as a
-second, weaker way past the provider.
+Three further guards, all fail-closed at start-up: the issuer must be `https`; the pre-shared token
+must be **absent** in `oidc` mode, so it cannot linger as a second, weaker way past the provider; and
+`shared-token` mode is refused in production regardless of what else is configured.
 
 ### Wiring it to Auth0
 
@@ -162,13 +163,10 @@ in this repository. Whether a given client can then complete a flow depends on t
 needs dynamic client registration, client ID metadata documents, or a client you pre-register and
 paste in. That is a decision about your identity provider, not about this code.
 
-This does **not** close BLK-08. It is a necessary step in the direction BLK-08 has to go — the
-synthetic IES can never be the answer for a real person — but the privacy and security design work
-those blockers name is still outstanding.
+What it does not do is decide who may use the connector. That is your provider's job, and keeping it
+there is deliberate: the hardest part of authorization stays with a system built for it.
 
 ### Agent principals and roster scoping
-
-**NEEDS HUMAN LORB-001 RE-REVIEW.** This is the first identity link between the two domains above.
 
 The connector holds one internal service credential for every agent session. That credential
 authenticates the *connector*, not the person using it, so on its own it cannot scope anything —
@@ -177,9 +175,10 @@ holding it, which in `oidc` mode meant any authenticated teacher could read any 
 class metadata and pass those UUIDs to the `class://` resources and `assign_quiz`.
 
 Scoping needs the agent's identity to resolve to a teacher, and it cannot be computed. A teacher's
-classes are owned by `HMAC(iesIssuer | iesSubject | "admin")`, derived from the synthetic IES
-identity they sign into the Consumer UI with; an agent authenticates through a different provider
-with a different subject. Nothing joins the two, deliberately.
+classes are owned by `HMAC(issuer | subject | "admin")`, derived from the identity they sign into the
+portal with; an agent may authenticate as a different principal, possibly through a different
+provider. Nothing joins the two, deliberately — an inferred join on a matching email is exactly the
+kind of quiet identity linkage that turns out to be wrong for one person in a thousand.
 
 So the link is **explicit and teacher-created**. The connector forwards the principal it verified
 (`x-lorb-agent-issuer`, `x-lorb-agent-subject`) alongside the service token; the Runtime API resolves
@@ -187,11 +186,11 @@ it through `agent_principal_link` and scopes every roster read to that teacher. 
 from a matching email or a shared claim.
 
 It fails closed in both directions. An unlinked principal gets an empty class list and a 404 on any
-class it names — including one whose UUID it already knows. `poc` mode is not exempt: it presents a
-fixed synthetic principal (`urn:lorb:poc` / `local-dev`) that must be linked like any other, so
-there is no mode-specific bypass to forget about later.
+class it names — including one whose UUID it already knows. `shared-token` mode is not exempt: it presents a
+fixed local principal that must be linked like any other, so there is no mode-specific bypass to
+forget about later.
 
-A teacher links and revokes assistants in the Consumer UI administration area. A principal can only
+A teacher links and revokes assistants in the portal's administration area. A principal can only
 ever be linked to the classes of the teacher who linked it, and re-pointing somebody else's live
 link is refused rather than silently moving an assistant's access between accounts. That ownership
 condition is enforced inside the conflicting write, so two teachers claiming the same principal at
@@ -221,8 +220,9 @@ separates those cases, which is the difference between a two-minute fix and an a
 | `class://{classId}/recent-topics` | Recently taught topics, so generated questions are relevant. |
 | `quiz://{objectId}/results` | Assigned/completed counts, mean `result.score.scaled`, not-yet-started pseudonyms — read from the Evidence API, not canned. |
 
-Class data comes from `packages/stub-roster`, a non-production stub: LORB-001 has no class or roster
-concept of its own.
+Class data comes from the roster in the Runtime API's database, scoped to the teacher the calling
+agent principal is linked to. The connector reads it through the internal service surface and cannot
+change it: every roster write is administrator-authenticated and web-only.
 
 ## Tools
 
@@ -257,8 +257,7 @@ result with `duplicate: true` rather than re-assigning.
 
 **Smart links are deliberately not used here.** LORB's smart-link mechanism is durable, revocable,
 login-free, and binds to a pseudonymous cookie — anonymous, indefinite access is the wrong trust model
-for a graded class assignment, and the repository's own README already flags smart links as a material
-change to the launch surface. `assign_quiz` goes through the authenticated internal launch path
+for a graded class assignment, `assign_quiz` goes through the authenticated internal launch path
 instead, and never returns a launch descriptor or player URL to the agent.
 
 ## Three idempotency layers
@@ -273,8 +272,8 @@ Each guards a different hop and none replaces another:
 
 | Variable | Required | Notes |
 |---|---|---|
-| `AUTH_MODE` | no (`poc`) | `poc` or `oidc`; any other value refuses to start. |
-| `MCP_POC_BEARER_TOKEN` | in `poc` | ≥32 characters. Must be absent when `AUTH_MODE=oidc`. |
+| `AUTH_MODE` | no (`oidc`) | `oidc` or `shared-token`; any other value refuses to start, and `shared-token` is refused in production. |
+| `MCP_SHARED_BEARER_TOKEN` | in `shared-token` | ≥32 characters. Must be absent when `AUTH_MODE=oidc`. |
 | `OIDC_ISSUER` | in `oidc` | Expected `iss`. Must be `https`. |
 | `OIDC_AUDIENCE` | in `oidc` | Expected `aud` — this resource's own identifier. |
 | `MCP_PUBLIC_URL` | in `oidc` | Public base URL, for the RFC 9728 `resource` value. |
@@ -282,8 +281,8 @@ Each guards a different hop and none replaces another:
 | `OIDC_REQUIRED_SCOPE` | no | When set, a valid token without it gets `403 insufficient_scope`. |
 | `RUNTIME_INTERNAL_SERVICE_TOKEN` | yes | ≥32 characters, must differ from the above. |
 | `RUNTIME_API_BASE` | no | Default `http://localhost:3000`. |
-| `EVIDENCE_API_BASE` | no | Defaults to `RUNTIME_API_BASE` — the MVP evidence store is process-local to the Runtime API. |
-| `ROSTER_API_BASE` | no | Default `http://localhost:4100`. |
+| `EVIDENCE_API_BASE` | no | Defaults to `RUNTIME_API_BASE` — the Evidence API is mounted on the Runtime listener. |
+| `ROSTER_API_BASE` | no | The roster projection. Defaults to `http://localhost:3000`, the Runtime API. |
 | `PORT` / `MCP_CONNECTOR_PORT` | no | Default `4200`. |
 
 ## Endpoints
@@ -297,26 +296,27 @@ Each guards a different hop and none replaces another:
 - `GET /.well-known/oauth-protected-resource` — the same document at the bare well-known path, for
   clients that construct it from the origin rather than following the challenge pointer.
 
-  Neither is served in `poc` mode: publishing a document pointing at an authorization server that
+  Neither is served in `shared-token` mode: publishing a document pointing at an authorization server that
   does not exist would start a flow no client could finish.
 
-## Trying it with Claude
+## Trying it locally with Claude
 
-> Everything below runs against a **local, uncertified PoC** holding synthetic data only. Do not
-> expose it on a public URL — see the warning at the end of this section.
+> The steps below use `shared-token` mode against a local stack. That mode is refused when
+> `NODE_ENV` is production or staging, so nothing here is a route to exposing the connector publicly
+> — for that, configure `AUTH_MODE=oidc` against your own provider.
 
 ### 1. Generate the three secrets
 
 Compose refuses to start without them. Export them as well as writing them to `.env` — later steps
-read `$MCP_POC_BEARER_TOKEN` from your shell, and `.env` alone does not put it there:
+read `$MCP_SHARED_BEARER_TOKEN` from your shell, and `.env` alone does not put it there:
 
 ```sh
 export PSEUDONYM_TENANT_SECRET=$(openssl rand -hex 32)
 export RUNTIME_INTERNAL_SERVICE_TOKEN=$(openssl rand -hex 32)
-export MCP_POC_BEARER_TOKEN=$(openssl rand -hex 32)
+export MCP_SHARED_BEARER_TOKEN=$(openssl rand -hex 32)
 { echo "PSEUDONYM_TENANT_SECRET=$PSEUDONYM_TENANT_SECRET"
   echo "RUNTIME_INTERNAL_SERVICE_TOKEN=$RUNTIME_INTERNAL_SERVICE_TOKEN"
-  echo "MCP_POC_BEARER_TOKEN=$MCP_POC_BEARER_TOKEN"; } >> .env
+  echo "MCP_SHARED_BEARER_TOKEN=$MCP_SHARED_BEARER_TOKEN"; } >> .env
 ```
 
 In a **new** shell later on, load them back with `set -a; . ./.env; set +a` rather than regenerating
@@ -328,58 +328,61 @@ them — new tokens would not match the running containers.
 docker compose up -d
 ```
 
-That brings up the Runtime API (`:3000`, with the Evidence routes mounted on it), the synthetic IES
-(`:4000`), the roster stub (`:4100`), the Player Shell (`:3200`), and this connector (`:4200`).
+That brings up Postgres, the Runtime API (`:3000`, with the Evidence routes mounted on it), the
+development identity provider (`:4000`), the development learning record store (`:5000`), the Player
+Shell (`:3200`), and this connector (`:4200`).
 
 <details>
-<summary>Without Docker: run the four Node entrypoints directly</summary>
+<summary>Without Docker: run the Node entrypoints directly</summary>
 
-Each server runs in the foreground, so background them (or use four terminals). The environment below
-is not optional: without `EVIDENCE_API_ENDPOINT` the Runtime API issues descriptors pointing at
-`http://localhost:3100`, where nothing listens in this layout, and learner evidence would be posted
-into the void instead of reaching the results read model.
+Each server runs in the foreground, so background them (or use several terminals). You need a Postgres
+reachable at `DATABASE_URL` with `pnpm db:setup` already applied. The environment below is not
+optional: without `EVIDENCE_API_ENDPOINT` the Runtime API issues descriptors pointing somewhere
+nothing listens, and learner evidence would be posted into the void instead of reaching the results
+read model.
 
 ```sh
 pnpm install && pnpm build
 set -a; . ./.env; set +a   # loads the three secrets from step 1
 
 PORT=4000 IES_PUBLIC_ISSUER=http://localhost:4000 \
-  node dist/packages/stub-ies/src/server.js &
-PORT=4100 \
-  node dist/packages/stub-roster/src/server.js &
+  node dist/packages/dev-identity/src/server.js &
+PORT=5000 \
+  node dist/packages/dev-lrs/src/server.js &
 PORT=3000 RUNTIME_PUBLIC_ISSUER=http://localhost:3000 \
   PLAYER_SHELL_ORIGIN=http://localhost:3200 \
   EVIDENCE_API_ENDPOINT=http://localhost:3000/api/v1/evidence/statements \
-  IES_ISSUER=http://localhost:4000 \
-  IES_JWKS_URL=http://localhost:4000/.well-known/jwks.json \
+  OIDC_ISSUER=http://localhost:4000 ALLOW_SYNTHETIC_IDENTITY=true \
+  LRS_ENDPOINT=http://localhost:5000 \
+  SEED_EXAMPLE_CONTENT=true \
   node dist/src/server.js &
-PORT=4200 AUTH_MODE=poc RUNTIME_API_BASE=http://localhost:3000 \
+PORT=4200 AUTH_MODE=shared-token RUNTIME_API_BASE=http://localhost:3000 \
   EVIDENCE_API_BASE=http://localhost:3000 \
-  ROSTER_API_BASE=http://localhost:4100 \
+  ROSTER_API_BASE=http://localhost:3000 \
   node dist/packages/mcp-connector/src/server.js &
 ```
 
 Stop them again with `kill %1 %2 %3 %4`. The Player Shell is not included — it is a static bundle, and
-nothing in this runbook up to step 4 needs a browser.
+nothing up to step 4 needs a browser.
 
 </details>
 
-Check all four came up:
+Check they all came up:
 
 ```sh
-for p in 4000 4100 3000 4200; do printf 'port %s: ' $p; curl -s localhost:$p/health; echo; done
+for p in 4000 5000 3000 4200; do printf 'port %s: ' $p; curl -s localhost:$p/health; echo; done
 ```
 
-The connector reports `{"status":"ok", … "auth_mode":"poc","production":false}`.
+The connector reports `{"status":"ok", … "auth_mode":"shared-token","environment":"development"}`.
 
 ### 3. Connect Claude Code
 
 Claude Code speaks the streamable HTTP transport and can send a static header, which is what this
-connector's PoC bearer mode needs:
+connector's pre-shared bearer mode needs:
 
 ```sh
 claude mcp add --transport http lorb http://127.0.0.1:4200/mcp \
-  --header "Authorization: Bearer $MCP_POC_BEARER_TOKEN"
+  --header "Authorization: Bearer $MCP_SHARED_BEARER_TOKEN"
 claude mcp list          # -> lorb: http://127.0.0.1:4200/mcp (HTTP) - Connected
 ```
 
@@ -388,8 +391,9 @@ Then ask Claude something like:
 > Read the recent topics for class `9c1f0a5e-7d2b-4f83-9a6c-2b8e5d4a1c30`, draft a five-question quiz
 > on the most recent one, and create it. Don't assign it yet.
 
-The two seeded classes are `9c1f0a5e-7d2b-4f83-9a6c-2b8e5d4a1c30` (9B Mathematics, 8 learners) and
-`4d7b62e1-3a90-4c5e-8f21-6ac9b0e7d452` (10A Combined Science, 5 learners).
+Create a class first in the portal's administration area, add a learner or two, record a taught
+topic, and link your assistant's principal to your account — an unlinked principal sees nothing, which
+is the scoping working rather than a fault. `whoami` tells you which principal to link.
 
 `assign_quiz` is the consent-gated step: its description tells a compliant host to confirm with the
 teacher first, so expect Claude to ask before calling it. After assigning, read
@@ -404,7 +408,7 @@ raw `tools/list` and `resources/read` traffic without an agent in the loop.
 ### claude.ai and Claude Desktop custom connectors
 
 These need a **public HTTPS URL** and discover authorization over OAuth, so they require `oidc`
-mode. In `poc` mode they cannot work at all: there is no authorization server to discover, no
+mode. In `shared-token` mode they cannot work at all: there is no authorization server to discover, no
 metadata document is served, and neither UI has a field for a static bearer header. The registration
 failure they report — *"Couldn't register with … sign-in service"* — is the absence of that
 discovery chain, not a fault in the client.
@@ -413,16 +417,17 @@ In `oidc` mode, against an Auth0 tenant configured as above, the full flow works
 RFC 9728 discovery → dynamic client registration → login and consent → a JWT this connector
 verifies. That has been exercised end to end against a live deployment.
 
-None of which makes it safe to leave running. It remains an uncertified surface with no privacy or
-security review behind it (BLK-07, BLK-08), and `oidc` mode authenticates callers without answering
-either question. Tunnelling a local connector to a public URL is still **not recommended** for the
-same reason it always was.
+Authentication is not authorization, and neither is a privacy design. `oidc` mode establishes *who is
+calling*; the roster scoping establishes *what they may see*; what a teacher's assistant should be
+allowed to do with a class's outcomes is a policy question for whoever owns learner data at your
+institution. Answer it before you point this at real classes, not after.
 
-## Open blockers
+## Deploying it
 
-Untouched by this package: BLK-02, BLK-03, BLK-07, BLK-08, BLK-09, BLK-11. Note that BLK-02, BLK-03
-and BLK-07 are separately *implicated* by the roster administration feature the Runtime API now
-carries — see the repository README and `packages/stub-roster/STUB.md`. In particular BLK-07
-(privacy) and BLK-08 (security) bear directly on this package — an agent-facing surface that resolves class
-rosters and reads learner outcomes needs a privacy design and a real authorization design before it is
-anything more than a demonstration.
+Same procedure as the other services: build `Dockerfile.mcp-connector`, configure `AUTH_MODE=oidc`
+with the issuer, audience and public URL above, and give it the Runtime API's internal service
+credential. It refuses to start in production in any other shape.
+
+Register it in your provider as its own API, whose identifier is the connector's own `/mcp` URL. That
+identifier is what `OIDC_AUDIENCE` checks, and it is the check that stops a token minted for a
+different service in the same tenant from opening this one.

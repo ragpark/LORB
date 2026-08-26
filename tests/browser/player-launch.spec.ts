@@ -9,11 +9,12 @@
  *
  * Requires the player bundles to be built; the harness says so explicitly if they are not.
  */
-import { expect, test, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { randomUUID } from "node:crypto";
 import { decodeJwt } from "jose";
-import { issueIesToken } from "../../packages/stub-ies/src/issuer.js";
-import { store } from "../../packages/runtime-api/src/core.js";
+import { issueIesToken } from "../../packages/dev-identity/src/issuer.js";
+
 import {
   addFixturePage,
   IES_ISSUER,
@@ -28,7 +29,11 @@ const EXAMPLE_MODULE_OBJECT = "c8a2d3e4-7f4b-4a2c-8b6e-2f3a4b5c6d7e";
 
 let harness: Harness;
 
-test.describe.configure({ mode: "serial" });
+// Not serial. The suite shares one harness through beforeAll, but the tests do not share state with
+// each other — each creates its own object, launch and attempt. Under "serial" the first failure
+// skips the rest, which hides the one thing worth knowing when a launch stops working: whether it
+// broke for every module or only for the content-driven ones.
+test.describe.configure({ mode: "default" });
 
 test.beforeAll(async () => {
   harness = await startHarness();
@@ -69,11 +74,11 @@ async function launch(objectId: string, subject: string) {
   return { playerUrl: body.player_url as string, attemptId: body.attempt_id as string, descriptor: decodeJwt(body.signed_descriptor) };
 }
 
-const attemptStatus = (attemptId: string) => store.attempts.get(attemptId)?.status;
+const attemptStatus = async (attemptId: string) => (await harness.store.getAttempt(attemptId))?.status;
 
-const statementsFor = (objectId: string) =>
-  [...store.outbox.values()]
-    .map((row) => (row as { payload: any }).payload)
+const statementsFor = async (objectId: string) =>
+  (await harness.store.listOutbox({}))
+    .map((row) => row.payload as any)
     .filter((statement) => String(statement?.object?.id ?? "").includes(objectId));
 
 async function openLaunch(page: Page, playerUrl: string) {
@@ -105,7 +110,7 @@ test("a quiz launch drives the full xAPI verb chain through the shell", async ({
   expect(assigned.statusCode).toBe(201);
 
   const { playerUrl, attemptId } = await launch(objectId, "synthetic-browser-01");
-  expect(attemptStatus(attemptId)).toBe("CREATED");
+  expect(await attemptStatus(attemptId)).toBe("CREATED");
 
   const module = await openLaunch(page, playerUrl);
   // Reaching the questions at all proves the whole handshake: module.hello with the launch nonce,
@@ -118,9 +123,9 @@ test("a quiz launch drives the full xAPI verb chain through the shell", async ({
   await module.getByRole("button", { name: "Submit quiz" }).click();
   await expect(module.getByText("You scored 1 out of 2.")).toBeVisible();
 
-  await expect.poll(() => attemptStatus(attemptId), { timeout: 10000 }).toBe("COMPLETED");
+  await expect.poll(async () => attemptStatus(attemptId), { timeout: 10000 }).toBe("COMPLETED");
 
-  const statements = statementsFor(objectId);
+  const statements = await statementsFor(objectId);
   expect(statements.map((s) => s.verb.display["en-GB"])).toEqual(["launched", "answered", "answered", "completed"]);
   expect(statements.filter((s) => s.verb.display["en-GB"] === "answered").map((s) => s.result)).toEqual([
     { response: "a", success: true },
@@ -144,7 +149,7 @@ test("a plain native-web-package module completes through the same channel", asy
   await module.locator("#complete").click();
   // example-module has no build step and no framework: it exercises the handshake from a script that
   // runs during parsing, which is the case that first broke the shell's navigation detection.
-  await expect.poll(() => attemptStatus(attemptId), { timeout: 10000 }).toBe("COMPLETED");
+  await expect.poll(async () => attemptStatus(attemptId), { timeout: 10000 }).toBe("COMPLETED");
 });
 
 test("a document that replaces the module in its own iframe cannot take over the session", async ({ page }) => {
@@ -170,7 +175,7 @@ test("a document that replaces the module in its own iframe cannot take over the
   // used to identify the loaded document — the regression this test exists to guard.
   expect(await page.locator("#module").getAttribute("src")).toContain("/module/index.html");
   expect(stolen).toHaveLength(0);
-  expect(attemptStatus(attemptId)).toBe("CREATED");
+  expect(await attemptStatus(attemptId)).toBe("CREATED");
 });
 
 test("a document with no launch nonce cannot open a channel, even before one exists", async ({ page }) => {
@@ -206,6 +211,55 @@ test("a document with no launch nonce cannot open a channel, even before one exi
   await page.waitForTimeout(2000);
 
   expect(stolen).toHaveLength(0);
-  expect(attemptStatus(attemptId)).toBe("CREATED");
-  expect(statementsFor(objectId)).toHaveLength(0);
+  expect(await attemptStatus(attemptId)).toBe("CREATED");
+  expect(await statementsFor(objectId)).toHaveLength(0);
+});
+
+test("a module that reopens its channel with the same nonce is reconnected, not stranded", async ({ page }) => {
+  // A framework that mounts, tears down and remounts its root closes the first MessagePort and sends
+  // a fresh `module.hello`. React's StrictMode does exactly this in a development build, and so does
+  // any transient unmount. While the shell ignored a hello whenever it already held a port, it went
+  // on replying down a channel whose other end was closed: the module waited for a context that could
+  // never arrive, with no error and nothing on the console to say why. Every quiz launch in this
+  // suite failed that way, and the only reason it was not caught here is that the bundle these tests
+  // run against is usually built in production mode, where the double mount does not happen.
+  //
+  // This reproduces the sequence directly, so the property holds whichever way the bundle was built.
+  await addFixturePage(
+    harness,
+    "reconnecting/index.html",
+    `<!doctype html><html><body><script>
+      var nonce = (/(?:^#|&)lorb_handshake=([^&]+)/.exec(location.hash) || [])[1];
+      var shell = document.referrer ? new URL(document.referrer).origin : "*";
+      var envelope = function (type, payload) {
+        return { protocol: "lorb-player", version: "1.0", type, message_id: crypto.randomUUID(),
+          correlation_id: crypto.randomUUID(), reply_to: null, sent_at: new Date().toISOString(), payload };
+      };
+      // First channel, then thrown away exactly as an unmount throws one away.
+      var abandoned = new MessageChannel();
+      parent.postMessage(envelope("module.hello", { lorb_handshake: nonce }), shell, [abandoned.port2]);
+      abandoned.port1.close();
+      // Second channel from the same document, presenting the same launch nonce.
+      var live = new MessageChannel();
+      live.port1.onmessage = function (event) {
+        if (!event.data || event.data.type !== "shell.context") return;
+        document.title = "reconnected";
+        live.port1.postMessage(envelope("state.put", { state: { reconnected: true } }));
+        live.port1.postMessage(envelope("experience.complete", {}));
+      };
+      live.port1.start();
+      parent.postMessage(envelope("module.hello", { lorb_handshake: nonce }), shell, [live.port2]);
+    </script></body></html>`,
+  );
+
+  const object = await harness.catalogue.registerObject({
+    repository_id: REPOSITORY_ID, title: "Reconnecting module", module_path: "/reconnecting/index.html",
+    semver: "1.0.0", sha256: "e".repeat(64),
+  } as never);
+
+  const { playerUrl, attemptId } = await launch(object.object_id, "synthetic-browser-06");
+  await page.goto(playerUrl, { waitUntil: "networkidle" });
+
+  // The second hello is answered on its own channel, so the module gets its context and can complete.
+  await expect.poll(async () => attemptStatus(attemptId), { timeout: 10000 }).toBe("COMPLETED");
 });

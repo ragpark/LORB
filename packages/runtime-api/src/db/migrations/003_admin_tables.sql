@@ -1,4 +1,10 @@
--- STUB — NOT PRODUCTION — BLOCKED BY BLK-03, BLK-07, BLK-08, BLK-09, BLK-11. Administration workspace Wave 1 schema.
+-- Administration schema: repositories and their membership, players and player versions, launch
+-- policies and their versions, the approval workflow, and the audit trail.
+--
+-- Three properties are enforced by the database rather than by application code, because each
+-- protects something an application bug could otherwise quietly undo: a published player version's
+-- integrity metadata is frozen, a published launch-policy version's rules are frozen, and audit
+-- records reject updates and deletes outright.
 alter table repository add column if not exists suspended_at timestamptz;
 alter table repository add column if not exists retiring_at timestamptz;
 alter table repository add column if not exists retired_at timestamptz;

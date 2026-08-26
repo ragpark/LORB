@@ -15,7 +15,7 @@
  *    tooltip, form field chrome, base button chrome): safe on every surface, self-contained.
  *  - `.app`-scoped console shell rules (fixed draft banner, fixed header, fixed sidebar, grid
  *    layout): only apply inside a `<div class="app">` root, i.e. the console-shaped surfaces
- *    (Ops Console, Admin workspace). Surfaces without that wrapper (e.g. the Mock Consumer, which
+ *    (Ops Console, Admin workspace). Surfaces without that wrapper (e.g. the Learner Portal, which
  *    is intentionally a simple flowing page simulating a third-party integrator) are unaffected.
  */
 
@@ -234,7 +234,7 @@ select:focus-visible {
 
 /* ---------------------------------------------------------------------------------------------
  * `.app`-scoped console shell (Ops Console, Admin workspace: fixed banner + header + sidebar).
- * Surfaces without a `.app` root (e.g. Mock Consumer) never match these selectors.
+ * Surfaces without a `.app` root (e.g. Learner Portal) never match these selectors.
  * ------------------------------------------------------------------------------------------- */
 
 .app .draft,

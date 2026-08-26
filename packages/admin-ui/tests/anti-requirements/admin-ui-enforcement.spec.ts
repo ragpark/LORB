@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { allowsDevelopmentSignIn, environmentNotice } from '@lorb/web-auth';
 
 const srcDir = new URL('../../src/', import.meta.url).pathname;
 function readSrc(relativePath: string): string {
@@ -26,14 +27,36 @@ const separationOfDuties = readSrc('lib/separation-of-duties.ts');
 const styles = readSrc('styles.css');
 const allSourceText = allSourceFiles().map((path) => readFileSync(path, 'utf8')).join('\n');
 
-describe('LORB-001 Administration workspace enforcement controls (Section 13)', () => {
-  it('1 renders the DRAFT banner before the first interactive element', () => {
-    expect(app.indexOf('draft-banner')).toBeLessThan(app.indexOf('className="skip"'));
+describe('Administration workspace enforcement controls', () => {
+  // A non-production workspace says which one it is before anything a keyboard user can reach, so
+  // an administrator knows whether the records in front of them are real before they act on them.
+  // Production shows no banner: one that is always there stops being read.
+  it('1 renders the environment notice before the first interactive element', () => {
+    expect(app.indexOf('environment-notice')).toBeLessThan(app.indexOf('className="skip"'));
   });
 
-  it('2 accepts only LOCAL-DEV or RAILWAY-NON-PROD and fails startup otherwise', () => {
-    expect(app).toContain("['LOCAL-DEV', 'RAILWAY-NON-PROD']");
+  it('2 accepts only the known environment labels and fails startup otherwise', () => {
+    expect(app).toContain('ENVIRONMENT_LABELS.includes');
     expect(app).toContain('Environment configuration error');
+  });
+
+  it('2a shows no environment notice in production', () => {
+    expect(environmentNotice('PRODUCTION')).toBeUndefined();
+    expect(environmentNotice('STAGING')).toBeTruthy();
+  });
+
+  // A deployed workspace that could obtain an administrator token by POSTing a chosen subject string
+  // to a login endpoint would have no authentication at all. The development path is gated on the
+  // environment label rather than a build flag, because a build flag gets flipped and left.
+  it('2b confines the local sign-in to a development environment', () => {
+    expect(auth).toContain('allowsDevelopmentSignIn');
+    expect(allowsDevelopmentSignIn('PRODUCTION')).toBe(false);
+    expect(allowsDevelopmentSignIn('DEVELOPMENT')).toBe(true);
+  });
+
+  it('2c prefers the configured identity provider wherever one exists', () => {
+    expect(app).toContain('adminOidcClient()');
+    expect(app).toContain("organisation&rsquo;s identity provider");
   });
 
   it('3 never mentions ActiveHub or Pearson anywhere in the source that becomes the built bundle', () => {

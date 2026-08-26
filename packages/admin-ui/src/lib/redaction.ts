@@ -1,5 +1,5 @@
 // Mirrors the header-redaction approach already proven safe in the Ops Console (packages/ops-console/src/security.ts):
-// plain object mapping, never Headers.set() — the Mock Consumer crashed doing that with a non-ASCII "…redacted…" string.
+// plain object mapping, never Headers.set() — the Learner Portal crashed doing that with a non-ASCII "…redacted…" string.
 export function redactHeaders(headers: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(headers).map(([key, value]) => [key, key.toLowerCase() === 'authorization' ? 'Bearer ...redacted...' : value]));
 }

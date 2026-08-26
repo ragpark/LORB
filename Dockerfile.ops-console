@@ -9,10 +9,12 @@ WORKDIR /app
 # ops-console workspace and installs its React, Vite, and TypeScript packages.
 COPY package.json pnpm-workspace.yaml ./
 COPY packages/ops-console/package.json ./packages/ops-console/package.json
+COPY packages/web-auth/package.json ./packages/web-auth/package.json
 
 RUN pnpm install --no-frozen-lockfile
 
 COPY packages/ops-console ./packages/ops-console
+COPY packages/web-auth ./packages/web-auth
 # The shared UI design-system foundation that ops-console's styles.css imports by relative path.
 COPY packages/design-system ./packages/design-system
 
@@ -20,9 +22,12 @@ COPY packages/design-system ./packages/design-system
 ARG VITE_RUNTIME_API_BASE
 ARG VITE_EVIDENCE_API_BASE
 ARG VITE_JWKS_URL
-ARG VITE_STUB_IES_ISSUER
-ARG VITE_STUB_IES_LOGIN_URL
 ARG VITE_ALLOWED_API_ORIGINS
+ARG VITE_OIDC_ISSUER
+ARG VITE_OIDC_CLIENT_ID
+ARG VITE_OIDC_REDIRECT_URI
+ARG VITE_OIDC_AUDIENCE
+ARG VITE_OIDC_SCOPE
 ARG VITE_ENVIRONMENT_LABEL
 # Optional: route-only link to the separately deployed Administration workspace. Not required to build.
 ARG VITE_ADMIN_UI_ORIGIN
@@ -30,14 +35,29 @@ ARG VITE_ADMIN_UI_ORIGIN
 ENV VITE_RUNTIME_API_BASE=${VITE_RUNTIME_API_BASE}
 ENV VITE_EVIDENCE_API_BASE=${VITE_EVIDENCE_API_BASE}
 ENV VITE_JWKS_URL=${VITE_JWKS_URL}
-ENV VITE_STUB_IES_ISSUER=${VITE_STUB_IES_ISSUER}
-ENV VITE_STUB_IES_LOGIN_URL=${VITE_STUB_IES_LOGIN_URL}
 ENV VITE_ALLOWED_API_ORIGINS=${VITE_ALLOWED_API_ORIGINS}
+ENV VITE_OIDC_ISSUER=${VITE_OIDC_ISSUER}
+ENV VITE_OIDC_CLIENT_ID=${VITE_OIDC_CLIENT_ID}
+ENV VITE_OIDC_REDIRECT_URI=${VITE_OIDC_REDIRECT_URI}
+ENV VITE_OIDC_AUDIENCE=${VITE_OIDC_AUDIENCE}
+ENV VITE_OIDC_SCOPE=${VITE_OIDC_SCOPE}
 ENV VITE_ENVIRONMENT_LABEL=${VITE_ENVIRONMENT_LABEL}
 ENV VITE_ADMIN_UI_ORIGIN=${VITE_ADMIN_UI_ORIGIN}
 
 # Railway deployment of this image is expressly limited to non-production.
-RUN test "${VITE_ENVIRONMENT_LABEL}" = "RAILWAY-NON-PROD"
+RUN case "${VITE_ENVIRONMENT_LABEL}" in \
+        PRODUCTION|STAGING|DEVELOPMENT) : ;; \
+        *) echo "VITE_ENVIRONMENT_LABEL must be PRODUCTION, STAGING or DEVELOPMENT" >&2; exit 1 ;; \
+    esac \
+    && if [ "${VITE_ENVIRONMENT_LABEL}" != "DEVELOPMENT" ]; then \
+           test -n "${VITE_OIDC_ISSUER}" && test -n "${VITE_OIDC_CLIENT_ID}" \
+           || { echo "VITE_OIDC_ISSUER and VITE_OIDC_CLIENT_ID are required outside development" >&2; exit 1; }; \
+       fi
+
+# Explicit, because Vite hands NODE_ENV straight to React and React treats anything that is not
+# "production" as a development build — development-only behaviour shipped to learners, in a
+# bundle nearly three times the size. Unset happens to mean production here; inherited does not.
+ENV NODE_ENV=production
 
 RUN pnpm --filter ops-console build
 

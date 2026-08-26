@@ -1,0 +1,172 @@
+@import '../../design-system/src/foundation.css';
+
+/* Learner Portal palette — deliberately generic, not a LORB house style: this surface simulates a
+ * third-party consuming platform, not LORB itself (see README-design-system.md). It shares the
+ * structural foundation above (spacing, radii, focus ring, card/drawer shapes) but keeps its own
+ * warm, brand-neutral colours and its own simple flowing layout rather than the console shell. */
+:root {
+  --lorb-ink: #27231f;
+  --lorb-paper: #f5f3ef;
+  --lorb-surface: #fff;
+  --lorb-line: #ded7c9;
+  --lorb-accent: #6b4817;
+  --lorb-on-accent: #fff;
+  --lorb-overlay: rgb(20 15 5 / 55%);
+
+  color: var(--lorb-ink);
+  background: var(--lorb-paper);
+  line-height: 1.5;
+}
+
+a {
+  font: inherit;
+}
+
+.skip {
+  color: var(--lorb-accent);
+  border-color: var(--lorb-accent);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: var(--lorb-space-4);
+  padding: var(--lorb-space-4) var(--lorb-space-7);
+  background: #292724;
+  color: #fff;
+}
+.wordmark {
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+.badge,
+.environment {
+  border: 2px solid #d6a638;
+  border-radius: var(--lorb-radius-pill);
+  padding: 0.15rem 0.6rem;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.environment-notice {
+  background: #4a3212;
+  color: #fff7df;
+  text-align: center;
+  padding: 0.7rem;
+  font-weight: 700;
+}
+
+.small-screen {
+  display: none;
+}
+
+main:not(.launch) {
+  max-width: 1100px;
+  margin: auto;
+  padding: 2.5rem 2rem;
+}
+
+button {
+  border: 2px solid #4a3212;
+  background: var(--lorb-accent);
+  color: #fff;
+  border-radius: var(--lorb-radius-sm);
+  padding: 0.65rem 1rem;
+  margin: 0.25rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--lorb-space-4);
+}
+
+.card {
+  background: #d8d4ca;
+  color: var(--lorb-ink);
+}
+
+.notice,
+.session {
+  border-left: 5px solid #b45f24;
+  background: #fff2d2;
+  padding: var(--lorb-space-4);
+}
+
+.launch {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 48px);
+}
+.launch-strip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 1rem;
+}
+.launch iframe {
+  max-width: 1200px;
+  max-height: 900px;
+  border: 2px solid #3b3833;
+  align-self: center;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.diagnostics {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.5rem 1rem;
+}
+dt {
+  font-weight: bold;
+}
+
+@media (max-width: 767px) {
+  header,
+  .environment-notice,
+  main,
+  .diagnostics {
+    display: none;
+  }
+  .small-screen {
+    display: block;
+    padding: 2rem;
+    font-weight: bold;
+  }
+}
+
+/* Roster administration */
+.admin-head{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap}
+.admin-columns{display:grid;grid-template-columns:minmax(16rem,1fr) minmax(0,2fr);gap:2rem;align-items:start}
+.admin-error{color:#8a1c1c;font-weight:600}
+.class-list,.learner-list,.topic-list,.assign-list{list-style:none;padding:0;margin:0 0 1rem}
+.class-list button{display:flex;flex-direction:column;gap:.15rem;width:100%;text-align:left;padding:.6rem .75rem;margin-bottom:.4rem}
+.class-list button[aria-current="true"]{outline:2px solid currentColor}
+.learner-list li,.assign-list li{display:flex;align-items:center;gap:.75rem;padding:.35rem 0;flex-wrap:wrap}
+.learner-list code{font-size:.85em;opacity:.75}
+.learner-list button{margin-left:auto}
+.admin .empty{opacity:.7;font-style:italic}
+.admin form{display:grid;gap:.5rem;margin-bottom:1.5rem}
+.admin label{display:grid;gap:.2rem}
+.results table{border-collapse:collapse;width:100%;margin-bottom:1rem}
+.results th,.results td{text-align:left;padding:.35rem .5rem;border-bottom:1px solid rgba(128,128,128,.35)}
+@media (max-width:60rem){.admin-columns{grid-template-columns:1fr}}
+.agent-links{margin-top:2.5rem;border-top:1px solid rgba(128,128,128,.35);padding-top:1.5rem}
+.link-list{list-style:none;padding:0;margin:0 0 1rem}
+.link-list li{display:flex;align-items:center;gap:.75rem;padding:.35rem 0;flex-wrap:wrap}
+.link-list code{font-size:.85em;opacity:.75}
+.link-list button{margin-left:auto}
+.link-issuer{opacity:.6;max-width:22rem;overflow-wrap:anywhere}

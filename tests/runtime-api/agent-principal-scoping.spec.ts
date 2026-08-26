@@ -14,9 +14,9 @@ import { generateKeyPair } from "jose";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
-import { issueIesToken } from "../../packages/stub-ies/src/issuer.js";
+import { issueIesToken } from "../../packages/dev-identity/src/issuer.js";
 
-const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://lorb:lorb@localhost:5432/lorb_mvp";
+const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://lorb:lorb@localhost:5432/lorb";
 process.env.DATABASE_URL = DATABASE_URL;
 process.env.ADMIN_ALLOWED_ROLES = "admin";
 

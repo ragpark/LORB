@@ -1,18 +1,100 @@
+/**
+ * Descriptor issuance and verification, and the pieces of the runtime domain that several packages
+ * share.
+ *
+ * The signing material now comes from a configured key ring rather than a keypair generated when the
+ * process started, so a descriptor issued by one replica verifies on another and survives a restart.
+ */
 import { randomUUID } from "node:crypto";
-import { exportJWK, generateKeyPair, jwtVerify, SignJWT, type JWK, type KeyLike } from "jose";
+import type { KeyLike } from "jose";
 import { descriptorSchema } from "../../contracts/src/index.js";
+import { SigningKeyRing } from "./services/signing-keys.js";
 
-export type Attempt={attempt_id:string;repository_id:string;object_version_id:string;package_version_id:string;pseudonym:string;status:"CREATED"|"STARTED"|"COMPLETED";revision:number;state?:unknown;governed_by_launch_policy?:{launch_policy_id:string;launch_policy_version_id:string;display_name:string;semver:string}};
-/** An assignment of one learning object to a set of learners, recorded by the internal batch launch
- * surface. Deliberately pseudonym-only: the platform learner identifiers used to derive these
- * pseudonyms are returned to the calling service once and never stored here. */
-export type Assignment={assignment_id:string;object_id:string;created_at:string;source:string;pseudonyms:string[]};
-export const store={attempts:new Map<string,Attempt>(),launches:new Map<string,unknown>(),idempotency:new Map<string,unknown>(),outbox:new Map<string,unknown>(),assignments:new Map<string,Assignment>()};
-export async function signingKeys(){const {privateKey,publicKey}=await generateKeyPair("ES256",{extractable:true});const jwk=await exportJWK(publicKey);return {privateKey,publicJwk:{...jwk,kid:"mvp-key-001",alg:"ES256",use:"sig"} as JWK};}
-export async function issueDescriptor(privateKey:KeyLike, claims:Record<string,unknown>,config={issuer:"http://localhost:3000",evidenceEndpoint:"http://localhost:3100/api/v1/evidence/statements"}){
- const now=Math.floor(Date.now()/1000); const payload={...claims,iss:config.issuer,aud:"lorb-player",iat:now,nbf:now,exp:now+600,jti:randomUUID(),tenant_id:"mvp-tenant",delivery_profile:"native-web-package",launch_mode:"embedded-iframe",player_ref:"mvp-shell-v1",evidence_endpoint:config.evidenceEndpoint,telemetry_config:{correlation_header:"X-Correlation-ID"},contract_version:"1.0"}; descriptorSchema.parse(payload);
- return new SignJWT(payload).setProtectedHeader({alg:"ES256",kid:"mvp-key-001",typ:"lorb-launch+jwt",cty:"application/lorb-launch+json",lorb_schema:"1.0"}).sign(privateKey);
+export { SigningKeyRing } from "./services/signing-keys.js";
+export type { RingKey } from "./services/signing-keys.js";
+export { transition, isLegalTransition, OPEN_STATUSES, TERMINAL_STATUSES } from "./store/transitions.js";
+export type {
+  Assignment, Attempt, AttemptStatus, LaunchRecord, OutboxRow, OutboxStatus, RuntimeStore, SmartLink,
+} from "./store/types.js";
+export { createStore, resetStore, store, useStore, closeStore, MemoryRuntimeStore, PostgresRuntimeStore } from "./store/index.js";
+
+export interface DescriptorConfig {
+  issuer: string;
+  evidenceEndpoint: string;
+  tenantId?: string;
+  playerRef?: string;
+  ttlSeconds?: number;
 }
-export async function verifyDescriptor(token:string,key:KeyLike,issuer="http://localhost:3000"){const {payload}=await jwtVerify(token,key,{issuer,audience:"lorb-player",algorithms:["ES256"]});return descriptorSchema.parse(payload);}
-export function transition(attempt:Attempt,next:"STARTED"|"COMPLETED") {if((attempt.status==="CREATED"&&next==="STARTED")||(attempt.status==="STARTED"&&next==="COMPLETED")){attempt.status=next;return;}throw new Error("ATTEMPT_CONFLICT");}
-export function originAllowed(origin:string,configured:string,moduleOrigin:string,source:unknown,iframeWindow:unknown){return origin!=="*"&&configured.split(",").includes(origin)&&origin===moduleOrigin&&source===iframeWindow;}
+
+/** Descriptor lifetime is measured in minutes by design: a long-lived launch URL is a standing grant. */
+export const DEFAULT_DESCRIPTOR_TTL_SECONDS = 600;
+
+export function descriptorTtlSeconds(): number {
+  const raw = Number.parseInt(process.env.DESCRIPTOR_TTL_SECONDS ?? "", 10);
+  return Number.isInteger(raw) && raw >= 60 && raw <= 900 ? raw : DEFAULT_DESCRIPTOR_TTL_SECONDS;
+}
+
+/**
+ * When the attempt this descriptor opens stops being usable.
+ *
+ * It has to be the same lifetime as the descriptor itself. Reporting a fixed ten minutes while
+ * `DESCRIPTOR_TTL_SECONDS` said something else told the player its session was still valid after
+ * authentication had already started failing — or, with a longer configured lifetime, let attempt
+ * maintenance expire a session whose descriptor a learner was still holding. One value, derived
+ * once, used by every launch path.
+ */
+export function sessionExpiresAt(now: Date = new Date()): string {
+  return new Date(now.getTime() + descriptorTtlSeconds() * 1000).toISOString();
+}
+
+export function defaultTenantId(): string {
+  return process.env.LORB_TENANT_ID ?? "lorb-default";
+}
+
+export function defaultPlayerRef(): string {
+  return process.env.PLAYER_REF ?? "lorb-shell-v1";
+}
+
+export async function issueDescriptor(
+  ring: SigningKeyRing,
+  claims: Record<string, unknown>,
+  config: DescriptorConfig,
+): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const ttl = config.ttlSeconds ?? descriptorTtlSeconds();
+  const payload = {
+    ...claims,
+    iss: config.issuer,
+    aud: "lorb-player",
+    iat: now,
+    nbf: now,
+    exp: now + ttl,
+    jti: randomUUID(),
+    tenant_id: config.tenantId ?? defaultTenantId(),
+    delivery_profile: "native-web-package",
+    launch_mode: "embedded-iframe",
+    player_ref: config.playerRef ?? defaultPlayerRef(),
+    evidence_endpoint: config.evidenceEndpoint,
+    telemetry_config: { correlation_header: "X-Correlation-ID" },
+    contract_version: "1.0",
+  };
+  descriptorSchema.parse(payload);
+  return ring.sign(payload, { typ: "lorb-launch+jwt", cty: "application/lorb-launch+json", lorb_schema: "1.0" });
+}
+
+export async function verifyDescriptor(token: string, ring: SigningKeyRing, issuer: string) {
+  const { payload } = await ring.verify(token, { issuer, audience: "lorb-player" });
+  return descriptorSchema.parse(payload);
+}
+
+/**
+ * Two of the enforced anti-requirements, in one function: a postMessage origin is never a wildcard,
+ * and never an origin outside the configured allow-list. The source-window and module-origin checks
+ * bind the message to the iframe the shell actually created.
+ */
+export function originAllowed(origin: string, configured: string, moduleOrigin: string, source: unknown, iframeWindow: unknown): boolean {
+  return origin !== "*" && configured.split(",").includes(origin) && origin === moduleOrigin && source === iframeWindow;
+}
+
+/** Convenience for callers that hold a raw private key rather than a ring (test harnesses). */
+export type { KeyLike };

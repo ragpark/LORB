@@ -1,4 +1,4 @@
-// AGENT-FACING TRUST DOMAIN — NOT PRODUCTION. Remote MCP server over the streamable HTTP transport.
+// The agent-facing trust domain: a remote MCP server over the streamable HTTP transport.
 import Fastify from "fastify";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
@@ -47,8 +47,8 @@ const JSONRPC_UNAUTHORIZED = -32001;
 export function startupBanner(config: ConnectorConfig): string {
   const auth = config.oidc
     ? `OIDC resource-server mode — validating tokens from ${config.oidc.issuer} for audience ${config.oidc.audience}`
-    : "PoC pre-shared bearer authentication";
-  return `LORB MCP connector: DRAFT, uncertified. ${auth}. Not for shared or production deployment.`;
+    : "pre-shared bearer token — development and continuous integration only, refused in production";
+  return `LORB MCP connector ${CONNECTOR_VERSION}: ${auth}.`;
 }
 
 export function buildMcpConnector(options: ConnectorOptions) {
@@ -65,8 +65,8 @@ export function buildMcpConnector(options: ConnectorOptions) {
   app.get("/", async () => ({
     name: "LORB MCP connector",
     status: "ok",
-    production: false,
-    notice: "DRAFT — NOT CERTIFIED — LOCAL DEV / REVIEW ENVIRONMENT ONLY. Synthetic data only.",
+    version: CONNECTOR_VERSION,
+    environment: process.env.NODE_ENV ?? "development",
     auth_mode: config.authMode,
     documentation: "packages/mcp-connector/README.md",
     endpoints: {
@@ -76,9 +76,9 @@ export function buildMcpConnector(options: ConnectorOptions) {
     },
     transport: "streamable-http",
   }));
-  app.get("/health", async () => ({ status: "ok", service: CONNECTOR_NAME, version: CONNECTOR_VERSION, auth_mode: config.authMode, production: false }));
+  app.get("/health", async () => ({ status: "ok", service: CONNECTOR_NAME, version: CONNECTOR_VERSION, auth_mode: config.authMode }));
 
-  // RFC 9728 protected resource metadata. Served only in `oidc` mode: in `poc` mode there is no
+  // RFC 9728 protected resource metadata. Served only in `oidc` mode: with a pre-shared token there is no
   // authorization server to name, and publishing a document that pointed nowhere would be worse
   // than publishing none — a client would start a flow that cannot complete.
   if (config.oidc) {

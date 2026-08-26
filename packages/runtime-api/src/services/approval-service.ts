@@ -1,4 +1,5 @@
-// STUB — NOT PRODUCTION — BLOCKED BY BLK-03, BLK-07, BLK-08, BLK-09, BLK-11. Administration workspace Wave 1 separation-of-duties workflow.
+// Separation of duties: an action that needs approval is requested by one administrator and
+// approved by another, and the database refuses a self-approval outright.
 import { randomUUID } from "node:crypto";
 import { AdminAuthError } from "./admin-authz.js";
 import type { QueryableClient } from "./audit-writer.js";

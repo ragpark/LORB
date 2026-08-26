@@ -1,7 +1,11 @@
-// NOT PRODUCTION — BLK-02, BLK-03 and BLK-07 ARE IMPLICATED. See 004_roster.sql and stub-roster/STUB.md.
 // Roster administration: classes, their learners, assignment of a learning object to a whole class,
-// and the class-level results read-model. Writes are web-only and administrator-authenticated; the
-// MCP connector reads this roster through the internal service-token routes and cannot change it.
+// and the class-level results read model. Writes are administrator-authenticated and web-only; the
+// agent connector reads this roster through the internal service-token routes and cannot change it.
+//
+// The privacy shape is load-bearing and is described in 004_roster.sql: no row pairs a learner's
+// platform identifier with their LORB pseudonym, so there is no standing re-identification table.
+// Results are matched by recomputing the pseudonym at read time, and the pairing exists only for
+// the duration of the request that needed it.
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -18,10 +22,11 @@ import {
 } from "./shared.js";
 import { adminDbPool } from "../../db/pool.js";
 import { computePseudonym } from "../../services/pseudonym-service.js";
-import { learningObjectById } from "../../services/catalogue.js";
+import { catalogue as defaultCatalogue, type CatalogueStore } from "../../catalogue/index.js";
+import { store as defaultStore, type RuntimeStore } from "../../store/index.js";
 import { resultsByPseudonym } from "../../../../evidence-api/src/read-model.js";
 
-/** The identifier shape the synthetic IES accepts, so a roster entry and that learner's own login
+/** The identifier shape the identity provider issues, so a roster entry and that learner's own sign-in
  *  derive the same pseudonym. Deliberately narrower than a free-text field: an identifier that
  *  cannot round-trip through the IES would produce evidence nobody could ever attribute. */
 const LEARNER_REF = /^[A-Za-z\d._:-]{1,128}$/;
@@ -88,7 +93,9 @@ async function ownedClass(classId: string, principal: AdminPrincipal): Promise<b
   return (result.rowCount ?? 0) > 0;
 }
 
-export function registerAdminClassRoutes(app: FastifyInstance, ctx: ClassRouteContext) {
+export function registerAdminClassRoutes(app: FastifyInstance, ctx: ClassRouteContext, deps: { catalogue?: CatalogueStore; store?: RuntimeStore } = {}) {
+  const catalogue = deps.catalogue ?? defaultCatalogue();
+  const store = deps.store ?? defaultStore();
   app.get("/api/v1/admin/classes", async (req, reply) => {
     const principal = await requireAdmin(req, reply, ctx, "class.list", "class");
     if (!principal) return;
@@ -263,7 +270,7 @@ export function registerAdminClassRoutes(app: FastifyInstance, ctx: ClassRouteCo
     if (replayed.rows[0]) {
       return reply.code(201).send({ ...replayed.rows[0], replayed: true, class_id: req.params.classId, correlation_id: correlation });
     }
-    const object = learningObjectById.get(parsed.data.object_id);
+    const object = await catalogue.learningObject(parsed.data.object_id);
     if (!object) return sendAdminError(reply, "LEARNING_OBJECT_NOT_FOUND", correlation);
     if (object.status !== "PUBLISHED") return sendAdminError(reply, "LEARNING_OBJECT_NOT_PUBLISHED", correlation);
     try {
@@ -406,7 +413,7 @@ export function registerAdminClassRoutes(app: FastifyInstance, ctx: ClassRouteCo
         // A learner removed from the class after being assigned still belongs in this record.
         display_name: namesByRef.get(row.learner_ref) ?? "(removed from class)",
       })));
-      const byPseudonym = resultsByPseudonym(assignment.object_id, assignedAt);
+      const byPseudonym = await resultsByPseudonym(assignment.object_id, assignedAt, store);
       const learnerResults = roster.map((learner) => {
         const result = byPseudonym.get(learner.pseudonym);
         return {

@@ -158,7 +158,7 @@ describe("OIDC resource-server mode", () => {
     expect(response.status).toBe(401);
     const challenge = response.headers.get("www-authenticate") ?? "";
     // RFC 9728 §5.1 — this pointer is what lets a client find the authorization server rather than
-    // guess. Its absence is why claude.ai's dynamic client registration failed against poc mode.
+    // guess. Its absence is why claude.ai's dynamic client registration failed against shared-token mode.
     expect(challenge).toContain(`resource_metadata="${PUBLIC_URL}/.well-known/oauth-protected-resource/mcp"`);
     expect(challenge).toContain(`scope="${SCOPE}"`);
   });
@@ -174,8 +174,7 @@ describe("OIDC resource-server mode", () => {
     expect(banner).toContain("OIDC resource-server mode");
     expect(banner).toContain(ISSUER);
     expect(banner).toContain(AUDIENCE);
-    expect(banner).not.toContain("PoC pre-shared");
-    expect(banner).toContain("DRAFT, uncertified");
+    expect(banner).not.toContain("pre-shared");
   });
 
   it("publishes RFC 9728 protected resource metadata naming the authorization server", async () => {
@@ -218,7 +217,7 @@ describe("OIDC configuration is fail-closed", () => {
 
   // Leaving the pre-shared token configured alongside a provider would keep a second, weaker way in.
   it("refuses to run with the PoC token still set", () => {
-    expect(() => loadConfig({ ...base, MCP_POC_BEARER_TOKEN: "a".repeat(40) } as NodeJS.ProcessEnv)).toThrow(/must not be set/);
+    expect(() => loadConfig({ ...base, MCP_SHARED_BEARER_TOKEN: "a".repeat(40) } as NodeJS.ProcessEnv)).toThrow(/must not be set/);
   });
 
   it("still rejects an unknown mode", () => {
@@ -231,14 +230,14 @@ describe("OIDC configuration is fail-closed", () => {
  * point at, so advertising RFC 9728 metadata there would send a client chasing a discovery
  * document that describes nothing real.
  */
-describe("poc mode is unaffected", () => {
-  const POC_TOKEN = "poc-mode-unaffected-bearer-token-0000000001";
+describe("shared-token mode is unaffected", () => {
+  const POC_TOKEN = "shared-token-mode-bearer-token-0000000001";
   let pocConnector: FastifyInstance;
   let pocBase: string;
 
   beforeAll(async () => {
     const config = loadConfig({
-      MCP_POC_BEARER_TOKEN: POC_TOKEN,
+      MCP_SHARED_BEARER_TOKEN: POC_TOKEN,
       RUNTIME_INTERNAL_SERVICE_TOKEN: SERVICE_TOKEN,
     } as NodeJS.ProcessEnv);
     pocConnector = buildMcpConnector({ config, fetchImpl: async () => ({ status: 200, text: async () => "{}" }) });
@@ -264,8 +263,9 @@ describe("poc mode is unaffected", () => {
   });
 
   it("announces the pre-shared credential, not an identity provider", () => {
-    const banner = startupBanner(loadConfig({ MCP_POC_BEARER_TOKEN: POC_TOKEN, RUNTIME_INTERNAL_SERVICE_TOKEN: SERVICE_TOKEN } as NodeJS.ProcessEnv));
-    expect(banner).toContain("PoC pre-shared bearer authentication");
+    const banner = startupBanner(loadConfig({ MCP_SHARED_BEARER_TOKEN: POC_TOKEN, RUNTIME_INTERNAL_SERVICE_TOKEN: SERVICE_TOKEN } as NodeJS.ProcessEnv));
+    expect(banner).toContain("pre-shared bearer token");
+    expect(banner).toContain("refused in production");
     expect(banner).not.toContain("OIDC");
     // Never print the credential itself.
     expect(banner).not.toContain(POC_TOKEN);
@@ -362,3 +362,50 @@ describe("an Auth0-shaped issuer", () => {
     expect(response.status).toBe(200);
   });
 });
+
+/**
+ * A single pre-shared token has no identity behind it: it cannot be scoped to one teacher, cannot be
+ * revoked for one agent, and names nobody in an audit record. It is a development convenience, and a
+ * deployed environment must not be able to fall back to it — least of all silently.
+ */
+describe("production requires a real identity provider", () => {
+  const SERVICE_TOKEN_LOCAL = "production-gate-service-token-000000000001";
+
+  it("refuses the pre-shared token mode outright", () => {
+    expect(() => loadConfig({
+      NODE_ENV: "production",
+      AUTH_MODE: "shared-token",
+      MCP_SHARED_BEARER_TOKEN: "a".repeat(40),
+      RUNTIME_INTERNAL_SERVICE_TOKEN: SERVICE_TOKEN_LOCAL,
+    } as NodeJS.ProcessEnv)).toThrow(/AUTH_MODE must be "oidc" in production/);
+  });
+
+  it("refuses the previous mode name in production too", () => {
+    expect(() => loadConfig({
+      NODE_ENV: "production",
+      AUTH_MODE: "poc",
+      MCP_POC_BEARER_TOKEN: "a".repeat(40),
+      RUNTIME_INTERNAL_SERVICE_TOKEN: SERVICE_TOKEN_LOCAL,
+    } as NodeJS.ProcessEnv)).toThrow(/AUTH_MODE must be "oidc" in production/);
+  });
+
+  it("defaults to OIDC when a production deployment configures no mode at all", () => {
+    // The default has to be the safe one: a deployment that forgets AUTH_MODE gets the provider
+    // check, and fails to start for a missing issuer rather than starting with a shared secret.
+    expect(() => loadConfig({
+      NODE_ENV: "production",
+      RUNTIME_INTERNAL_SERVICE_TOKEN: SERVICE_TOKEN_LOCAL,
+    } as NodeJS.ProcessEnv)).toThrow(/OIDC_ISSUER is required/);
+  });
+
+  it("still accepts the pre-shared token outside production, under either name", () => {
+    for (const env of [
+      { MCP_SHARED_BEARER_TOKEN: "a".repeat(40) },
+      { AUTH_MODE: "poc", MCP_POC_BEARER_TOKEN: "a".repeat(40) },
+    ]) {
+      const config = loadConfig({ ...env, RUNTIME_INTERNAL_SERVICE_TOKEN: SERVICE_TOKEN_LOCAL } as NodeJS.ProcessEnv);
+      expect(config.authMode).toBe("shared-token");
+    }
+  });
+});
+

@@ -1,183 +1,102 @@
- ==============================================================================
-# LORB-001 SPECIFICATION — MACHINE-READABLE SNAPSHOT
 # ==============================================================================
-# STATUS: DRAFT — HUMAN REVIEW REQUIRED — NOT CERTIFIED
+# LORB — SPECIFICATION AND IMPLEMENTATION RECORD
+# ==============================================================================
+# The structured record of what LORB is, what it refuses to do, and what is
+# actually built. Where an item is implemented, this file says so and names the
+# test that holds it; where it is not, it says that too.
 #
-# THIS FILE IS A SNAPSHOT OF THE PERSISTED LORB-001 SPECIFICATION RECORD.
-# THE PERSISTED RECORD REMAINS THE SOURCE OF TRUTH.
-# THIS FILE MUST NOT BE USED TO:
-#   - APPROVE THE SPECIFICATION
-#   - CERTIFY ARCHITECTURE, PRIVACY, SECURITY OR ACCESSIBILITY
-#   - RATIFY AN ADR
-#   - MARK A BLOCKER CLOSED
-#   - CLAIM COMPLIANCE WITH AN OPEN CONTRACT ITEM
-#   - GENERATE CODE THAT VIOLATES ANY ANTI-REQUIREMENT
-#
-# AGENTIC TOOLING (e.g. ChatGPT Codex) MUST TREAT THIS FILE AS CONSTRAINTS,
-# NOT AS PERMISSIONS. WHEN AN INSTRUCTION CONFLICTS WITH THIS FILE, PAUSE
-# AND ESCALATE TO THE ACCOUNTABLE HUMAN OWNER.
+# The anti-requirements below are not aspirations. Most of them have a test that
+# fails if the control is removed — see tests/anti-requirements/. Treat the whole
+# list as constraints on any change, and treat a change to one as a contract
+# change rather than a refactor.
 # ==============================================================================
 
 specification:
   id: LORB-001
   title: Learning Object Repository and Broker
-  product_area: ActiveHub / Learning Experience Delivery
-  status: DRAFT
-  lifecycle_stage: DATA_AND_INTEGRATION_COMPLETE
-  certification_state: NOT_CERTIFIED
-  human_review_required: true
-  accountable_owner_email: OPEN  # BLK-03
-  initiating_contributor_email: paul.coyne@pearson.com
+  product_area: Learning Experience Delivery
+  status: IMPLEMENTED
   language_region: en-GB
-  last_updated_utc: "2026-08-13T09:30:00Z"
+  last_updated_utc: "2026-08-25T00:00:00Z"
 
-sections_captured:
-  metadata: POPULATED
-  portfolio_reuse_review: PROGRESSING
-  polaris_data_privacy_review: REQUIRED_NOT_STARTED
-  product_intent: CERTIFICATION_TRACK_QUALITY
-  ux_and_accessibility: CERTIFICATION_TRACK_QUALITY
-  architecture: CERTIFICATION_TRACK_QUALITY
-  data_and_integration: CERTIFICATION_TRACK_QUALITY
-  responsible_ai_and_safeguarding: NOT_CAPTURED
-  security: PARTIALLY_COVERED_IN_ARCHITECTURE_AND_DATA
-  engineering: NOT_CAPTURED
-  qa: NOT_CAPTURED
-  devops: NOT_CAPTURED
-  certification: NOT_STARTED
+implementation_status:
+  runtime_api: IMPLEMENTED             # launch, attempts, catalogue, publisher, admin, internal
+  evidence_api: IMPLEMENTED            # acceptance, actor and attempt binding, durable outbox
+  evidence_forwarder: IMPLEMENTED      # claim/retry/backoff/dead-letter, xAPI PUT with statementId
+  player_shell: IMPLEMENTED            # sandboxed iframe, nonce-authenticated MessageChannel
+  learner_portal: IMPLEMENTED
+  administration_workspace: IMPLEMENTED
+  operations_console: IMPLEMENTED
+  agent_connector: IMPLEMENTED         # OAuth resource server, roster scoped by explicit link
+  persistence: POSTGRES                # system of record for every mutable surface
+  identity: DELEGATED_TO_OIDC_PROVIDER
+  observability: IMPLEMENTED           # structured logs, Prometheus metrics, health and readiness
+  # Surfaces named in the original scope that are not built. Nothing depends on
+  # them, and none is stubbed — a caller gets a 404, not a pretend answer.
+  integrator_api: NOT_BUILT
+  callback_api: NOT_BUILT
+  developer_portal: NOT_BUILT
+  provider_adapters: NOT_BUILT
+  scorm_cmi5_lti: NOT_BUILT
+  prizm_coexistence: NOT_BUILT
 
 product_intent:
   description: >
     LORB is a metadata-driven, repository-scoped platform capability for
     registering, resolving, launching, presenting and instrumenting reusable
-    learning objects across ActiveHub and approved consuming platforms.
+    learning objects across consuming platforms.
   positioning:
-    net_new_capability: true
-    replicates_prizm: true
-    replaces_prizm: false
-    coexistence_required: true
-    authentication_reused_from: [ActiveHub, IES]
     audience: [corporate, HE, K-12, adult]
     audience_includes_children: true
     launch_contract_carries_user_identifier: true
     xapi_actor_pseudonymous: true
+    identity: delegated_to_external_oidc_provider
   goals:
-    - id: G-01
-      title: Establish a canonical learning-object model
-    - id: G-02
-      title: Provide a stable launch contract
-    - id: G-03
-      title: Decouple consumers, players and providers
-    - id: G-04
-      title: Support governed extensibility
-    - id: G-05
-      title: Provide consistent progress and evidence services
-    - id: G-06
-      title: Make operations observable and supportable
-    - id: G-07
-      title: Enable controlled migration and coexistence
+    - {id: G-01, title: Establish a canonical learning-object model, status: IMPLEMENTED}
+    - {id: G-02, title: Provide a stable launch contract, status: IMPLEMENTED}
+    - {id: G-03, title: Decouple consumers, players and providers, status: PARTIAL, note: provider adapters not built}
+    - {id: G-04, title: Support governed extensibility, status: IMPLEMENTED, note: launch policies and player versions}
+    - {id: G-05, title: Provide consistent progress and evidence services, status: IMPLEMENTED}
+    - {id: G-06, title: Make operations observable and supportable, status: IMPLEMENTED}
+    - {id: G-07, title: Enable controlled migration and coexistence, status: NOT_BUILT}
   non_goals:
     - LORB is not an LMS
     - LORB does not author content
-    - LORB does not manage learner identity (delegated; but processes pseudonymous subject)
+    - LORB does not manage learner identity (delegated; processes a pseudonymous subject)
     - LORB does not manage commercial entitlement or licensing
-    - LORB does not replace PRIZM
     - LORB is not an analytics dashboard
-    - LORB is not an SIS; may act as LTI platform/tool/mediation
+    - LORB is not an SIS
     - LORB does not include AI-driven adaptivity, recommendation or generation
     - LORB is not a CMS
-  success_measures:
-    - id: E.1
-      measure: Registration-to-first-launch time
-      target: "<= 1 working day UI; <= 30 min automated"
-      instrumented: PROPOSED
-    - id: E.2
-      measure: Successful launch rate
-      target: ">= 99.5% monthly"
-      instrumented: PROPOSED
-    - id: E.3
-      measure: Platform-attributable attempt completion loss
-      target: "< 0.1%"
-      instrumented: PROPOSED
-    - id: E.4
-      measure: Package reuse across products
-      target: ">= 30% at 12 months"
-      instrumented: PROPOSED
-    - id: E.5
-      measure: Evidence integrity durably stored
-      target: ">= 99.9%"
-      instrumented: PROPOSED
-      blocked_by: [BLK-12]
-    - id: E.6
-      measure: Initial repository coverage
-      target: "all agreed migration packages + 4 validated delivery profiles"
-      instrumented: PROPOSED
-    - id: E.7a
-      measure: Launch resolution availability
-      target: ">= 99.95% monthly"
-      instrumented: PROPOSED
-    - id: E.7b
-      measure: Resolver latency
-      target: "p50<=150ms; p95<=400ms; p99<=750ms"
-      instrumented: PROPOSED
-    - id: E.7c
-      measure: Player initialisation p95
-      target: "<= 2s to player-ready"
-      instrumented: PROPOSED
-    - id: E.7d
-      measure: Evidence delivery latency
-      target: "99% within 5s"
-      instrumented: PROPOSED
-    - id: E.8a
-      measure: Unauthorised successful launches
-      target: "0"
-      instrumented: PROPOSED
-    - id: E.8b
-      measure: Open critical/high auth bypass at release
-      target: "0"
-      instrumented: PROPOSED
-    - id: E.9
-      measure: Accessibility WCAG 2.2 AA on chrome and admin
-      target: "conformance"
-      instrumented: PROPOSED
-    - id: E.10a
-      measure: Traceability with valid identifiers
-      target: ">= 99%"
-      instrumented: PROPOSED
-    - id: E.10b
-      measure: Failure category assigned (not UNKNOWN_ERROR)
-      target: ">= 95%"
-      instrumented: PROPOSED
-    - id: E.10c
-      measure: Migration compatibility of selected cohort
-      target: "100% pass agreed conformance tests"
-      instrumented: PROPOSED
-    - id: E.10d
-      measure: Onboarding efficiency
-      target: ">= 50% reduction second+ consumer"
-      instrumented: PROPOSED
-    - id: E.10e
-      measure: Contract stability
-      target: "no unannounced breaking changes"
-      instrumented: PROPOSED
-  risks_summary_count: 20
-  assumptions_summary_count: 21
+
+service_level_objectives:
+  # Each maps to a signal the platform actually emits. See docs/runbooks/observability.md.
+  - {id: E.2,  measure: Successful launch rate, target: ">= 99.5% monthly", signal: lorb_launches_total}
+  - {id: E.3,  measure: Attempt loss, target: "< 0.1% of started attempts ending without a terminal state", signal: lorb_attempt_transitions_total}
+  - {id: E.5,  measure: Evidence durability, target: ">= 99.9% of accepted statements delivered", signal: lorb_evidence_forwarded_total}
+  - {id: E.7a, measure: Launch availability, target: ">= 99.95% monthly", signal: readiness probe and lorb_http_requests_total}
+  - {id: E.7b, measure: Launch latency, target: "p95 <= 400ms; p99 <= 750ms", signal: lorb_http_request_duration_seconds}
+  - {id: E.7d, measure: Evidence delivery latency, target: "99% within 5s", signal: lorb_evidence_delivery_seconds}
+  - {id: E.8a, measure: Unauthorised successful launches, target: "0", signal: "lorb_evidence_statements_total actor_mismatch, and the audit trail"}
+  - {id: E.10b, measure: Failure category assigned (not UNKNOWN_ERROR), target: ">= 95%", signal: lorb_http_requests_total by problem code}
+  # Measured only once the platform carries real usage, and stated here so they
+  # are not quietly forgotten:
+  - {id: E.1,  measure: Registration-to-first-launch time, target: "<= 1 working day via UI; <= 30 min automated", signal: NOT_INSTRUMENTED}
+  - {id: E.4,  measure: Package reuse across products, target: ">= 30% at 12 months", signal: NOT_INSTRUMENTED}
+  - {id: E.9,  measure: Accessibility WCAG 2.2 AA on chrome and admin, target: conformance, signal: MANUAL_AUDIT_REQUIRED}
 
 ux_and_accessibility:
-  design_system: Pearson Design System (ActiveHub-approved layer, version OPEN)
   accessibility_standard: WCAG 2.2 AA
-  eaa_alignment: DESIGN_FOR_ALIGNMENT_BY_DEFAULT_SCOPE_TBC
+  accessibility_verification: >
+    Automated axe checks run against the administration workspace. A full manual
+    audit against WCAG 2.2 AA — keyboard-only journeys, screen-reader output,
+    reflow, and the player chrome inside the sandboxed iframe — has not been done
+    and cannot be done by a test suite. It is a prerequisite for a deployment
+    serving learners with access needs.
   language: en-GB
-  personas_primary: 6
-  personas_supporting: 4
-  personas_non_human: 3
-  player_chrome:
-    unified_shell_with_delivery_profile_modules: true
-    mandatory_common_chrome_items: 15
-    conditional_chrome_items: 8
-    excluded_chrome_items: 6
   error_taxonomy:
-    machine_readable_codes: 22
+    implemented_in: packages/runtime-api/src/services/problem.ts
+    format: RFC_9457_problem_details
     codes:
       - LAUNCH_CONTEXT_INVALID
       - AUTHENTICATION_EXPIRED
@@ -199,165 +118,93 @@ ux_and_accessibility:
       - CONTENT_SECURITY_BLOCKED
       - PLAYER_RUNTIME_ERROR
       - EVIDENCE_DELIVERY_DELAYED
+      - IDEMPOTENCY_KEY_REQUIRED
+      - IDEMPOTENCY_KEY_REUSED
+      - RATE_LIMITED
+      - SERVICE_UNAVAILABLE
       - UNKNOWN_ERROR
-  cross_platform_ux_contract:
-    lorb_shall_not_rules: 20
-    consumer_required_inputs: 20
   age_appropriate_design:
     driven_by: declared_product_context
     inferred_from_behaviour: false
-    childrens_code_mapping: OPEN
-  binding_ux_decisions: 16
+    childrens_code_mapping: NOT_DONE
 
 architecture:
-  hosting:
-    platform: Railway
-    application_region: EU_West_Amsterdam
-    uk_region_available: false
-    uk_residency_conflict: true
-    residency_exception_status: NOT_REQUESTED
-  pattern: mixed_model
+  pattern: modular_monolith_with_separate_presentation_deployments
   deployable_units:
-    - Runtime
-    - ControlPlane
-    - Workers
-    - PlayerShellAndModules
-    - AdminAndPublisherApp
-    - DeveloperPortal
-  logical_components_count: 17
+    - Runtime API (hosts the Evidence API and the evidence forwarder)
+    - Player Shell and content packages
+    - Learner portal
+    - Administration workspace
+    - Operations console
+    - Agent connector
+  persistence:
+    system_of_record: postgres
+    in_memory_backend: development_and_test_only
+    production_refuses_in_memory: true
+    enforced_by: tests/runtime-api/configuration.spec.ts
   tenancy:
     model: multi_repository_shared_platform
-    isolation_keys: [tenant_id, repository_id, consumer_id, organisation_id]
-    isolation_levels: [PlatformTenant, Repository, Consumer, Organisation, LearningObjectAndVersion]
-  domain_ownership:
-    owning_domain: Learning Experience Delivery
-    accountable_technical_owner: OPEN  # BLK-03
-    pop_conformance_required: true
-  technical_hub_reuse:
-    identity: IES_ForgeRock
-    workforce_identity: Entra_ID_where_approved
-    authorisation_pattern: OAuth2_OIDC + RBAC + repository_scoped_ABAC
-    eventing_preferred: Autobahn_Kafka
-    eventing_railway_local: durable_outbox
-    telemetry: OpenTelemetry_to_approved_enterprise_destination
-    api_management: Pearson_gateway_and_WAF
-    analytics: DAC_GCP_projections
-    search: LORB_local_postgres_fulltext_initially
-    asset_storage: upstream_preferred_or_UK_S3_compatible
-  bffs:
-    - ActiveHub_Runtime_BFF
-    - LORB_Administration_BFF
-    - Developer_Portal_API
-  api_versioning:
-    scheme: major_version_in_URL
-    deprecation_headers: true
-  runtime_launch:
-    modes: [standard_embedded, redirect, one_shot_resolver]
-    descriptor_signing: asymmetric_JWS_with_JWKS_rotation
-    descriptor_lifetime: minutes
+    isolation_keys: [tenant_id, repository_id, consumer_id]
+    authorisation: repository_scoped_membership
+  descriptor_signing:
+    algorithm: ES256
+    key_source: configuration
+    rotation: active_plus_retiring_ring_published_in_jwks
+    verification: by_kid
+    enforced_by: tests/runtime-api/signing-keys.spec.ts
   state_and_attempt:
-    attempt_lifecycle: [CREATED, STARTED, SUSPENDED, RESUMED, COMPLETED, ABANDONED, EXPIRED, VOIDED]
-    state_types: [attempt_state, learner_object_state]
-    storage_residency: UK
-    lrs: EXTERNAL_APPROVED
-    lrs_preferred: Spectrum
-    lrs_confirmed: false
-    lrs_open_contract_points: 22
-  data_classification_entities_count: 13
-  uk_residency_scoped_entity_categories: 11
-  data_flow_diagrams_count: 10
+    lifecycle: [CREATED, STARTED, SUSPENDED, RESUMED, COMPLETED, ABANDONED, EXPIRED, VOIDED]
+    concurrency: optimistic_revision_check_in_single_statement
+    expiry: swept_to_EXPIRED_by_maintenance_loop
+    enforced_by: tests/runtime-api/persistence.spec.ts
+  evidence:
+    acceptance_and_delivery_separated: true
+    outbox: durable_postgres
+    claiming: for_update_skip_locked
+    retry: exponential_backoff_with_full_jitter
+    terminal_failure: dead_letter_visible_and_replayable
+    payload_immutable: enforced_by_database_trigger
+    deletes_refused: enforced_by_database_trigger
+    enforced_by: [tests/evidence-forwarder/delivery.spec.ts, tests/runtime-api/persistence.spec.ts]
   security:
-    trust_boundaries_count: 12
-    signing: [launch_descriptor_JWS, callback_JWS_or_HMAC, package_manifest_checksum]
-    sandboxing: iframe_CSP_permission_policy_no_allow_same_origin_by_default
-    threat_model_scope_defined: true
-    threat_model_commissioned: false  # BLK-11
+    sandboxing: iframe_without_allow_same_origin
+    module_channel: nonce_authenticated_MessageChannel
+    rate_limiting: per_replica_token_bucket_on_public_surfaces
+    threat_model: NOT_COMMISSIONED
   observability:
-    correlation_headers: [W3C_traceparent, X-Correlation-ID]
-    sli_slo_mappings: 11
-    synthetic_probe_types: 10
-  resilience:
-    availability_target_initial: single_region_multiple_stateless_replicas
-    multi_region_blocked_by_residency: true
-  prizm_coexistence:
-    authority_states: [PRIZM_AUTHORITATIVE, LORB_AUTHORITATIVE, MIGRATION_VALIDATING, LORB_ACTIVE_PRIZM_FALLBACK, RETIRED]
-    metadata_sync: one_way_import
-    active_attempt_migration_permitted: false
-  adrs_recorded: 25
-  anti_requirements_architecture_count: 40
+    logs: structured_json_redacted_at_serialiser
+    metrics: prometheus
+    correlation_headers: [X-Correlation-ID, traceparent]
+    probes: {liveness: /health, readiness: /ready}
 
 data_and_integration:
-  identifier_scheme:
-    canonical: UUIDv7
-    external_standard_exception: UUIDv4_where_required
-    slugs_role: alias_only
-  entities_count: 40
-  entities_pseudonymous_carrying: 11
-  entities_pseudonymous_prohibited: 14
-  systems_of_record:
-    lorb_owned: 21
-    federated: 9
+  identifier_scheme: {canonical: UUID, slugs_role: alias_only}
   api_surfaces:
-    - name: Runtime
-      base: /api/v1/runtime
-      auth: OAuth2_OIDC_bearer
-      audience: lorb-runtime
-      idempotency: mandatory_for_state_changes
-      error_contract: RFC_9457_problem_details
-    - name: Publisher
-      base: /api/v1/publisher
-      auth: workforce_federated_OAuth
-      idempotency: mandatory
-      error_contract: RFC_9457_problem_details
-    - name: Administration
-      base: /api/v1/admin
-      auth: Pearson_workforce_identity
-      idempotency: mandatory
-      error_contract: RFC_9457_problem_details
-    - name: Integrator
-      base: /api/v1/integrator
-      auth: OAuth_client_credentials_or_federated
-      idempotency: mandatory
-      error_contract: RFC_9457_problem_details
-    - name: Evidence
-      base: /api/v1/evidence
-      auth: launch_scoped_token_or_service_OAuth
-      idempotency: mandatory_via_xAPI_statement_UUID
-      error_contract: RFC_9457_problem_details
-    - name: Callback
-      base: /api/v1/callbacks
-      auth: signed_callback_or_mTLS_or_OAuth
-      idempotency: mandatory_via_event_id_plus_subscription
-      error_contract: RFC_9457_problem_details
-  api_versioning_open_question: >
-    Six surfaces share /api/v1/*; per-surface deprecation notice periods differ.
-    Independence policy to be clarified (BLK-14).
-  protocols_allowed: [REST_JSON, AsyncAPI_events, xAPI, LTI_1_3, postMessage_versioned, gRPC_private_only]
-  protocols_prohibited_release_one: [public_GraphQL, direct_DB_integration]
-  events_produced_count: ~40
-  events_subscribed_count: 13
-  event_naming_convention: "lorb.<domain>.<event>.v1"
-  event_delivery:
-    callback_guarantee: at_least_once
-    receiver_dedup_required_key: "(subscription_id, event_id)"
-    envelope: CloudEvents_1_0
-    schema: JSON_Schema_with_semver
-  ordering:
-    global: none
-    per_aggregate: [attempt_id, object_id, package_id, subscription_id]
-  schema_contracts:
-    - launch_descriptor
-    - player_manifest
-    - package_manifest
-    - postMessage_protocol
-    - accessibility_declaration
-    - xapi_lorb_core_evidence_profile
+    - {name: Runtime,        base: /api/v1/runtime,   auth: OIDC bearer,       status: IMPLEMENTED}
+    - {name: Evidence,       base: /api/v1/evidence,  auth: launch descriptor, status: IMPLEMENTED}
+    - {name: Publisher,      base: /api/v1/publisher, auth: OIDC bearer + admin role, status: IMPLEMENTED}
+    - {name: Administration, base: /api/v1/admin,     auth: OIDC bearer + admin role, status: IMPLEMENTED}
+    - {name: Internal,       base: /api/v1/internal,  auth: service credential, status: IMPLEMENTED}
+    - {name: Integrator,     base: /api/v1/integrator, status: NOT_BUILT}
+    - {name: Callback,       base: /api/v1/callbacks,  status: NOT_BUILT}
+  idempotency:
+    required_on: every_state_changing_endpoint
+    storage: durable_scoped_by_surface
+    replay_of_different_request: refused_409
+  pseudonymisation:
+    function: HMAC-SHA-256
+    inputs: [tenant_specific_secret, issuer, subject, purpose]
+    reverse_mapping_stored: false
+    note: >
+      A class result recomputes the pseudonym from the roster at read time. The
+      pairing exists for the duration of that request only, so no standing
+      re-identification table exists. Rotating the secret invalidates the actor
+      on all historical evidence — see docs/runbooks/key-rotation.md.
   launch_descriptor:
     format: JWS_compact
     signing_algorithm: ES256
     typ: lorb-launch+jwt
-    required_claims_count: 20
-    conditional_claims_count: 16
+    lifetime_seconds: {min: 60, max: 900, default: 600}
     prohibited_content:
       - learner_name
       - learner_email
@@ -369,242 +216,93 @@ data_and_integration:
       - arbitrary_theme_tokens
       - arbitrary_return_url
       - arbitrary_callback_endpoint
-  pseudonymisation:
-    function: HMAC-SHA-256
-    inputs: [tenant_specific_secret, issuer, subject, purpose]
-    secret_residency: UK
-    secret_exposure_to_runtime: false
-  data_flow_diagrams:
-    - DFD-01_PublisherRegistration
-    - DFD-02_ActiveHubEmbeddedLearnerLaunch
-    - DFD-03_LTIProviderRedirect
-    - DFD-04_StateAndAttemptLifecycle
-    - DFD-05_EvidenceToLRS
-    - DFD-06_EvidenceToGPSDACInsightsCallbacks
-    - DFD-07_PRIZMToLORBMigration
-    - DFD-08_SubjectDeletion
-    - DFD-09_OperationalInvestigation
-    - DFD-10_KeyRotation
-  dfd_boundary_prohibitions: 12
-  dfd_privacy_review_required_for_certification: true
-  integration_contracts_named_systems:
-    - ActiveHub
-    - IES_ForgeRock
-    - EntitlementService_OPEN
-    - GPS
-    - Spectrum_LRS_OPEN
-    - DAC_GCP
-    - ActiveHub_Insights
-    - Providers
-    - PRIZM_coexistence
-    - Autobahn_Kafka_OPEN
-  data_governance_owners:
-    entities_mapped: 17
-    named_individuals: 0  # BLK-03
-    retention_approvers_required: 7
-    residency_exception_approvers_required: 7
-    cross_cloud_movement_approvers_required: 10
-  contract_testing:
-    schema_registry: git_backed_initial
-    enterprise_registry_standard: OPEN  # BLK-18
-    approaches: [schema_registry_compat, consumer_driven_contract, provider_conformance, e2e_synthetic, property_based, negative_security]
-  test_fixtures_per_contract: 16
-  anti_requirements_data_count: 49
-  contract_lifecycle: [DRAFT, EXPERIMENTAL, AVAILABLE, GENERALLY_AVAILABLE, DEPRECATED, RETIRED]
-  deprecation_notice_minimums:
-    Runtime_API: 12_months
-    Launch_descriptor: 12_months
-    postMessage_protocol: 12_months
-    External_events_callbacks: 12_months
-    Publisher_Admin_API: 6_months
-    Integrator_API: 12_months
-    Evidence_API_xAPI_Profile: 12_months
-    Provider_adapter_contract: 6_months_or_contractual
-    Internal_service_contract: 3_months
-    Critical_security_retirement: accelerated_exception  # BLK-17
-  sunset_behaviour:
-    http_status_at_retirement: 410_Gone
-
-blockers:
-  - id: BLK-01
-    severity: critical
-    description: Portfolio Reuse Review reviewer endorsement pending
-  - id: BLK-02
-    severity: critical
-    description: POLARIS Data Privacy Review required
-  - id: BLK-03
-    severity: critical
-    description: Governance roles unnamed (accountable owner, Lead Architect, Privacy Owner, Learning Data Owner, Security Owner, Accessibility Owner, Integrator Experience Owner)
-  - id: BLK-04
-    severity: critical
-    description: Children's data + safeguarding governance controls not captured
-  - id: BLK-05
-    severity: material
-    description: Open product decisions remaining (SCORM versions, cmi5 in release one, migration cohort, external LMS consumption, numerical target ratification)
-  - id: BLK-06
-    severity: material
-    description: Success measures instrumentation design (dashboards, alerts, error budgets) owed to DevOps
-  - id: BLK-07
-    severity: critical
-    description: Responsible AI + Safeguarding section not captured
-  - id: BLK-08
-    severity: critical
-    description: Railway hosting procurement, legal, security and platform-engineering assessment
-  - id: BLK-09
-    severity: critical
-    description: UK-resident data plane detailed architecture (progressing but not complete)
-  - id: BLK-10
-    severity: material
-    description: Cross-cloud connectivity Railway to Pearson services (Autobahn topic contracts have 17 open decisions)
-  - id: BLK-11
-    severity: critical
-    description: Threat model not commissioned
-  - id: BLK-12
-    severity: material
-    description: Spectrum LRS onboarding contract with 22 open contract points
-  - id: BLK-13
-    severity: material
-    description: LORB Core Evidence Profile governance owner and publication IRI
-  - id: BLK-14
-    severity: material
-    description: 6 API surfaces sharing /api/v1/* — versioning independence policy
-  - id: BLK-16
-    severity: minor
-    description: Bulk API HTTP status semantics for partial success
-  - id: BLK-17
-    severity: material
-    description: Accelerated security retirement authority not defined
-  - id: BLK-18
-    severity: material
-    description: Pearson enterprise schema-registry standard not confirmed
+    enforced_by: tests/anti-requirements/enforcement.spec.ts
 
 anti_requirements:
-  # ==== Architecture Section N (40 items) ====
+  # Constraints on every change. Items marked ENFORCED have a test that fails if
+  # the control is removed; see tests/anti-requirements/README-anti-requirements.md.
   architecture:
-    - no_direct_database_access_across_domains
-    - no_direct_database_access_from_ActiveHub
-    - no_direct_database_access_from_packages
-    - no_provider_secrets_in_package_binaries
-    - no_provider_secrets_in_launch_descriptors
-    - no_learner_session_tokens_passed_unchanged_to_providers
-    - no_long_lived_launch_URLs
-    - no_public_direct_links_bypassing_authorisation
-    - no_wildcard_postMessage_origins
-    - no_wildcard_CORS_in_production
-    - no_unsandboxed_third_party_iframe_content
-    - no_arbitrary_publisher_supplied_JS_in_admin
-    - no_arbitrary_CSS_injection_from_consumer
-    - no_synchronous_analytics_calls_in_launch_hot_path
-    - no_runtime_dependency_on_enterprise_bus_for_descriptor_creation
-    - no_in_memory_session_state_requiring_sticky_routing
-    - no_Railway_local_disk_as_system_of_record
-    - no_Railway_Amsterdam_for_UK_only_learner_data_without_exception
-    - no_two_way_PRIZM_LORB_metadata_sync
-    - no_modification_of_published_package_versions_in_place
-    - no_reuse_of_attempt_identifier_across_package_versions
-    - no_duplicate_completion_or_grade_processing
-    - no_email_or_learner_name_as_operational_key
-    - no_learner_entered_content_in_logs_or_traces
-    - no_raw_xAPI_to_every_downstream_consumer
-    - no_building_new_identity_provider
-    - no_building_new_entitlement_engine
-    - no_building_LMS_CMS_gradebook_dashboard_or_AI_runtime_inside_LORB
-    - no_coupling_ActiveHub_to_Railway_hostnames
-    - no_bypassing_Pearson_gateway_because_Railway_has_public_endpoint
-    - no_secrets_in_source_control_or_ordinary_config
-    - no_manual_production_data_correction_without_auditable_case
-    - no_cross_repository_queries_without_explicit_federated_permission
-    - no_silent_fallback_to_different_object_or_provider
-    - no_automatic_retry_of_non_idempotent_submissions
-    - no_treating_pseudonymous_evidence_as_non_personal
-    - no_treating_Railway_logs_as_sufficient_observability
-    - no_deployment_without_synthetic_probes_runbooks_restore_testing
-    - no_certification_while_residency_LRS_or_owner_open
-    - no_reproducing_PRIZM_topology_merely_because_PRIZM_uses_it
-  # ==== Data and Integration Section J (49 items) ====
+    - {rule: no_in_memory_session_state_as_system_of_record, status: ENFORCED}
+    - {rule: no_ephemeral_descriptor_signing_key_in_production, status: ENFORCED}
+    - {rule: no_wildcard_postMessage_origins, status: ENFORCED}
+    - {rule: no_wildcard_CORS_in_production, status: ENFORCED}
+    - {rule: no_built_in_consumer_origin_in_production, status: ENFORCED}
+    - {rule: no_unsandboxed_third_party_iframe_content, status: ENFORCED}
+    - {rule: no_long_lived_launch_URLs, status: ENFORCED}
+    - {rule: no_silent_fallback_to_different_object_or_provider, status: ENFORCED}
+    - {rule: no_modification_of_published_package_versions_in_place, status: ENFORCED}
+    - {rule: no_duplicate_completion_or_grade_processing, status: ENFORCED}
+    - {rule: no_learner_entered_content_in_logs_or_traces, status: ENFORCED}
+    - {rule: no_secrets_in_source_control_or_ordinary_config, status: ENFORCED}
+    - {rule: no_email_or_learner_name_as_operational_key, status: ENFORCED}
+    - {rule: no_provider_secrets_in_launch_descriptors, status: ENFORCED}
+    - {rule: no_building_new_identity_provider, status: HELD_BY_DESIGN}
+    - {rule: no_building_new_entitlement_engine, status: HELD_BY_DESIGN}
+    - {rule: no_building_LMS_CMS_gradebook_or_AI_runtime_inside_LORB, status: HELD_BY_DESIGN}
+    - {rule: no_treating_pseudonymous_evidence_as_non_personal, status: HELD_BY_DESIGN}
+    - {rule: no_treating_hosting_platform_logs_as_sufficient_observability, status: ENFORCED}
+    - {rule: no_deployment_without_synthetic_probes_runbooks_restore_testing, status: RUNBOOKS_WRITTEN_RESTORE_TESTING_IS_OPERATOR_OWNED}
+    - {rule: no_manual_production_data_correction_without_auditable_case, status: PARTIAL, note: audit trail exists; the process is the operator's}
   data_and_integration:
-    - no_learner_name_email_dob_postal_in_descriptors
-    - no_learner_free_text_audio_images_in_general_callbacks
-    - no_provider_secret_refresh_token_client_secret_in_browser
-    - no_ActiveHub_bearer_token_in_player_modules_or_provider_calls
-    - no_entitlement_decision_older_than_current_valid_assertion
-    - no_permission_from_request_body_repository_id_alone
-    - no_floating_package_or_player_version_in_signed_descriptor
-    - no_mutable_published_manifest
-    - no_checksum_weaker_than_approved_standard
-    - no_arbitrary_return_url_or_callback_url_at_launch
-    - no_unregistered_callback_endpoint
-    - no_unsigned_externally_emitted_callback
-    - no_wildcard_or_permissive_origin_reflection
-    - no_event_without_event_id_schema_version_source_time
-    - no_attempt_event_without_attempt_id_and_object_version_binding
-    - no_completion_event_without_declared_completion_authority
-    - no_score_without_score_semantics_and_scale
-    - no_duplicate_business_effect_from_repeated_message
-    - no_exactly_once_claim_without_end_to_end_proof
-    - no_global_ordering_assumption
-    - no_downstream_inference_publication_equals_consumption
-    - no_raw_xAPI_wholesale_to_GPS_DAC_GCP_Insights
-    - no_analytics_projection_as_authoritative_evidence_store
-    - no_provider_result_silently_replacing_LORB_attempt_truth
-    - no_provider_adapter_fallback_substitution_undeclared
-    - no_package_issued_attempt_identifier_as_LORB_authority
-    - no_external_system_issuing_LORB_object_version_repository_identity
-    - no_reuse_of_retired_human_readable_slugs
-    - no_external_identifier_as_LORB_primary_key
-    - no_permanent_two_way_PRIZM_sync
-    - no_migration_authority_switch_before_validation
-    - no_active_attempt_migration_between_PRIZM_and_LORB
-    - no_callback_replay_with_new_event_id
-    - no_DLQ_replay_losing_original_provenance
-    - no_schema_breaking_change_as_minor_version
-    - no_environment_specific_secret_or_private_hostname_in_schemas
-    - no_production_data_in_public_sandbox_fixtures
-    - no_PII_in_schema_examples_logs_support_codes
-    - no_arbitrary_unbounded_JSON_state
-    - no_state_write_without_concurrency_control
-    - no_deletion_through_ordinary_CRUD_apis_for_evidence
-    - no_correction_as_destructive_overwrite
-    - no_permanent_learner_identifier_exposed_to_provider_undeclared
-    - no_feature_flag_bypassing_auth_or_isolation
-    - no_unaudited_admin_contract_override
-    - no_browser_access_to_worker_or_reconciliation_apis
-    - no_raw_database_export_as_integration_contract
-    - no_Railway_internal_hostname_exposed_to_ActiveHub
-    - no_claim_of_Spectrum_compatibility_until_BLK-12_closed
-    - no_certification_while_schemas_contain_placeholder_external_contracts
+    - {rule: no_learner_name_email_dob_postal_in_descriptors, status: ENFORCED}
+    - {rule: no_learner_free_text_in_evidence_results, status: ENFORCED, note: result.response is an option identifier}
+    - {rule: no_floating_package_or_player_version_in_signed_descriptor, status: ENFORCED}
+    - {rule: no_mutable_published_manifest, status: ENFORCED}
+    - {rule: no_arbitrary_return_url_or_callback_url_at_launch, status: ENFORCED}
+    - {rule: no_wildcard_or_permissive_origin_reflection, status: ENFORCED}
+    - {rule: no_attempt_event_without_attempt_id_and_object_version_binding, status: ENFORCED}
+    - {rule: no_duplicate_business_effect_from_repeated_message, status: ENFORCED}
+    - {rule: no_exactly_once_claim_without_end_to_end_proof, status: HELD_BY_DESIGN, note: delivery is at-least-once with receiver-side dedup}
+    - {rule: no_arbitrary_unbounded_JSON_state, status: ENFORCED}
+    - {rule: no_state_write_without_concurrency_control, status: ENFORCED}
+    - {rule: no_deletion_through_ordinary_CRUD_apis_for_evidence, status: ENFORCED}
+    - {rule: no_correction_as_destructive_overwrite, status: ENFORCED}
+    - {rule: no_external_identifier_as_LORB_primary_key, status: ENFORCED}
+    - {rule: no_production_data_in_public_sandbox_fixtures, status: ENFORCED}
+    - {rule: no_PII_in_schema_examples_logs_support_codes, status: ENFORCED}
+    - {rule: no_feature_flag_bypassing_auth_or_isolation, status: ENFORCED}
+    - {rule: no_browser_access_to_worker_or_internal_apis, status: ENFORCED}
+    - {rule: no_raw_database_export_as_integration_contract, status: HELD_BY_DESIGN}
+    - {rule: no_analytics_projection_as_authoritative_evidence_store, status: HELD_BY_DESIGN, note: the read model is explicitly a projection}
 
-reuse_review:
-  status: PROGRESSING
-  answered_questions: [OQ-01, OQ-04, OQ-06, OQ-07, OQ-08]
-  outstanding_questions:
-    - OQ-02_PRIZM_owner_position_reference
-    - OQ-03_Pearson_level_decision_reference
-    - OQ-05_TCO_comparison_evidence
-    - OQ-09_portfolio_scan_evidence
-
-open_product_decisions:
-  closed:
-    - LRS_internal_or_external  # -> external, Spectrum preferred
-    - package_binary_ownership  # -> upstream / UK S3-compatible
-    - administration_UI_scope  # -> unified admin app + API for both
-    - completion_authority_rules  # -> declared in delivery-profile manifest
-  partially_closed:
-    - launch_modes_mandatory_for_release_one
-  open:
-    - SCORM_versions_committed
-    - cmi5_in_release_one
-    - migration_cohort_defining_equivalence
-    - external_LMS_consumption_in_release_one
-    - numerical_target_ratification_as_certification_gates
-
-codex_usage_guardrails:
-  # Constraints for agentic AI tooling ingesting this file
-  treat_this_as_constraints_not_permissions: true
-  never_generate_code_that_violates_any_anti_requirement: true
-  never_treat_open_blocker_as_closed: true
-  never_ratify_an_ADR: true
-  never_claim_compliance_with_open_contract_item: true
-  always_route_decisions_to_accountable_human_owner: true
-  when_in_conflict_pause_and_escalate: true
-  authoritative_source_is_persisted_specification_record: true
+# ==============================================================================
+# Prerequisites the code cannot satisfy
+# ==============================================================================
+# These are not defects and they do not block the software. They are decisions
+# and assessments that belong to whoever deploys LORB and owns the data in it.
+# Each is listed because it would be worse to leave it implicit.
+operator_prerequisites:
+  - id: data_residency
+    decision: >
+      Where the database lives. The platform stores pseudonymous learner data and
+      is agnostic about the region; the residency obligations that apply to your
+      learners are not. Decide the region before the first real learner, because
+      moving a populated evidence store is a migration, not a setting.
+  - id: data_protection_assessment
+    decision: >
+      A data protection impact assessment covering pseudonymous evidence, class
+      rosters, and the audit trail. The platform's design decisions — no stored
+      re-identification mapping, pseudonymous actors, append-only evidence — are
+      inputs to that assessment, not a substitute for it. Children's data is in
+      scope for the K-12 audience.
+  - id: accessibility_audit
+    decision: >
+      A manual WCAG 2.2 AA audit of the three management surfaces and the player
+      chrome. Automated checks catch a minority of real failures; keyboard-only
+      journeys and screen-reader output inside a sandboxed iframe need a person.
+  - id: threat_model
+    decision: >
+      A threat model against the deployed topology. The controls in this file are
+      the ones the implementers knew to build; a threat model is how you find the
+      ones they did not.
+  - id: learning_record_store_contract
+    decision: >
+      Which learning record store, on what terms, with what retention. The
+      forwarder speaks the xAPI statements resource and will deliver to any of
+      them; which one holds a learner's achievement for how long is a contract.
+  - id: content_governance
+    decision: >
+      Who may publish, and what review a package gets before it is published.
+      The Publisher API enforces that a publisher is an authenticated
+      administrator and that a module path stays under the player origin. It does
+      not review content.

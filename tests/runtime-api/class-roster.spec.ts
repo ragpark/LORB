@@ -1,18 +1,20 @@
-// Roster administration enforcement. Requires Postgres with migrations through 004_roster.sql.
+// Roster administration enforcement. Needs Postgres with the migrations applied.
 //
-// BLK-02, BLK-03 and BLK-07 are implicated by this feature, not cleared by it: these tests check
-// that the boundaries the design depends on hold, not that the privacy design is done.
+// What these check is that the privacy shape the roster schema was built around actually holds in
+// the routes: no row pairs a learner identifier with a pseudonym, an assignment remembers who was in
+// the class at the time, and a class is only ever visible to the principal that owns it.
 import { randomUUID } from "node:crypto";
 import { generateKeyPair } from "jose";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
-import { issueIesToken } from "../../packages/stub-ies/src/issuer.js";
+import { issueIesToken } from "../../packages/dev-identity/src/issuer.js";
 import { computePseudonym } from "../../packages/runtime-api/src/services/pseudonym-service.js";
-import { store } from "../../packages/runtime-api/src/core.js";
+import { MemoryRuntimeStore } from "../../packages/runtime-api/src/store/index.js";
+import { MemoryCatalogueStore } from "../../packages/runtime-api/src/catalogue/index.js";
 import { xapiVerbs } from "../../packages/contracts/src/index.js";
 
-const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://lorb:lorb@localhost:5432/lorb_mvp";
+const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://lorb:lorb@localhost:5432/lorb";
 process.env.DATABASE_URL = DATABASE_URL;
 process.env.ADMIN_ALLOWED_ROLES = "admin";
 
@@ -26,6 +28,7 @@ describe("Class roster administration", () => {
   let adminToken: string;
   let otherTeacherToken: string;
   let learnerToken: string;
+  let store: MemoryRuntimeStore;
 
   const admin = (method: "GET" | "POST" | "DELETE", url: string, payload?: unknown, token = adminToken) =>
     runtime.app.inject({
@@ -54,9 +57,11 @@ describe("Class roster administration", () => {
 
   beforeAll(async () => {
     const keys = await generateKeyPair("ES256");
+    store = new MemoryRuntimeStore();
     runtime = await buildRuntime({
       iesKey: keys.publicKey, iesIssuer: IES, playerOrigin: "https://player.class-roster.test",
       secret: SECRET, internalServiceToken: SERVICE_TOKEN,
+      store, catalogue: new MemoryCatalogueStore(),
     });
     pool = new pg.Pool({ connectionString: DATABASE_URL });
     adminToken = await issueIesToken(keys.privateKey as never, "synthetic-roster-admin", "lorb-runtime", IES, { role: "admin" });
@@ -252,10 +257,13 @@ describe("Class roster administration", () => {
   });
 
   /** Puts an accepted completion in the evidence outbox for one pseudonym, as the Evidence API would. */
-  const recordCompletion = (objectId: string, pseudonym: string, scaled: number, createdAt: string) => {
+  const recordCompletion = async (objectId: string, pseudonym: string, scaled: number, createdAt: string) => {
     const statementId = randomUUID();
-    store.outbox.set(statementId, {
-      outbox_id: randomUUID(), statement_id: statementId, status: "PENDING", attempts: 0, created_at: createdAt,
+    await store.enqueueStatement({
+      outbox_id: randomUUID(), statement_id: statementId, repository_id: randomUUID(),
+      attempt_id: randomUUID(), package_version_id: randomUUID(), object_id: objectId,
+      actor_pseudonym: pseudonym, verb_id: xapiVerbs.completed, correlation_id: randomUUID(),
+      created_at: createdAt,
       payload: {
         id: statementId,
         actor: { objectType: "Agent", account: { homePage: "https://lorb.example/pseudonym", name: pseudonym } },
@@ -331,7 +339,7 @@ describe("Class roster administration", () => {
       if (!seeded) return;
       const pseudonym = computePseudonym(SECRET, IES, "synthetic-prior-01", "launch");
       // A completion from long before this assignment was created.
-      recordCompletion(seeded.objectId, pseudonym, 1, new Date(Date.now() - 86_400_000).toISOString());
+      await recordCompletion(seeded.objectId, pseudonym, 1, new Date(Date.now() - 86_400_000).toISOString());
       const results = (await admin("GET", `/api/v1/admin/classes/${seeded.classId}/results`)).json().items as Array<{ attempted_count: number; learners: Array<{ completed: boolean }> }>;
       expect(results[0]!.attempted_count).toBe(0);
       expect(results[0]!.learners[0]!.completed).toBe(false);
@@ -341,7 +349,7 @@ describe("Class roster administration", () => {
       const seeded = await assignedClass("23N After", ["synthetic-after-01"]);
       if (!seeded) return;
       const pseudonym = computePseudonym(SECRET, IES, "synthetic-after-01", "launch");
-      recordCompletion(seeded.objectId, pseudonym, 0.75, new Date(Date.now() + 1000).toISOString());
+      await recordCompletion(seeded.objectId, pseudonym, 0.75, new Date(Date.now() + 1000).toISOString());
       const results = (await admin("GET", `/api/v1/admin/classes/${seeded.classId}/results`)).json().items as Array<{ attempted_count: number; learners: Array<{ completed: boolean; scaled: number | null }> }>;
       expect(results[0]!.attempted_count).toBe(1);
       expect(results[0]!.learners[0]!.completed).toBe(true);

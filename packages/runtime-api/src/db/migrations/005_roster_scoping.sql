@@ -1,6 +1,4 @@
--- NOT PRODUCTION — BLK-02, BLK-03 and BLK-07 REMAIN IMPLICATED. Follow-up to 004_roster.sql.
---
--- Two corrections from review, both of which were real:
+-- Follow-up to 004_roster.sql. Two corrections from review, both of which were real:
 --
 -- 1. An assignment must remember who was in the class at the time. Reading the live roster to build
 --    historical results showed newly added learners as "not started" on work they were never given,

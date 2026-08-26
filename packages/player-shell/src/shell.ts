@@ -67,13 +67,25 @@ async function handleModuleMessage(data:unknown){
 // The window is used for exactly one message: the nonce-authenticated handshake that hands the shell
 // a MessagePort. Everything else — state, evidence, completion — arrives on that port, which is a
 // capability held by two endpoints and needs no origin check at all.
+// A module may open its channel more than once, and refusing the second attempt used to strand it.
+// A framework that mounts, tears down and remounts its root — React's StrictMode does exactly this,
+// and so does any transient unmount — closes the first port and sends a fresh `module.hello`. While
+// the shell ignored a hello whenever it already held a port, it went on replying down a channel whose
+// other end was closed, and the module waited for a context that could never arrive: no error, no
+// console output, an activity that simply never starts.
+//
+// Accepting the later hello is no weaker than accepting the first. Every check still applies, and the
+// launch nonce is what authenticates it: only the document the shell itself navigated to ever saw the
+// fragment, and a document that replaced it in the same browsing context has already ended the
+// session through `handshakeClosed`. The previous port is closed rather than abandoned.
 window.addEventListener("message",event=>{
- if(!descriptor||handshakeClosed||modulePort)return;
+ if(!descriptor||handshakeClosed)return;
  const parsed=postMessageSchema.safeParse(event.data);
  if(!parsed.success||parsed.data.type!=="module.hello")return;
  if(!handshakeAllowed(event.origin,new URL(descriptor.package_url).origin,event.source,frame.contentWindow,parsed.data.payload[HANDSHAKE_FRAGMENT_KEY],handshakeNonce))return;
  const port=event.ports[0];
  if(!port)return;
+ modulePort?.close();
  modulePort=port;
  port.onmessage=(portEvent:MessageEvent)=>enqueue(portEvent.data);
  port.start();

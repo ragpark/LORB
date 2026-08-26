@@ -1,18 +1,21 @@
 {
-  "name": "lorb-mvp",
+  "name": "lorb",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@9.15.0",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && pnpm --filter ops-console build && pnpm --filter mock-consumer build",
-    "typecheck": "tsc --noEmit && pnpm --filter ops-console typecheck && pnpm --filter mock-consumer typecheck && pnpm --filter admin-ui typecheck && pnpm --filter quiz-player typecheck",
-    "test": "vitest run --exclude '**/tests/{e2e,browser}/**' && pnpm --filter ops-console test && pnpm --filter mock-consumer test && pnpm --filter admin-ui test",
+    "build": "tsc -p tsconfig.build.json && pnpm --filter ops-console build && pnpm --filter learner-portal build && pnpm --filter admin-ui build",
+    "typecheck": "tsc --noEmit && pnpm --filter ops-console typecheck && pnpm --filter learner-portal typecheck && pnpm --filter admin-ui typecheck && pnpm --filter quiz-player typecheck && pnpm --filter @lorb/web-auth typecheck",
+    "test": "vitest run --exclude '**/tests/{e2e,browser}/**' && pnpm --filter ops-console test && pnpm --filter learner-portal test && pnpm --filter admin-ui test",
+    "test:browser": "playwright test",
     "dev": "tsx src/dev.ts",
     "serve": "tsx src/server.ts",
     "start": "node dist/src/server.js",
     "db:setup": "tsx packages/runtime-api/src/db/setup.ts",
     "db:setup:production": "node dist/packages/runtime-api/src/db/setup.js",
-    "test:browser": "playwright test"
+    "keys:generate": "tsx packages/runtime-api/src/cli/keygen.ts",
+    "dev:identity": "tsx packages/dev-identity/src/server.ts",
+    "dev:lrs": "tsx packages/dev-lrs/src/server.ts"
   },
   "engines": {
     "node": "20.x"
@@ -20,12 +23,14 @@
   "dependencies": {
     "@fastify/cors": "^9.0.0",
     "@fastify/helmet": "^11.0.0",
+    "@fastify/rate-limit": "^9",
     "dotenv": "^16.0.0",
     "fastify": "^4.0.0",
     "jose": "^5.0.0",
     "pg": "^8.0.0",
     "pino": "^9.0.0",
     "pino-pretty": "^11.0.0",
+    "prom-client": "^15",
     "zod": "^3.0.0"
   },
   "devDependencies": {

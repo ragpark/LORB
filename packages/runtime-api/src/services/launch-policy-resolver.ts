@@ -1,4 +1,4 @@
-// STUB — NOT PRODUCTION — BLOCKED BY BLK-03, BLK-11. Administration workspace Wave 1 launch-policy resolution.
+// Launch-policy resolution: which player renders a launch, for content that does not pin one.
 export interface LaunchPolicyRule {
   priority: number;
   match?: { consumer_id?: string; repository_id?: string; delivery_profile?: string; launch_mode?: string };
@@ -35,7 +35,7 @@ type PolicyRow = { launch_policy_id: string; active_launch_policy_version_id: st
 
 /**
  * Consults every active launch policy's active version and picks the highest-priority (lowest
- * number) matching rule across all of them — Wave 1's "single-tenant, single-organisation,
+ * number) matching rule across all of them — the "single-tenant, single-organisation,
  * single-consumer view" doesn't preclude more than one policy being independently activated, so
  * this can't assume there is exactly one to check. Falls back to no match (default resolver
  * behaviour) when there's no DATABASE_URL, no active policy, or no rule matches anywhere.

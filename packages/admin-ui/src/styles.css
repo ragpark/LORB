@@ -33,7 +33,7 @@ body {
   background: var(--lorb-paper);
 }
 
-.draft-banner {
+.environment-notice {
   background: #3d2b56;
   color: #fff;
 }

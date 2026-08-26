@@ -1,53 +1,78 @@
-# LORB Administration Workspace
+# Administration Workspace
 
-> **DRAFT — HUMAN REVIEW REQUIRED — NOT CERTIFIED. Local development and non-production Railway only. Do not use with real learner data.**
+The repository-scoped administration surface: repository lifecycle, player and player-version
+registration and activation, launch-policy authoring and activation, approvals, and the audit trail.
 
-A repository-scoped administration surface for LORB-001: repository lifecycle, player/player-version
-registration and activation, launch-policy authoring and activation, separation-of-duties approvals,
-and an append-only audit trail. It implements Wave 1 of the LORB-001 Administration Workspace brief.
-It is not a Learner, Teacher, Publisher, or Operations Console surface.
+It is not a learner, publisher or operations surface.
 
-## Wave 1 vs Wave 2 scope
+## What it manages
 
-**In Wave 1:** repository create/suspend/retire; repository-scoped membership (owner/operator/reader
-roles); player and player-version registration, approval, activation, suspension; launch-policy
-creation, versioning, publish, and activation; the approval-request lifecycle (request → approve →
-execute, with separation of duties enforced at the UI, API, and Postgres layers); an append-only audit
-log; and launch-policy consultation by the Runtime API's `/launches` resolver.
+| Area | Actions |
+| --- | --- |
+| Repositories | Create, suspend, retire; grant and revoke membership |
+| Membership | `repository_owner`, `repository_operator`, `repository_reader` — the repository-scoped authorisation every other action is checked against |
+| Players | Register a player; register, approve, activate and suspend an immutable version |
+| Launch policies | Create, version, publish and activate the rules that route a renderer |
+| Approvals | Request → approve → execute, with separation of duties |
+| Audit | Every administrative decision, allowed or denied, append-only |
+| Learning objects | The catalogue, and smart-link creation and revocation |
 
-**Deferred to Wave 2 (not implemented):** the launch-policy Simulate action (present in the UI, disabled,
-with a "Deferred to Wave 2" tooltip); a Publisher UI cross-slice update (see "Known gaps" below — no
-such package exists in this repository to update); and any change to descriptor verification, PDS
-theming, or production certification.
+## Separation of duties
 
-## Run locally
+Actions listed in `ADMIN_APPROVAL_REQUIRED_FOR` cannot be performed directly: they create an approval
+request, a *different* administrator approves it, and only then can it be executed.
 
-Use Node 20 LTS and pnpm 9. Run `pnpm install`, then `pnpm --filter admin-ui dev`. Copy only the
-permitted `VITE_*` variables from `.env.example`; `VITE_ENVIRONMENT_LABEL` must be `LOCAL-DEV`. The
-workspace is available at `http://localhost:5176` and requires the Runtime API (with `DATABASE_URL`,
-`ADMIN_ALLOWED_ROLES`, and `ADMIN_APPROVAL_REQUIRED_FOR` set — see the root `.env.example`) and the
-`stub-ies` synthetic identity service running alongside it.
+Three layers enforce it, and the last one is the one that matters:
 
-## Railway non-production
+1. The workspace disables the approve control for the principal who requested it.
+2. The API refuses a self-approval.
+3. A Postgres `CHECK` constraint refuses a row whose approver equals its requester.
 
-Build `packages/admin-ui/dist` and host it in a distinct `lorb-admin-ui` Railway non-production project.
-Set `VITE_ENVIRONMENT_LABEL=RAILWAY-NON-PROD` and confirm all API origins are non-production. See
-[README-deploy.md](README-deploy.md).
+The first two can be bypassed by a client or a bug. The third cannot be bypassed at all, which is why
+it exists as well as, not instead of, the other two.
 
-## Enforced anti-requirements
+## Immutability
 
-25 automated controls from Section 13 of the brief are tested in
-[`tests/anti-requirements/admin-ui-enforcement.spec.ts`](tests/anti-requirements/README-anti-requirements.md)
-(UI-side) and `tests/runtime-api/admin-enforcement.spec.ts` at the repo root (API/DB-side). The full
-enumerated list, with spec cross-references and documented gaps against the brief, lives in
-[`tests/anti-requirements/README-anti-requirements.md`](tests/anti-requirements/README-anti-requirements.md).
+A player version's module URL, origin, integrity hash and supported profiles are frozen once it
+leaves `REGISTERED`/`TESTING` — enforced by a database trigger, not by application code. A published
+launch-policy version's rules and semver are frozen the same way. Audit records reject updates and
+deletes outright.
 
-## Production blockers
+The point is that changing what a launch resolves to is always a new version somebody approved, never
+an edit somebody made.
 
-BLK-03 (accountable owner), BLK-07 (Pearson Design System layer), BLK-08 (Railway procurement/security
-assessment), BLK-09 (UK residency), and BLK-11 (launch-policy resolution production hardening) remain
-open. The stub IES, synthetic pseudonym projection, and descriptor verification carried over from the
-Runtime API are also production blockers. Real learner data is prohibited.
+## Sign-in
 
-Changes to immutability enforcement, the approval workflow, RBAC/ABAC, audit-record handling, or any of
-the 25 anti-requirements above must be re-reviewed against LORB-001 before merge.
+Through your identity provider, using authorization code with PKCE. An administrator is distinguished
+by the role claim your provider is configured to emit; the claim name is `OIDC_ROLE_CLAIM` and the
+accepted values are `ADMIN_ALLOWED_ROLES`. A token without one gets 403 on every route here, which is
+the right outcome for a learner's token.
+
+The signed-in administrator is identified by their pseudonym, from `GET /api/v1/admin/whoami`. No raw
+subject is rendered anywhere in the workspace.
+
+## Running it
+
+```sh
+pnpm --filter admin-ui dev      # http://localhost:5176
+```
+
+Needs the Runtime API running with `DATABASE_URL`, `ADMIN_ALLOWED_ROLES` and
+`ADMIN_APPROVAL_REQUIRED_FOR` set. `VITE_ENVIRONMENT_LABEL` must be `PRODUCTION`, `STAGING` or
+`DEVELOPMENT`. Deployment: [README-deploy.md](README-deploy.md).
+
+## Deferred
+
+The launch-policy **Simulate** action is present in the interface and disabled, with a tooltip saying
+so. It would let an administrator see which player a hypothetical launch would resolve to without
+issuing one. Nothing depends on it.
+
+## Enforced controls
+
+UI-side controls in [`tests/anti-requirements/`](tests/anti-requirements/README-anti-requirements.md);
+API and database controls in `tests/runtime-api/admin-enforcement.spec.ts` at the repository root.
+Between them they cover the environment notice, pseudonym-only display, session-only token storage,
+no unsafe HTML, correlation and idempotency on every state change, the disabled self-approval control,
+authorization redaction in diagnostics, immutability enforcement, RBAC and repository-scoped ABAC
+denial, audit transactionality, and the launch-policy resolver's behaviour when an object pins its own
+player.

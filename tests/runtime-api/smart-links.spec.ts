@@ -2,17 +2,25 @@ import { randomUUID } from "node:crypto";
 import { decodeJwt, generateKeyPair } from "jose";
 import { describe, expect, it } from "vitest";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
-import { issueIesToken } from "../../packages/stub-ies/src/issuer.js";
+import { issueIesToken } from "../../packages/dev-identity/src/issuer.js";
+import { MemoryRuntimeStore } from "../../packages/runtime-api/src/store/index.js";
+import { MemoryCatalogueStore } from "../../packages/runtime-api/src/catalogue/index.js";
 
-const PUBLISHED_OBJECT_ID = "c8a2d3e4-7f4b-4a2c-8b6e-2f3a4b5c6d7e";
+let PUBLISHED_OBJECT_ID = "";
 
 async function setup() {
   const ies = await generateKeyPair("ES256");
   const urls = { ies: `https://ies.smart-links-${randomUUID()}.test`, player: `https://player.smart-links-${randomUUID()}.test` };
-  const runtime = await buildRuntime({ iesKey: ies.publicKey, iesIssuer: urls.ies, playerOrigin: urls.player, secret: Buffer.alloc(32, 7) });
-  const adminToken = await issueIesToken(ies.privateKey, "synthetic-smart-link-admin", "lorb-runtime", urls.ies, { role: "admin" });
-  const learnerToken = await issueIesToken(ies.privateKey, "synthetic-smart-link-learner", "lorb-runtime", urls.ies, {});
-  return { runtime, adminToken, learnerToken, playerOrigin: urls.player };
+  const catalogue = new MemoryCatalogueStore();
+  const store = new MemoryRuntimeStore();
+  PUBLISHED_OBJECT_ID = (await catalogue.learningObjects({ status: "PUBLISHED" }))[0]!.object_id;
+  const runtime = await buildRuntime({
+    iesKey: ies.publicKey, iesIssuer: urls.ies, playerOrigin: urls.player,
+    secret: Buffer.alloc(32, 7), store, catalogue,
+  });
+  const adminToken = await issueIesToken(ies.privateKey, "smart-link-admin", "lorb-runtime", urls.ies, { role: "admin" });
+  const learnerToken = await issueIesToken(ies.privateKey, "smart-link-learner", "lorb-runtime", urls.ies, {});
+  return { runtime, store, catalogue, adminToken, learnerToken, playerOrigin: urls.player };
 }
 
 describe("Learning object smart links", () => {
@@ -30,14 +38,18 @@ describe("Learning object smart links", () => {
     expect(created.revoked_at).toBeNull();
     expect(created.url).toContain(created.token);
 
-    // Repeat creation returns the same active link rather than minting a second one.
+    // Repeat creation returns the same active link rather than minting a second one — but not the
+    // token itself. Only a hash of it is stored, so a later read cannot reproduce it; an admin who
+    // loses the token revokes the link and creates a new one.
     const createAgain = await runtime.app.inject({
       method: "POST",
       url: `/api/v1/admin/learning-objects/${PUBLISHED_OBJECT_ID}/smart-link`,
       headers: { authorization: `Bearer ${adminToken}`, "idempotency-key": randomUUID() },
     });
     expect(createAgain.statusCode).toBe(200);
-    expect(createAgain.json().token).toBe(created.token);
+    expect(createAgain.json().smart_link_id).toBe(created.smart_link_id);
+    expect(createAgain.json().token).toBeUndefined();
+    expect(createAgain.json().token_prefix).toBe(created.token.slice(0, 8));
 
     const redeem = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/smart-links/${created.token}` });
     expect(redeem.statusCode).toBe(302);
