@@ -90,6 +90,17 @@ describe('roster administration',()=>{
   expect(admin).toContain('await fetchLinks()');
  });
 
+ // StrictMode mounts the application twice in a development build, and a completed callback cannot
+ // be completed again: OidcClient deletes the PKCE verifier as it uses it. Without a guard the second
+ // attempt fails, and its failure handling runs against the first attempt's success.
+ it('completes a provider callback once per document load, and drops an abandoned intent',()=>{
+  const app=read('App.tsx');
+  expect(app).toContain('callbackCompleted');
+  expect(app).toContain('if(!completed){adminSignInIntent.clear();return}');
+  // Starting a learner sign-in is the other moment a stale administration intent must not survive.
+  expect(app).toMatch(/signIn=async\(index:number\)=>\{\s*\n?[^}]*adminSignInIntent\.clear\(\)/);
+ });
+
  it('renders learner names as text, never as markup',()=>{
   expect(read('admin.tsx')).not.toContain('dangerouslySetInnerHTML');
  });

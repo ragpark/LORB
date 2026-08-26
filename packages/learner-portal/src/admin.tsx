@@ -6,6 +6,7 @@
 
 import {useEffect,useRef,useState} from 'react';
 import {adminRequest} from './admin-api.js';
+import {adminSignInAgain} from './admin-auth.js';
 import {ApiProblem} from './api.js';
 import type {Config} from './config.js';
 import {adminTokenStore} from './security.js';
@@ -30,8 +31,9 @@ export const LEARNER_REF=/^[A-Za-z\d._:-]{1,128}$/;
  * contract with the API — this is only how they are said out loud.
  */
 const adminErrorCopy:Record<string,string>={
- AUTHENTICATION_EXPIRED:'Your administration session has expired. Sign in again to continue \u2014 anything you have typed is still here.',
- ADMIN_AUDIT_DENIED:'Your account does not have teacher access to this area.',
+ AUTHENTICATION_EXPIRED:'Your administration session has expired. Sign in again to continue.',
+ ADMIN_AUDIT_DENIED:'Your account does not have teacher access to this area. Ask whoever administers your organisation\u2019s accounts for the teacher role.',
+ ADMIN_SIGN_IN_UNAVAILABLE:'No identity provider is configured for this environment, so the teacher area cannot sign you in.',
  ADMIN_REQUEST_INVALID:'Check the details you entered and try again.',
  AGENT_LINK_INVALID:'Check the issuer and subject. Both are required, and each must be 256 characters or fewer.',
  AGENT_LINK_TAKEN:'That assistant is already linked to another account.',
@@ -45,7 +47,7 @@ const adminErrorCopy:Record<string,string>={
 export const adminErrorMessage=(code:string)=>adminErrorCopy[code]??`We could not complete that request (${code}).`;
 
 export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;onSignOut:()=>void;
- /** Re-authenticates the teacher after the administration session expires. Defaults to the development sign-in. */
+ /** Re-authenticates the teacher after the administration session expires. Defaults to the shared path: renewal where the provider allows it, a fresh sign-in otherwise. */
  onSignInAgain?:()=>Promise<void>}){
  const [classes,setClasses]=useState<ClassSummary[]>([]);
  const [selected,setSelected]=useState<ClassDetail>();
@@ -93,7 +95,7 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
   const work=pending.current;
   setBusy(true);setError('');
   try{
-   await (onSignInAgain?onSignInAgain():adminSignIn(config,'teacher-a'));
+   await (onSignInAgain?onSignInAgain():adminSignInAgain(config));
    pending.current=undefined;
    setExpired(false);
    if(work)await work();
@@ -313,11 +315,4 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
    </form>
   </section>
  </section>;
-}
-
-/** Development sign-in for the administration area, asking for the administrator role. */
-export async function adminSignIn(config:Config,subject:string):Promise<void>{
- const response=await fetch(config.developmentLoginUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({subject,role:'admin'})});
- if(!response.ok)throw new ApiProblem('AUTHENTICATION_EXPIRED',crypto.randomUUID());
- adminTokenStore.set((await response.json() as {access_token:string}).access_token);
 }
