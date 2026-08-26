@@ -26,9 +26,13 @@ rebuild is how you change an endpoint.
 
 1. `curl -sf https://<host>/health` returns `{"status":"ok"}` (served by nginx, not the application).
 2. Sign in. You should be redirected to the identity provider and back.
-3. In a non-production environment, confirm the environment notice is visible above everything a
+3. Choose **Continue as a teacher**. That is a second round trip through the same provider and the
+   same redirect URI, and it must land in the administration area rather than the catalogue. An
+   account without the teacher role is refused there by the API, which is the intended outcome —
+   the role comes from the provider, not from the portal.
+4. In a non-production environment, confirm the environment notice is visible above everything a
    keyboard user can reach. In production, confirm there is none.
-4. Confirm the surface loads live data rather than an error — a failure here is almost always an
+5. Confirm the surface loads live data rather than an error — a failure here is almost always an
    origin missing from the Runtime API's `ALLOWED_CONSUMER_ORIGINS`.
 
 ## Do not

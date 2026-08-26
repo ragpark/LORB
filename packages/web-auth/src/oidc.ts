@@ -66,10 +66,23 @@ async function challengeFor(verifier: string): Promise<string> {
  */
 class SessionHolder {
   private current: Session | undefined;
+  /**
+   * The refresh token of a session whose access token has expired.
+   *
+   * An expired access token is exactly the moment a refresh token is for, so dropping the refresh
+   * token along with it would leave `renew()` able to run only while it had nothing to do. Signing
+   * out clears this too — it is the expiry of the access token that keeps it, never the end of the
+   * session.
+   */
+  private expiredRefreshToken: string | undefined;
   private readonly listeners = new Set<(session: Session | undefined) => void>();
 
   get(): Session | undefined {
-    if (this.current && this.current.expiresAt <= Date.now()) this.clear();
+    if (this.current && this.current.expiresAt <= Date.now()) {
+      const refreshToken = this.current.refreshToken;
+      this.clear();
+      this.expiredRefreshToken = refreshToken;
+    }
     return this.current;
   }
 
@@ -77,13 +90,20 @@ class SessionHolder {
     return this.get()?.accessToken;
   }
 
+  /** The refresh token to renew with, whether or not the access token it came with has expired. */
+  get renewalToken(): string | undefined {
+    return this.get()?.refreshToken ?? this.expiredRefreshToken;
+  }
+
   set(session: Session): void {
     this.current = session;
+    this.expiredRefreshToken = undefined;
     for (const listener of this.listeners) listener(session);
   }
 
   clear(): void {
     this.current = undefined;
+    this.expiredRefreshToken = undefined;
     for (const listener of this.listeners) listener(undefined);
   }
 
@@ -179,7 +199,7 @@ export class OidcClient {
 
   /** Exchanges a refresh token, when the provider issued one. Returns false if renewal is not possible. */
   async renew(): Promise<boolean> {
-    const refreshToken = session.get()?.refreshToken;
+    const refreshToken = session.renewalToken;
     if (!refreshToken) return false;
     const response = await fetch(this.endpoint("token"), {
       method: "POST",
