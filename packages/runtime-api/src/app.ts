@@ -127,12 +127,20 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
   const consumerOrigins = new Set(runtimeConfig.allowedConsumerOrigins);
   const browserOrigins = new Set([...consumerOrigins, playerOrigin]);
 
-  // The Player Shell iframe is sandboxed without allow-same-origin, so its own fetches — JWKS
-  // verification, attempt state, completion, and its content payload — arrive with an opaque "null"
-  // Origin. Those four routes accept it; nothing else does, and no wildcard is introduced anywhere.
+  // Fetches made from an opaque origin arrive with the Origin header "null", and two documents in a
+  // launch have one: the module, always, because its iframe is sandboxed without allow-same-origin;
+  // and the Player Shell itself whenever a consumer embeds it the same way — which the Learner Portal
+  // does. So the shell's own calls are not reliably same-origin either, and every route a launch
+  // needs has to accept "null" or the launch breaks in that topology.
+  //
+  // Evidence is the one that was missing. Without it a launch embedded in a sandboxed consumer iframe
+  // rendered, played and completed while every xAPI statement was refused by the browser before it
+  // left the page — a silent, total loss of the evidence trail in the topology a consumer actually
+  // uses. Nothing else is widened: no other route accepts "null", and no wildcard is introduced.
   const playerShellRoute = (url: string): boolean => {
     const path = url.split("?")[0] ?? url;
     return path === "/api/v1/runtime/jwks"
+      || path === "/api/v1/evidence/statements"
       || /^\/api\/v1\/runtime\/attempts\/[^/]+\/(state|complete)$/.test(path)
       || /^\/api\/v1\/runtime\/learning-objects\/[^/]+\/content$/.test(path);
   };

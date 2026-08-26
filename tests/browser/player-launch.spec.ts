@@ -9,7 +9,8 @@
  *
  * Requires the player bundles to be built; the harness says so explicitly if they are not.
  */
-import { expect, test, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { randomUUID } from "node:crypto";
 import { decodeJwt } from "jose";
 import { issueIesToken } from "../../packages/dev-identity/src/issuer.js";
@@ -28,7 +29,11 @@ const EXAMPLE_MODULE_OBJECT = "c8a2d3e4-7f4b-4a2c-8b6e-2f3a4b5c6d7e";
 
 let harness: Harness;
 
-test.describe.configure({ mode: "serial" });
+// Not serial. The suite shares one harness through beforeAll, but the tests do not share state with
+// each other — each creates its own object, launch and attempt. Under "serial" the first failure
+// skips the rest, which hides the one thing worth knowing when a launch stops working: whether it
+// broke for every module or only for the content-driven ones.
+test.describe.configure({ mode: "default" });
 
 test.beforeAll(async () => {
   harness = await startHarness();

@@ -143,6 +143,13 @@ The residual risk, stated rather than hidden: a `package_url` that redirects off
 first load carries the fragment to the redirect target, and the embedding page cannot detect that
 from inside the browser. `frame-src 'self'` closes it where the topology allows.
 
+The opaque origin reaches further than the module. A consumer that embeds the *shell* the same way —
+which the Learner Portal does — gives the shell an opaque origin too, so the shell's own calls also
+arrive as `Origin: null`. Every route a launch needs therefore accepts `"null"`: the key set, attempt
+state, completion, content, and evidence. Evidence was the one that did not, and the failure was
+silent — the activity rendered, played and completed while the browser refused every statement before
+it left the page. Nothing else accepts `"null"`, and no wildcard exists anywhere in the policy.
+
 ## 8. Administration and separation of duties
 
 Repository membership carries authorisation; every administrative action is checked against it.
