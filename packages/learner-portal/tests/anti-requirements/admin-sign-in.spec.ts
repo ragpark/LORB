@@ -85,6 +85,16 @@ describe('the provider callback',()=>{
   expect(adminTokenStore.get()).toBe('teacher-token');
  });
 
+ // Pressing Back at the provider leaves an intent behind that no callback will ever consume. Left
+ // there, it is claimed by whatever sign-in this tab completes next: a learner would be dropped into
+ // the administration area with their token in the teacher's slot.
+ it('lets an abandoned intent be dropped, so it cannot claim a later learner callback',()=>{
+  adminSignInIntent.mark();
+  adminSignInIntent.clear();
+  expect(completeAdminSignIn('learner-token')).toBe(false);
+  expect(adminTokenStore.get()).toBeNull();
+ });
+
  it('completes one sign-in, not the next one too',()=>{
   adminSignInIntent.mark();
   expect(completeAdminSignIn('teacher-token')).toBe(true);

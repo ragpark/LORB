@@ -7,6 +7,17 @@ import {allowsDevelopmentSignIn,environmentNotice,OidcClient,session as provider
 export const environmentNoticeFor=environmentNotice;
 type ObjectRecord={object_id:string;repository_id:string;title?:string;status:string;active_package_version_id:string;active_object_version_id:string;description?:string;duration?:string;kind?:string};type Package={semver:string;sha256:string;delivery_profile:string};type Page='signin'|'catalogue'|'detail'|'launch'|'summary'|'error'|'admin';
 const developmentIdentities=['learner-a','learner-b'];
+/**
+ * A provider callback is completed once per document load.
+ *
+ * StrictMode mounts the application twice in a development build, and OidcClient deletes the PKCE
+ * verifier the moment it is used — deliberately, so a replayed callback cannot complete a sign-in.
+ * A second attempt at the same callback therefore finds the handshake gone and reports a response
+ * that does not match this browser's request, which is the right answer for a replay and the wrong
+ * one for this tab's own callback being handled twice. Module scope rather than a ref: it has to
+ * survive the remount that causes the problem.
+ */
+let callbackCompleted=false;
 export function App({config}: {config:Config}){const [page,setPage]=useState<Page>(tokenStore.get()?'catalogue':'signin');const [objects,setObjects]=useState<ObjectRecord[]>([]);const [selected,setSelected]=useState<ObjectRecord>();const [pkg,setPkg]=useState<Package>();const [launch,setLaunch]=useState<{player_url:string;signed_descriptor:string;correlation_id:string}>();const [notice,setNotice]=useState('');const [summary,setSummary]=useState<{complete:boolean;at:string;correlation:string;unsaved?:boolean}>();const [problem,setProblem]=useState<{code:string;correlation:string;recoverable:boolean}>();const [sessionEnd,setSessionEnd]=useState('');const [leak,setLeak]=useState(false);const frame=useRef<HTMLIFrameElement>(null);
  useEffect(()=>installTabCloseClear(),[]);useEffect(()=>{if(location.hash.startsWith('#/launch')&&!launch){setPage(tokenStore.get()?'catalogue':'signin');setNotice('Launch links cannot be reopened. Choose the activity from the catalogue.')}},[]);
  const load=async()=>{try{const repos=await apiRequest<{items:{repository_id:string}[]}>(config,'repositories',{},()=>setLeak(true));if(repos.items[0]){const data=await apiRequest<{items:ObjectRecord[]}>(config,`learning-objects?repository_id=${encodeURIComponent(repos.items[0].repository_id)}`,{},()=>setLeak(true));setObjects(data.items)}}catch(e){showProblem(e)}};
@@ -19,8 +30,18 @@ export function App({config}: {config:Config}){const [page,setPage]=useState<Pag
  // One redirect URI serves both sign-ins, so the returning browser is asked which one it started
  // before its token is adopted: a teacher's token in the learner's slot would open the catalogue as
  // somebody who is not signed in to it, and the administration area would still have nothing.
- useEffect(()=>{const client=oidc.current;if(!client)return;void client.completeSignIn().then(completed=>{const token=providerSession.token;if(!completed||!token)return;if(completeAdminSignIn(token)){setPage('admin');return}tokenStore.set(token);setPage('catalogue')}).catch(e=>{adminSignInIntent.clear();showProblem(e,true)})},[]);
+ useEffect(()=>{const client=oidc.current;if(!client||callbackCompleted)return;callbackCompleted=true;void client.completeSignIn().then(completed=>{
+  // No callback in this document, so any administration intent recorded here belongs to a sign-in
+  // that was never finished — the teacher pressed Back at the provider — and must not be left to be
+  // claimed by whatever sign-in this tab completes next.
+  if(!completed){adminSignInIntent.clear();return}
+  const token=providerSession.token;if(!token)return;
+  if(completeAdminSignIn(token)){setPage('admin');return}
+  tokenStore.set(token);setPage('catalogue');
+ }).catch(e=>{adminSignInIntent.clear();showProblem(e,true)})},[]);
  const signIn=async(index:number)=>{
+  // This tab is signing a learner in; an administration intent still recorded here is abandoned.
+  adminSignInIntent.clear();
   const client=oidc.current;
   if(client){await client.signIn().catch(e=>showProblem(e,true));return}
   if(!allowsDevelopmentSignIn(config.environment)){showProblem(new Error('No identity provider is configured for this environment.'),false);return}
