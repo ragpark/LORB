@@ -41,3 +41,17 @@ describe('Operations Console enforcement controls',()=>{
  it('permits approved display and pseudonym projections but blocks identifying fields',()=>{expect(containsSensitiveField({display_name:'Synthetic repository',pseudonymous_subject_id:'psn_123'})).toBe(false);expect(containsSensitiveField({name:'Person',subject:'raw'})).toBe(true)});
  it('loads live projections rather than bundled seed records',()=>{expect(app).toContain("useProjection('repositories','repositories')");expect(app).not.toContain('repo_01HZX6T8N9')});
 });
+
+/**
+ * The learner-facing catalogue route now serves published objects only, so an operations console
+ * reading it would go blind exactly when somebody asks why an activity vanished.
+ */
+describe('operational projection breadth',()=>{
+ it('reads learning objects from the administration route, not the learner-facing one',()=>{
+  expect(app).toContain("useProjection('objects','learning-objects',adminBase)");
+ });
+ it('derives the administration prefix from the runtime one rather than configuring it twice',()=>{
+  expect(app).toContain("const adminBase=runtimeBase.replace(");
+  expect(app).not.toContain('VITE_ADMIN_API_BASE');
+ });
+});

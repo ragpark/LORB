@@ -17,6 +17,7 @@ import { buildRuntime } from "../../packages/runtime-api/src/app.js";
 import { MemoryRuntimeStore } from "../../packages/runtime-api/src/store/index.js";
 import { MemoryCatalogueStore } from "../../packages/runtime-api/src/catalogue/index.js";
 import { DEFAULT_REPOSITORY } from "../../packages/runtime-api/src/catalogue/shared.js";
+import type { Repository } from "../../packages/runtime-api/src/catalogue/types.js";
 
 const SERVICE_TOKEN = "catalogue-scope-suite-internal-service-token";
 /** A second repository, standing in for one an operator created alongside the default. */
@@ -93,5 +94,60 @@ describe("learner catalogue repository scope", () => {
 
     const scoped = await list(runtime, `?repository_id=${OTHER_REPOSITORY}`);
     expect(scoped.map((row) => row.object_id)).not.toContain(objectId);
+  });
+
+  // Launch refuses a retired object (OBJECT_RETIRED) and anything else unpublished
+  // (OBJECT_NOT_PUBLISHED). A catalogue that lists them offers a learner an activity that can only
+  // fail when opened, and makes withdrawing one a change with no effect where it is read.
+  it("drops a retired object from the learner catalogue, while the administration listing keeps it", async () => {
+    const { runtime, catalogue } = await build();
+
+    const created = await runtime.app.inject({
+      method: "POST", url: "/api/v1/internal/runtime/quizzes",
+      headers: { authorization: `Bearer ${SERVICE_TOKEN}`, "idempotency-key": randomUUID() },
+      payload: QUIZ,
+    });
+    const objectId = created.json().object_id as string;
+    expect((await list(runtime)).map((row) => row.object_id)).toContain(objectId);
+
+    await catalogue.retireObject(objectId);
+
+    expect((await list(runtime)).map((row) => row.object_id)).not.toContain(objectId);
+    // Not merely absent from the list: the same object is refused a launch, which is the agreement
+    // between the two routes that the listing had been breaking.
+    expect(await catalogue.learningObject(objectId)).toMatchObject({ status: "RETIRED" });
+  });
+});
+
+/**
+ * The in-memory catalogue is what every suite here runs against, so a rule it applies differently
+ * from the SQL backend is a rule nothing tests. These pin the three that had drifted.
+ */
+describe("in-memory catalogue parity with the SQL backend", () => {
+  const repository = (id: string, status: Repository["status"], created_at: string): Repository =>
+    ({ repository_id: id, slug: `repo-${id.slice(0, 4)}`, display_name: `Repository ${id.slice(0, 4)}`, status, created_at });
+
+  it("skips a suspended repository when choosing the default, however old it is", async () => {
+    const catalogue = new MemoryCatalogueStore();
+    catalogue.seedRepository(repository(OTHER_REPOSITORY, "SUSPENDED", "2020-01-01T00:00:00.000Z"));
+
+    // The oldest repository is not the answer — being ACTIVE is, and the canonical default wins.
+    expect((await catalogue.repositories())[0]?.repository_id).toBe(OTHER_REPOSITORY);
+    expect((await catalogue.defaultRepository())?.repository_id).toBe(DEFAULT_REPOSITORY.repository_id);
+  });
+
+  it("falls back to the oldest active repository when the canonical default is not active", async () => {
+    const catalogue = new MemoryCatalogueStore();
+    catalogue.seedRepository({ ...(await catalogue.repository(DEFAULT_REPOSITORY.repository_id))!, status: "RETIRED" });
+    catalogue.seedRepository(repository(OTHER_REPOSITORY, "ACTIVE", "2026-01-01T00:00:00.000Z"));
+
+    expect((await catalogue.defaultRepository())?.repository_id).toBe(OTHER_REPOSITORY);
+  });
+
+  it("refuses to register a quiz when no repository is active, rather than naming one", async () => {
+    const catalogue = new MemoryCatalogueStore();
+    catalogue.seedRepository({ ...(await catalogue.repository(DEFAULT_REPOSITORY.repository_id))!, status: "RETIRED" });
+
+    await expect(catalogue.registerQuiz(QUIZ)).rejects.toThrow(/NO_ACTIVE_REPOSITORY/);
   });
 });

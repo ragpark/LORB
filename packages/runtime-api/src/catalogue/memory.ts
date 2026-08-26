@@ -52,20 +52,42 @@ export class MemoryCatalogueStore implements CatalogueStore {
     }
   }
 
+  /**
+   * Test seam. Repositories are created through the administration surface against a database; this
+   * store has no such write path, and the selection rules above cannot be exercised without one.
+   */
+  seedRepository(repository: Repository): void {
+    this.repositoriesById.set(repository.repository_id, { ...repository });
+  }
+
   async repositories(): Promise<Repository[]> {
-    return [...this.repositoriesById.values()];
+    // `order by created_at asc`, as the SQL backend does. Insertion order agreed with it only by
+    // accident, and a suite that cannot reproduce a differing order cannot test what depends on it.
+    return [...this.repositoriesById.values()].sort((a, b) => a.created_at.localeCompare(b.created_at));
   }
 
   async repository(repositoryId: string): Promise<Repository | undefined> {
     return this.repositoriesById.get(repositoryId.toLowerCase());
   }
 
+  /**
+   * The same rule the SQL backend applies: ACTIVE only, canonical default first, then oldest.
+   *
+   * This used to return the canonical row whatever its status, falling back to whichever repository
+   * happened to be inserted first. Both differences hid the selection rule from every suite that
+   * runs on this store — including the case that matters, where the oldest repository is not the one
+   * content is registered into.
+   */
   async defaultRepository(): Promise<Repository | undefined> {
-    return this.repositoriesById.get(DEFAULT_REPOSITORY.repository_id) ?? [...this.repositoriesById.values()][0];
+    const active = (await this.repositories()).filter((repository) => repository.status === "ACTIVE");
+    return active.find((repository) => repository.repository_id === DEFAULT_REPOSITORY.repository_id) ?? active[0];
   }
 
   async learningObjects(filter: { repository_id?: string; status?: LearningObjectRow["status"] } = {}): Promise<LearningObjectRow[]> {
     return [...this.objects.values()]
+      // An object with no active package version cannot be launched, and the SQL backend excludes it
+      // from every listing. Serving it here made a row visible in the suites that production hides.
+      .filter((row) => Boolean(row.active_package_version_id))
       .filter((row) => !filter.repository_id || row.repository_id.toLowerCase() === filter.repository_id.toLowerCase())
       .filter((row) => !filter.status || row.status === filter.status)
       .map((row) => ({ ...row }));
@@ -73,7 +95,7 @@ export class MemoryCatalogueStore implements CatalogueStore {
 
   async learningObject(objectId: string): Promise<LearningObjectRow | undefined> {
     const row = this.objects.get(objectId.toLowerCase());
-    return row ? { ...row } : undefined;
+    return row?.active_package_version_id ? { ...row } : undefined;
   }
 
   async objectVersion(objectVersionId: string): Promise<ObjectVersionRow | undefined> {
@@ -162,7 +184,10 @@ export class MemoryCatalogueStore implements CatalogueStore {
   }
 
   async registerQuiz(draft: QuizDraft, options: { repository_id?: string; authored_by?: string } = {}): Promise<RegisteredQuiz> {
-    const repositoryId = options.repository_id ?? (await this.defaultRepository())?.repository_id ?? DEFAULT_REPOSITORY.repository_id;
+    // No invented fallback: the SQL backend refuses when the tenant has no active repository, and a
+    // store that quietly names one instead would register content against a repository nobody has.
+    const repositoryId = options.repository_id ?? (await this.defaultRepository())?.repository_id;
+    if (!repositoryId) throw new Error("NO_ACTIVE_REPOSITORY");
     const built = buildQuizRegistration(draft, repositoryId, options.authored_by);
     this.objects.set(built.object.object_id, built.object);
     this.contents.set(built.object.object_id, built.content);

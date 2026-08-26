@@ -207,9 +207,18 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     return repository ?? sendProblem(reply, "OBJECT_NOT_FOUND", correlation(req));
   });
 
+  // Published objects only, decided here rather than by whoever is listing.
+  //
+  // This route is what a learner's catalogue is built from, and launch refuses anything that is not
+  // PUBLISHED — OBJECT_RETIRED for a withdrawn activity, OBJECT_NOT_PUBLISHED for the rest. Serving
+  // the wider set put activities on a learner's shelf that could only fail when opened, and made
+  // withdrawing one a change that did not take effect where it mattered most.
+  //
+  // The administration listing (/api/v1/admin/learning-objects) stays unfiltered: an operator needs
+  // to see a retired object precisely because it is retired.
   app.get("/api/v1/runtime/learning-objects", async (req) => {
     const query = (req as { query: { repository_id?: string } }).query;
-    return envelope(await catalogue.learningObjects({ repository_id: query.repository_id }), req);
+    return envelope(await catalogue.learningObjects({ repository_id: query.repository_id, status: "PUBLISHED" }), req);
   });
 
   app.get("/api/v1/runtime/learning-objects/:objectId", async (req, reply) => {

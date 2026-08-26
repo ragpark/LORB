@@ -89,7 +89,15 @@ export interface CatalogueStore {
 
   repositories(): Promise<Repository[]>;
   repository(repositoryId: string): Promise<Repository | undefined>;
-  /** The repository a caller gets when none is named. Undefined once more than one exists. */
+  /**
+   * The repository a caller gets when none is named: the canonical default where it is ACTIVE,
+   * otherwise the oldest ACTIVE one, and undefined when none is.
+   *
+   * It is deliberately not "the first repository". A client that lists one repository's objects
+   * picks by its own rule and diverges from this one the moment a tenant has more than the seeded
+   * default — which is how agent-registered quizzes came to be published, launchable, and missing
+   * from the learner catalogue. Learner-facing listings are unscoped for that reason.
+   */
   defaultRepository(): Promise<Repository | undefined>;
 
   learningObjects(filter?: { repository_id?: string; status?: LearningObjectRow["status"] }): Promise<LearningObjectRow[]>;
