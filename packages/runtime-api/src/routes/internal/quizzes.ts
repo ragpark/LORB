@@ -14,8 +14,8 @@ import { quizDraftSchema } from "../../../../contracts/src/index.js";
 import type { CatalogueStore } from "../../catalogue/index.js";
 import type { RuntimeStore } from "../../store/index.js";
 import { sendProblem } from "../../services/problem.js";
+import { requestFingerprint, withIdempotencyClaim } from "../../services/idempotency.js";
 
-const IDEMPOTENCY_TTL_MS = Number.parseInt(process.env.IDEMPOTENCY_TTL_MS ?? "86400000", 10);
 
 const correlationOf = (req: { correlationId?: string; headers: Record<string, unknown> }): string =>
   req.correlationId ?? (typeof req.headers["x-correlation-id"] === "string" ? req.headers["x-correlation-id"] : randomUUID());
@@ -39,18 +39,23 @@ export function registerInternalQuizRoutes(
     if (typeof idempotencyKey !== "string" || idempotencyKey.length === 0) {
       return sendProblem(reply, "IDEMPOTENCY_KEY_REQUIRED", correlation, 400);
     }
-    const replayed = await ctx.store.replayIdempotent("internal-quiz", idempotencyKey, "");
-    if (replayed) {
-      return (reply as { code: (n: number) => { send: (b: unknown) => unknown } })
-        .code(201).send({ ...(replayed.response as object), correlation_id: correlation, replayed: true });
-    }
+    const send = (status: number, body: unknown) =>
+      (reply as { code: (n: number) => { send: (b: unknown) => unknown } }).code(status).send(body);
 
-    const draft = quizDraftSchema.safeParse(request.body);
-    if (!draft.success) return sendProblem(reply, "LAUNCH_CONTEXT_INVALID", correlation, 400);
+    // Claimed before the quiz is registered. Checking for a stored response first and writing one
+    // afterwards let a retry that overlapped the original register a second learning object.
+    return withIdempotencyClaim(ctx.store, "internal-quiz", idempotencyKey, requestFingerprint(request.body), {
+      mismatch: () => sendProblem(reply, "IDEMPOTENCY_KEY_REUSED", correlation, 409),
+      inFlight: () => sendProblem(reply, "IDEMPOTENCY_KEY_IN_FLIGHT", correlation, 409),
+      replay: (status, response) => send(status, { ...(response as object), correlation_id: correlation, replayed: true }),
+      run: async (complete) => {
+        const draft = quizDraftSchema.safeParse(request.body);
+        if (!draft.success) return sendProblem(reply, "LAUNCH_CONTEXT_INVALID", correlation, 400);
 
-    const registered = await ctx.catalogue.registerQuiz(draft.data, { authored_by: "mcp-connector" });
-    await ctx.store.recordIdempotent("internal-quiz", idempotencyKey, "", 201, registered, IDEMPOTENCY_TTL_MS);
-    return (reply as { code: (n: number) => { send: (b: unknown) => unknown } })
-      .code(201).send({ ...registered, correlation_id: correlation, replayed: false });
+        const registered = await ctx.catalogue.registerQuiz(draft.data, { authored_by: "mcp-connector" });
+        await complete(201, registered);
+        return send(201, { ...registered, correlation_id: correlation, replayed: false });
+      },
+    });
   });
 }

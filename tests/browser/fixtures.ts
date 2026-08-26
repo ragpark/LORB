@@ -31,12 +31,20 @@ export const test = base.extend<{ browserDiagnostics: void }>({
     async ({ page }, use, testInfo) => {
       const lines: string[] = [];
 
+      const traffic: string[] = [];
+
       page.on("console", (message) => lines.push(`console.${message.type()}: ${message.text()}`));
       page.on("pageerror", (error) => lines.push(`pageerror: ${error.message}`));
       page.on("requestfailed", (request) =>
         lines.push(`requestfailed: ${request.method()} ${request.url()} — ${request.failure()?.errorText ?? "unknown"}`));
+      // Every response, not only the failures. A launch that renders nothing without erroring is the
+      // hard case, and what settles it is which requests were made at all: the module's own bundle,
+      // then its content payload. A blocked subresource can arrive here as a plain 200 that the
+      // browser then discards, so "no error" is not evidence that a fetch succeeded.
       page.on("response", (response) => {
-        if (response.status() >= 400) lines.push(`response ${response.status()}: ${response.request().method()} ${response.url()}`);
+        const line = `${response.status()} ${response.request().method()} ${shorten(response.url())}`;
+        traffic.push(line);
+        if (response.status() >= 400) lines.push(`response ${line}`);
       });
 
       await use();
@@ -56,6 +64,19 @@ export const test = base.extend<{ browserDiagnostics: void }>({
         }
       }
       lines.push(`frames: ${page.frames().map((frame) => shorten(frame.url())).join(", ")}`);
+
+      // What the module actually put on screen. "Nothing at all" means its script never ran; the
+      // player's own waiting or error state means it ran and did not get what it needed.
+      for (const frame of page.frames()) {
+        try {
+          const rendered = (await frame.locator("body").first().innerText({ timeout: 500 })).replace(/\s+/g, " ").trim();
+          lines.push(`rendered (${shorten(frame.url())}): ${rendered.slice(0, 400) || "(empty)"}`);
+        } catch {
+          // The frame is gone, or never had a document.
+        }
+      }
+
+      lines.push(`requests:\n  ${traffic.slice(0, 40).join("\n  ")}`);
 
       const report = lines.length ? lines.join("\n") : "(the browser reported nothing)";
       console.log(`\n--- browser diagnostics for "${testInfo.title}" ---\n${report}\n--- end diagnostics ---\n`);

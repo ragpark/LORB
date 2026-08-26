@@ -20,7 +20,8 @@ import { launchRequestSchema } from "../../contracts/src/index.js";
 import { config as loadRuntimeConfig, loadConfig, type RuntimeConfig } from "./config/index.js";
 import { catalogue as defaultCatalogue, createCatalogue, type CatalogueStore, type LearningObjectRow } from "./catalogue/index.js";
 import { createStore, type RuntimeStore } from "./store/index.js";
-import { issueDescriptor, SigningKeyRing } from "./core.js";
+import { issueDescriptor, sessionExpiresAt, SigningKeyRing } from "./core.js";
+import { requestFingerprint as fingerprint, withIdempotencyClaim } from "./services/idempotency.js";
 import { computePseudonym } from "./services/pseudonym-service.js";
 import { createTokenVerifier, IdentityError, type KeyResolver, type TokenVerifier } from "./services/identity.js";
 import { metrics, registerObservability } from "./services/observability.js";
@@ -39,12 +40,6 @@ import { checkServiceCredential, sendInternalError } from "./routes/internal/ser
 import { registerInternalQuizRoutes } from "./routes/internal/quizzes.js";
 import { registerInternalLaunchBatchRoutes } from "./routes/internal/launch-batch.js";
 import { registerInternalRosterRoutes } from "./routes/internal/roster.js";
-
-/** Idempotency records outlive the request but not for ever; 24 hours matches the usual client retry window. */
-const IDEMPOTENCY_TTL_MS = Number.parseInt(process.env.IDEMPOTENCY_TTL_MS ?? "86400000", 10);
-
-const fingerprint = (value: unknown): string =>
-  createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
 
 const hashToken = (token: string): string => createHash("sha256").update(token, "utf8").digest("hex");
 
@@ -294,106 +289,114 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
 
     const parsed = launchRequestSchema.safeParse(req.body);
     const requestFingerprint = fingerprint(req.body);
-    const replayed = await store.replayIdempotent("runtime-launch", idempotencyKey, requestFingerprint);
-    if (replayed) {
-      if (replayed.mismatch) return sendProblem(reply, "IDEMPOTENCY_KEY_REUSED", correlationValue, 409);
-      metrics.launches.inc({ outcome: "replayed", source: "consumer" });
-      return reply.code(replayed.status_code).send(replayed.response);
-    }
-    if (!parsed.success) {
-      metrics.launches.inc({ outcome: "rejected", source: "consumer" });
-      return sendProblem(reply, "LAUNCH_CONTEXT_INVALID", correlationValue, 400);
-    }
-    const body = parsed.data;
+    // Claimed before the work, not recorded after it. Recording only the outcome left a window in
+    // which two replicas both saw no record, both created an attempt and a launch, and only then
+    // raced to store one of the two responses — so the caller's retry silently produced a second
+    // attempt while the unique constraint kept exactly one of the answers.
+    return withIdempotencyClaim(store, "runtime-launch", idempotencyKey, requestFingerprint, {
+      mismatch: () => sendProblem(reply, "IDEMPOTENCY_KEY_REUSED", correlationValue, 409),
+      inFlight: () => sendProblem(reply, "IDEMPOTENCY_KEY_IN_FLIGHT", correlationValue, 409),
+      replay: (statusCode, response) => {
+        metrics.launches.inc({ outcome: "replayed", source: "consumer" });
+        return reply.code(statusCode).send(response);
+      },
+      run: async (complete) => {
+        if (!parsed.success) {
+          metrics.launches.inc({ outcome: "rejected", source: "consumer" });
+          return sendProblem(reply, "LAUNCH_CONTEXT_INVALID", correlationValue, 400);
+        }
+        const body = parsed.data;
 
-    let subject: string;
-    try {
-      subject = (await verifier.verify(req.headers.authorization)).subject;
-    } catch (error) {
-      metrics.launches.inc({ outcome: "unauthenticated", source: "consumer" });
-      const code = error instanceof IdentityError ? error.code : "AUTHENTICATION_EXPIRED";
-      return sendProblem(reply, code, correlationValue, code === "ACCESS_DENIED" ? 403 : 401);
-    }
+        let subject: string;
+        try {
+          subject = (await verifier.verify(req.headers.authorization)).subject;
+        } catch (error) {
+          metrics.launches.inc({ outcome: "unauthenticated", source: "consumer" });
+          const code = error instanceof IdentityError ? error.code : "AUTHENTICATION_EXPIRED";
+          return sendProblem(reply, code, correlationValue, code === "ACCESS_DENIED" ? 403 : 401);
+        }
 
-    // An unknown or unpublished object is refused rather than falling back to a default package.
-    // Substituting content the caller did not ask for is a silent-fallback defect: the learner gets
-    // an activity nobody assigned and the evidence records a different object than was launched.
-    const object = await catalogue.learningObject(body.object_id);
-    if (!object) {
-      metrics.launches.inc({ outcome: "not_found", source: "consumer" });
-      return sendProblem(reply, "OBJECT_NOT_FOUND", correlationValue);
-    }
-    if (object.status === "RETIRED") return sendProblem(reply, "OBJECT_RETIRED", correlationValue);
-    if (object.status !== "PUBLISHED") return sendProblem(reply, "OBJECT_NOT_PUBLISHED", correlationValue);
-    if (object.repository_id.toLowerCase() !== body.repository_id.toLowerCase()) {
-      metrics.launches.inc({ outcome: "not_found", source: "consumer" });
-      return sendProblem(reply, "OBJECT_NOT_FOUND", correlationValue);
-    }
+        // An unknown or unpublished object is refused rather than falling back to a default package.
+        // Substituting content the caller did not ask for is a silent-fallback defect: the learner gets
+        // an activity nobody assigned and the evidence records a different object than was launched.
+        const object = await catalogue.learningObject(body.object_id);
+        if (!object) {
+          metrics.launches.inc({ outcome: "not_found", source: "consumer" });
+          return sendProblem(reply, "OBJECT_NOT_FOUND", correlationValue);
+        }
+        if (object.status === "RETIRED") return sendProblem(reply, "OBJECT_RETIRED", correlationValue);
+        if (object.status !== "PUBLISHED") return sendProblem(reply, "OBJECT_NOT_PUBLISHED", correlationValue);
+        if (object.repository_id.toLowerCase() !== body.repository_id.toLowerCase()) {
+          metrics.launches.inc({ outcome: "not_found", source: "consumer" });
+          return sendProblem(reply, "OBJECT_NOT_FOUND", correlationValue);
+        }
 
-    const pseudonym = computePseudonym(secret, verifier.issuer, subject, "launch");
-    const { packageUrl, policy, pinned } = await resolvePackageUrl(object, body.repository_id, body.consumer_id, body.requested_launch_mode);
+        const pseudonym = computePseudonym(secret, verifier.issuer, subject, "launch");
+        const { packageUrl, policy, pinned } = await resolvePackageUrl(object, body.repository_id, body.consumer_id, body.requested_launch_mode);
 
-    const attemptId = randomUUID();
-    const launchId = randomUUID();
-    const expiresAt = new Date(Date.now() + 600000).toISOString();
+        const attemptId = randomUUID();
+        const launchId = randomUUID();
+        const expiresAt = sessionExpiresAt();
 
-    await store.createAttempt({
-      attempt_id: attemptId,
-      repository_id: object.repository_id,
-      object_id: object.object_id,
-      object_version_id: object.active_object_version_id,
-      package_version_id: object.active_package_version_id,
-      pseudonym,
-      consumer_id: body.consumer_id,
-      status: "CREATED",
-      revision: 1,
-      correlation_id: correlationValue,
-      created_at: new Date().toISOString(),
-      expires_at: expiresAt,
-      source: "consumer",
-      ...(policy ? {
-        governed_by_launch_policy: {
-          launch_policy_id: policy.governedBy.launchPolicyId,
-          launch_policy_version_id: policy.governedBy.launchPolicyVersionId,
-          display_name: policy.governedBy.displayName,
-          semver: policy.governedBy.semver,
-        },
-      } : {}),
-      ...(pinned ? { package_pinned_by_object: true } : {}),
+        await store.createAttempt({
+          attempt_id: attemptId,
+          repository_id: object.repository_id,
+          object_id: object.object_id,
+          object_version_id: object.active_object_version_id,
+          package_version_id: object.active_package_version_id,
+          pseudonym,
+          consumer_id: body.consumer_id,
+          status: "CREATED",
+          revision: 1,
+          correlation_id: correlationValue,
+          created_at: new Date().toISOString(),
+          expires_at: expiresAt,
+          source: "consumer",
+          ...(policy ? {
+            governed_by_launch_policy: {
+              launch_policy_id: policy.governedBy.launchPolicyId,
+              launch_policy_version_id: policy.governedBy.launchPolicyVersionId,
+              display_name: policy.governedBy.displayName,
+              semver: policy.governedBy.semver,
+            },
+          } : {}),
+          ...(pinned ? { package_pinned_by_object: true } : {}),
+        });
+
+        const descriptor = await issueDescriptor(ring, {
+          sub: pseudonym,
+          repository_id: object.repository_id,
+          consumer_id: body.consumer_id,
+          object_id: object.object_id,
+          object_version_id: object.active_object_version_id,
+          package_version_id: object.active_package_version_id,
+          correlation_id: randomUUID(),
+          locale: body.locale,
+          attempt_id: attemptId,
+          state_endpoint: `${publicIssuer}/api/v1/runtime/attempts/${attemptId}/state`,
+          package_url: packageUrl,
+          session_config: { expires_at: expiresAt },
+        }, { issuer: publicIssuer, evidenceEndpoint });
+
+        const response = {
+          launch_id: launchId,
+          attempt_id: attemptId,
+          signed_descriptor: descriptor,
+          player_url: `${playerOrigin}/#descriptor=${encodeURIComponent(descriptor)}`,
+          expires_at: expiresAt,
+          correlation_id: correlationValue,
+        };
+
+        await store.recordLaunch({
+          launch_id: launchId, attempt_id: attemptId, repository_id: object.repository_id,
+          object_id: object.object_id, consumer_id: body.consumer_id,
+          launch_mode: body.requested_launch_mode, expires_at: expiresAt, correlation_id: correlationValue,
+        });
+        await complete(201, response);
+        metrics.launches.inc({ outcome: "issued", source: "consumer" });
+        return reply.code(201).send(response);
+      },
     });
-
-    const descriptor = await issueDescriptor(ring, {
-      sub: pseudonym,
-      repository_id: object.repository_id,
-      consumer_id: body.consumer_id,
-      object_id: object.object_id,
-      object_version_id: object.active_object_version_id,
-      package_version_id: object.active_package_version_id,
-      correlation_id: randomUUID(),
-      locale: body.locale,
-      attempt_id: attemptId,
-      state_endpoint: `${publicIssuer}/api/v1/runtime/attempts/${attemptId}/state`,
-      package_url: packageUrl,
-      session_config: { expires_at: expiresAt },
-    }, { issuer: publicIssuer, evidenceEndpoint });
-
-    const response = {
-      launch_id: launchId,
-      attempt_id: attemptId,
-      signed_descriptor: descriptor,
-      player_url: `${playerOrigin}/#descriptor=${encodeURIComponent(descriptor)}`,
-      expires_at: expiresAt,
-      correlation_id: correlationValue,
-    };
-
-    await store.recordLaunch({
-      launch_id: launchId, attempt_id: attemptId, repository_id: object.repository_id,
-      object_id: object.object_id, consumer_id: body.consumer_id,
-      launch_mode: body.requested_launch_mode, expires_at: expiresAt, correlation_id: correlationValue,
-    });
-    await store.recordIdempotent("runtime-launch", idempotencyKey, requestFingerprint, 201, response, IDEMPOTENCY_TTL_MS);
-    metrics.launches.inc({ outcome: "issued", source: "consumer" });
-    return reply.code(201).send(response);
   });
 
   // -------------------------------------------------------------------------
@@ -515,7 +518,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
 
     const pseudonym = computePseudonym(secret, "smart-link", subject, "launch");
     const attemptId = randomUUID();
-    const expiresAt = new Date(Date.now() + 600000).toISOString();
+    const expiresAt = sessionExpiresAt();
     await store.createAttempt({
       attempt_id: attemptId,
       repository_id: object.repository_id,
@@ -660,7 +663,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
   }, internalGuard);
   registerInternalRosterRoutes(app, internalGuard);
 
-  registerPublisherRoutes(app, { catalogue, adminCtx });
+  registerPublisherRoutes(app, { catalogue, store, adminCtx });
   registerAdminRepositoryRoutes(app, adminCtx);
   registerAdminMembershipRoutes(app, adminCtx);
   registerAdminPlayerRoutes(app, adminCtx);

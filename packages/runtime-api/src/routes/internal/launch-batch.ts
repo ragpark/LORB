@@ -10,13 +10,13 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { issueDescriptor, type SigningKeyRing } from "../../core.js";
+import { issueDescriptor, sessionExpiresAt, type SigningKeyRing } from "../../core.js";
+import { requestFingerprint, withIdempotencyClaim } from "../../services/idempotency.js";
 import { computePseudonym } from "../../services/pseudonym-service.js";
 import { sendProblem } from "../../services/problem.js";
 import type { CatalogueStore } from "../../catalogue/index.js";
 import type { RuntimeStore } from "../../store/index.js";
 
-const IDEMPOTENCY_TTL_MS = Number.parseInt(process.env.IDEMPOTENCY_TTL_MS ?? "86400000", 10);
 
 export interface LaunchBatchContext {
   serviceToken: string | undefined;
@@ -61,86 +61,92 @@ export function registerInternalLaunchBatchRoutes(
     const send = (status: number, body: unknown) =>
       (reply as { code: (n: number) => { send: (b: unknown) => unknown } }).code(status).send(body);
 
-    const replayed = await ctx.store.replayIdempotent("internal-launch-batch", idempotencyKey, "");
-    if (replayed) return send(201, { ...(replayed.response as object), correlation_id: correlation, replayed: true });
+    // Claimed before any assignment is written. A retry that overlapped the original used to create
+    // a second assignment and a second set of attempts for the same class.
+    return withIdempotencyClaim(ctx.store, "internal-launch-batch", idempotencyKey, requestFingerprint(request.body), {
+      mismatch: () => sendProblem(reply, "IDEMPOTENCY_KEY_REUSED", correlation, 409),
+      inFlight: () => sendProblem(reply, "IDEMPOTENCY_KEY_IN_FLIGHT", correlation, 409),
+      replay: (status, response) => send(status, { ...(response as object), correlation_id: correlation, replayed: true }),
+      run: async (complete) => {
+        const parsed = launchBatchSchema.safeParse(request.body);
+        if (!parsed.success) return sendProblem(reply, "LAUNCH_CONTEXT_INVALID", correlation, 400);
 
-    const parsed = launchBatchSchema.safeParse(request.body);
-    if (!parsed.success) return sendProblem(reply, "LAUNCH_CONTEXT_INVALID", correlation, 400);
+        const object = await ctx.catalogue.learningObject(parsed.data.object_id);
+        if (!object) return sendProblem(reply, "OBJECT_NOT_FOUND", correlation, 404);
+        if (object.status !== "PUBLISHED") return sendProblem(reply, "LEARNING_OBJECT_NOT_AVAILABLE", correlation, 409);
 
-    const object = await ctx.catalogue.learningObject(parsed.data.object_id);
-    if (!object) return sendProblem(reply, "OBJECT_NOT_FOUND", correlation, 404);
-    if (object.status !== "PUBLISHED") return sendProblem(reply, "LEARNING_OBJECT_NOT_AVAILABLE", correlation, 409);
+        const assignmentId = randomUUID();
+        const createdAt = new Date().toISOString();
+        const seen = new Set<string>();
+        const learners: Record<string, unknown>[] = [];
 
-    const assignmentId = randomUUID();
-    const createdAt = new Date().toISOString();
-    const seen = new Set<string>();
-    const learners: Record<string, unknown>[] = [];
+        for (const learner of parsed.data.learners) {
+          const pseudonym = computePseudonym(ctx.secret, ctx.identityIssuer, learner.learner_id, "launch");
+          if (seen.has(pseudonym)) continue;
+          seen.add(pseudonym);
+          const entry: Record<string, unknown> = { learner_id: learner.learner_id, pseudonym };
 
-    for (const learner of parsed.data.learners) {
-      const pseudonym = computePseudonym(ctx.secret, ctx.identityIssuer, learner.learner_id, "launch");
-      if (seen.has(pseudonym)) continue;
-      seen.add(pseudonym);
-      const entry: Record<string, unknown> = { learner_id: learner.learner_id, pseudonym };
+          if (parsed.data.include_descriptors) {
+            const attemptId = randomUUID();
+            const expiresAt = sessionExpiresAt();
+            await ctx.store.createAttempt({
+              attempt_id: attemptId,
+              repository_id: object.repository_id,
+              object_id: object.object_id,
+              object_version_id: object.active_object_version_id,
+              package_version_id: object.active_package_version_id,
+              pseudonym,
+              consumer_id: "internal-assignment",
+              status: "CREATED",
+              revision: 1,
+              correlation_id: correlation,
+              created_at: createdAt,
+              expires_at: expiresAt,
+              source: "assignment",
+            });
+            const descriptor = await issueDescriptor(ctx.ring, {
+              sub: pseudonym,
+              repository_id: object.repository_id,
+              consumer_id: "internal-assignment",
+              object_id: object.object_id,
+              object_version_id: object.active_object_version_id,
+              package_version_id: object.active_package_version_id,
+              correlation_id: randomUUID(),
+              locale: "en-GB",
+              attempt_id: attemptId,
+              state_endpoint: `${ctx.publicIssuer}/api/v1/runtime/attempts/${attemptId}/state`,
+              package_url: `${ctx.playerOrigin}${object.module_path}`,
+              session_config: { expires_at: expiresAt },
+            }, { issuer: ctx.publicIssuer, evidenceEndpoint: ctx.evidenceEndpoint });
+            const launchId = randomUUID();
+            await ctx.store.recordLaunch({
+              launch_id: launchId, attempt_id: attemptId, repository_id: object.repository_id,
+              object_id: object.object_id, consumer_id: "internal-assignment",
+              launch_mode: "embedded-iframe", expires_at: expiresAt, correlation_id: correlation,
+            });
+            Object.assign(entry, {
+              launch_id: launchId,
+              attempt_id: attemptId,
+              signed_descriptor: descriptor,
+              player_url: `${ctx.playerOrigin}/#descriptor=${encodeURIComponent(descriptor)}`,
+              expires_at: expiresAt,
+            });
+          }
+          learners.push(entry);
+        }
 
-      if (parsed.data.include_descriptors) {
-        const attemptId = randomUUID();
-        const expiresAt = new Date(Date.now() + 600000).toISOString();
-        await ctx.store.createAttempt({
-          attempt_id: attemptId,
-          repository_id: object.repository_id,
+        await ctx.store.recordAssignment({
+          assignment_id: assignmentId,
           object_id: object.object_id,
-          object_version_id: object.active_object_version_id,
-          package_version_id: object.active_package_version_id,
-          pseudonym,
-          consumer_id: "internal-assignment",
-          status: "CREATED",
-          revision: 1,
-          correlation_id: correlation,
           created_at: createdAt,
-          expires_at: expiresAt,
-          source: "assignment",
+          source: "internal-launch-batch",
+          pseudonyms: [...seen],
         });
-        const descriptor = await issueDescriptor(ctx.ring, {
-          sub: pseudonym,
-          repository_id: object.repository_id,
-          consumer_id: "internal-assignment",
-          object_id: object.object_id,
-          object_version_id: object.active_object_version_id,
-          package_version_id: object.active_package_version_id,
-          correlation_id: randomUUID(),
-          locale: "en-GB",
-          attempt_id: attemptId,
-          state_endpoint: `${ctx.publicIssuer}/api/v1/runtime/attempts/${attemptId}/state`,
-          package_url: `${ctx.playerOrigin}${object.module_path}`,
-          session_config: { expires_at: expiresAt },
-        }, { issuer: ctx.publicIssuer, evidenceEndpoint: ctx.evidenceEndpoint });
-        const launchId = randomUUID();
-        await ctx.store.recordLaunch({
-          launch_id: launchId, attempt_id: attemptId, repository_id: object.repository_id,
-          object_id: object.object_id, consumer_id: "internal-assignment",
-          launch_mode: "embedded-iframe", expires_at: expiresAt, correlation_id: correlation,
-        });
-        Object.assign(entry, {
-          launch_id: launchId,
-          attempt_id: attemptId,
-          signed_descriptor: descriptor,
-          player_url: `${ctx.playerOrigin}/#descriptor=${encodeURIComponent(descriptor)}`,
-          expires_at: expiresAt,
-        });
-      }
-      learners.push(entry);
-    }
 
-    await ctx.store.recordAssignment({
-      assignment_id: assignmentId,
-      object_id: object.object_id,
-      created_at: createdAt,
-      source: "internal-launch-batch",
-      pseudonyms: [...seen],
+        const response = { assignment_id: assignmentId, object_id: object.object_id, assigned_count: learners.length, created_at: createdAt, learners };
+        await complete(201, response);
+        return send(201, { ...response, correlation_id: correlation, replayed: false });
+      },
     });
-
-    const response = { assignment_id: assignmentId, object_id: object.object_id, assigned_count: learners.length, created_at: createdAt, learners };
-    await ctx.store.recordIdempotent("internal-launch-batch", idempotencyKey, "", 201, response, IDEMPOTENCY_TTL_MS);
-    return send(201, { ...response, correlation_id: correlation, replayed: false });
   });
 }

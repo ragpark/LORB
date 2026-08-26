@@ -102,6 +102,21 @@ export interface IdempotentReplay {
   mismatch: boolean;
 }
 
+/**
+ * The outcome of claiming an idempotency key, which is the step that has to happen before the work
+ * the key protects — not after it.
+ *
+ * `reserved` means this caller owns the key and should do the work. `replay` means the work is done
+ * and this is the answer. `mismatch` means the key was used for a different request. `in_flight`
+ * means another caller claimed the key and has not finished, which is a 409 rather than a duplicate
+ * execution: the retry can come back when the first attempt has an answer.
+ */
+export type IdempotentClaim =
+  | { state: "reserved" }
+  | { state: "replay"; status_code: number; response: unknown }
+  | { state: "mismatch" }
+  | { state: "in_flight" };
+
 export interface AttemptFilter {
   repository_id?: string;
   object_id?: string;
@@ -144,6 +159,16 @@ export interface RuntimeStore {
    */
   replayIdempotent(scope: string, key: string, fingerprint: string): Promise<IdempotentReplay | undefined>;
   recordIdempotent(scope: string, key: string, fingerprint: string, statusCode: number, response: unknown, ttlMs: number): Promise<void>;
+
+  /**
+   * Takes ownership of an idempotency key before the work behind it runs. Atomic: exactly one
+   * concurrent caller is told `reserved`, and every other is told what the key is already doing.
+   */
+  claimIdempotent(scope: string, key: string, fingerprint: string, ttlMs: number): Promise<IdempotentClaim>;
+  /** Stores the response against a claim this caller holds, ending its in-flight state. */
+  completeIdempotent(scope: string, key: string, statusCode: number, response: unknown): Promise<void>;
+  /** Abandons a claim whose work failed, so the caller's own retry is not told the key is in flight. */
+  releaseIdempotent(scope: string, key: string): Promise<void>;
   purgeExpiredIdempotency(now?: Date): Promise<number>;
 
   /** Returns false when the statement id was already accepted, which is the xAPI dedup rule. */

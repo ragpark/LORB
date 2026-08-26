@@ -7,11 +7,12 @@
  */
 import { isLegalTransition, OPEN_STATUSES } from "./transitions.js";
 import type {
-  Assignment, Attempt, AttemptFilter, IdempotentReplay, LaunchRecord, OutboxRow, OutboxStatus,
+  Assignment, Attempt, AttemptFilter, IdempotentClaim, IdempotentReplay, LaunchRecord, OutboxRow, OutboxStatus,
   RuntimeStore, SmartLink, StateWriteResult,
 } from "./types.js";
 
-interface IdempotencyEntry { fingerprint: string; statusCode: number; response: unknown; expiresAt: number }
+/** statusCode/response stay undefined between the claim and its completion. */
+interface IdempotencyEntry { fingerprint: string; statusCode?: number; response?: unknown; expiresAt: number }
 
 export class MemoryRuntimeStore implements RuntimeStore {
   readonly kind = "memory" as const;
@@ -107,11 +108,34 @@ export class MemoryRuntimeStore implements RuntimeStore {
       this.idempotency.delete(`${scope} ${key}`);
       return undefined;
     }
+    if (entry.statusCode === undefined) return undefined;
     return { status_code: entry.statusCode, response: entry.response, mismatch: entry.fingerprint !== fingerprint };
   }
 
   async recordIdempotent(scope: string, key: string, fingerprint: string, statusCode: number, response: unknown, ttlMs: number): Promise<void> {
     this.idempotency.set(`${scope} ${key}`, { fingerprint, statusCode, response, expiresAt: Date.now() + ttlMs });
+  }
+
+  async claimIdempotent(scope: string, key: string, fingerprint: string, ttlMs: number): Promise<IdempotentClaim> {
+    const id = `${scope} ${key}`;
+    const entry = this.idempotency.get(id);
+    if (entry && entry.expiresAt > Date.now()) {
+      if (entry.fingerprint !== fingerprint) return { state: "mismatch" };
+      if (entry.statusCode === undefined) return { state: "in_flight" };
+      return { state: "replay", status_code: entry.statusCode, response: entry.response };
+    }
+    this.idempotency.set(id, { fingerprint, expiresAt: Date.now() + ttlMs });
+    return { state: "reserved" };
+  }
+
+  async completeIdempotent(scope: string, key: string, statusCode: number, response: unknown): Promise<void> {
+    const entry = this.idempotency.get(`${scope} ${key}`);
+    if (entry) this.idempotency.set(`${scope} ${key}`, { ...entry, statusCode, response });
+  }
+
+  async releaseIdempotent(scope: string, key: string): Promise<void> {
+    const entry = this.idempotency.get(`${scope} ${key}`);
+    if (entry?.statusCode === undefined) this.idempotency.delete(`${scope} ${key}`);
   }
 
   async purgeExpiredIdempotency(now = new Date()): Promise<number> {

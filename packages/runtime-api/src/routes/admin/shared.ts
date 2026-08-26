@@ -38,6 +38,8 @@ const ADMIN_ERROR_STATUS: Record<string, number> = {
   LAUNCH_POLICY_RULES_INVALID: 400,
   ADMIN_REQUEST_INVALID: 400,
   IDEMPOTENCY_KEY_REQUIRED: 400,
+  IDEMPOTENCY_KEY_REUSED: 409,
+  IDEMPOTENCY_KEY_IN_FLIGHT: 409,
   LEARNING_OBJECT_NOT_FOUND: 404,
   LEARNING_OBJECT_NOT_PUBLISHED: 409,
   SMART_LINK_NOT_FOUND: 404,
@@ -52,6 +54,8 @@ const ADMIN_ERROR_STATUS: Record<string, number> = {
 };
 
 const ADMIN_ERROR_TITLE: Record<string, string> = {
+  IDEMPOTENCY_KEY_REUSED: "That idempotency key was used for a different request",
+  IDEMPOTENCY_KEY_IN_FLIGHT: "That idempotency key is still being processed",
   AUTHENTICATION_EXPIRED: "Your session has expired",
   ADMIN_AUDIT_DENIED: "Administrator access is required",
   MEMBERSHIP_NOT_PERMITTED: "You do not have the required repository membership",

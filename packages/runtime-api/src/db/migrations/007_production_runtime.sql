@@ -63,6 +63,52 @@ create table if not exists learning_object_content (
   updated_at timestamptz not null default now()
 );
 
+-- Backfill for a database that already carries content under the original schema.
+--
+-- Everything above is additive, which makes it look safe, and it is not: `active_package_version_id`
+-- arrives null on every existing row, and the catalogue treats a null there as "this object has no
+-- deliverable version" and hides it. Left unbackfilled, an upgrade would take every previously
+-- published object out of the catalogue and out of every launch, without an error anywhere to say
+-- what had happened. The same is true of `object_version`, which starts empty while attempts and
+-- descriptors are supposed to bind to a row in it.
+--
+-- So each object that has package versions but no active one is given an object version built from
+-- its own most recent package version — preferring a PUBLISHED one, then the most recently
+-- published or created — and is pointed at it. Objects that had nothing to deliver before still
+-- have nothing to deliver, which is correct.
+update package_version
+   set module_path = entry_point
+ where module_path = '' and entry_point like '/%';
+
+with latest as (
+  select distinct on (object_id)
+         object_id, package_version_id, semver, status, published_at, created_at
+    from package_version
+   where object_id is not null
+   order by object_id, (status = 'PUBLISHED') desc, coalesce(published_at, created_at) desc
+)
+insert into object_version (object_version_id, object_id, semver, package_version_id, status, published_at, created_at)
+select coalesce(target.active_object_version_id, gen_random_uuid()),
+       latest.object_id, latest.semver, latest.package_version_id,
+       case when latest.status = 'PUBLISHED' then 'PUBLISHED' else 'DRAFT' end,
+       latest.published_at, latest.created_at
+  from latest
+  join learning_object target on target.object_id = latest.object_id
+ where target.active_package_version_id is null
+    on conflict (object_id, semver) do nothing;
+
+update learning_object target
+   set active_package_version_id = ov.package_version_id,
+       active_object_version_id = ov.object_version_id,
+       module_path = case when target.module_path = '' then pv.module_path else target.module_path end,
+       -- A blank title would list as an unnamed row in every catalogue view. Naming it after the
+       -- object it migrated from is at least identifiable, and a publisher can rename it.
+       title = case when target.title = '' then 'Migrated object ' || left(target.object_id::text, 8) else target.title end
+  from object_version ov
+  join package_version pv on pv.package_version_id = ov.package_version_id
+ where ov.object_id = target.object_id
+   and target.active_package_version_id is null;
+
 -- ---------------------------------------------------------------------------
 -- Attempts
 -- ---------------------------------------------------------------------------
@@ -109,16 +155,27 @@ create index if not exists launch_attempt_idx on launch(attempt_id);
 -- Idempotency is mandatory on every state-changing surface, so the record of a replayed response has
 -- to outlive the process that produced it. Scoped by surface so the same key used against two
 -- different endpoints cannot replay one another's response.
+-- A row is written when a request *claims* the key, before the work behind it starts, and completed
+-- with its response afterwards. Recording only the outcome leaves a window in which two replicas
+-- both see no record, both do the work, and only then race to store one of the two responses — so
+-- one caller's retry creates a second attempt, a second launch or a second learning object, and the
+-- unique constraint hides it by keeping exactly one of the answers. Claiming first closes that
+-- window: the loser of the insert is told the key is in flight rather than doing the work again.
+-- response and status_code are therefore null until the claim completes.
 create table if not exists idempotency_record (
   scope text not null,
   idempotency_key text not null,
   request_fingerprint text not null,
-  response jsonb not null,
-  status_code integer not null,
+  response jsonb,
+  status_code integer,
+  claimed_at timestamptz not null default now(),
   created_at timestamptz not null default now(),
   expires_at timestamptz not null,
   primary key (scope, idempotency_key)
 );
+alter table idempotency_record alter column response drop not null;
+alter table idempotency_record alter column status_code drop not null;
+alter table idempotency_record add column if not exists claimed_at timestamptz not null default now();
 create index if not exists idempotency_record_expiry_idx on idempotency_record(expires_at);
 
 -- ---------------------------------------------------------------------------

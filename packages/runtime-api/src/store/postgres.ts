@@ -14,7 +14,7 @@
 import pg from "pg";
 import { isLegalTransition, OPEN_STATUSES, TERMINAL_STATUSES } from "./transitions.js";
 import type {
-  Assignment, Attempt, AttemptFilter, IdempotentReplay, LaunchRecord, OutboxRow, OutboxStatus,
+  Assignment, Attempt, AttemptFilter, IdempotentClaim, IdempotentReplay, LaunchRecord, OutboxRow, OutboxStatus,
   RuntimeStore, SmartLink, StateWriteResult,
 } from "./types.js";
 
@@ -223,6 +223,52 @@ export class PostgresRuntimeStore implements RuntimeStore {
        values ($1,$2,$3,$4,$5, now() + ($6::bigint * interval '1 millisecond'))
        on conflict (scope, idempotency_key) do nothing`,
       [scope, key, fingerprint, JSON.stringify(response), statusCode, Math.round(ttlMs)],
+    );
+  }
+
+  async claimIdempotent(scope: string, key: string, fingerprint: string, ttlMs: number): Promise<IdempotentClaim> {
+    // One statement, so the claim is atomic across replicas. An expired row is taken over rather
+    // than replayed: its response is past its useful life and the key is free again.
+    const claimed = await this.pool.query(
+      `insert into idempotency_record (scope, idempotency_key, request_fingerprint, expires_at)
+       values ($1,$2,$3, now() + ($4::bigint * interval '1 millisecond'))
+       on conflict (scope, idempotency_key) do update
+         set request_fingerprint = excluded.request_fingerprint,
+             response = null,
+             status_code = null,
+             claimed_at = now(),
+             expires_at = excluded.expires_at
+       where idempotency_record.expires_at <= now()
+       returning scope`,
+      [scope, key, fingerprint, Math.round(ttlMs)],
+    );
+    if (claimed.rowCount) return { state: "reserved" };
+
+    const existing = await this.pool.query(
+      `select request_fingerprint, status_code, response from idempotency_record
+       where scope = $1 and idempotency_key = $2`,
+      [scope, key],
+    );
+    const row = existing.rows[0];
+    // Gone between the two statements — expired and purged. The caller retrying is the right answer.
+    if (!row) return { state: "in_flight" };
+    if (row.request_fingerprint !== fingerprint) return { state: "mismatch" };
+    if (row.status_code === null) return { state: "in_flight" };
+    return { state: "replay", status_code: row.status_code, response: row.response };
+  }
+
+  async completeIdempotent(scope: string, key: string, statusCode: number, response: unknown): Promise<void> {
+    await this.pool.query(
+      `update idempotency_record set status_code = $3, response = $4
+       where scope = $1 and idempotency_key = $2 and status_code is null`,
+      [scope, key, statusCode, JSON.stringify(response)],
+    );
+  }
+
+  async releaseIdempotent(scope: string, key: string): Promise<void> {
+    await this.pool.query(
+      "delete from idempotency_record where scope = $1 and idempotency_key = $2 and status_code is null",
+      [scope, key],
     );
   }
 

@@ -135,6 +135,56 @@ describeIfDatabase("Postgres runtime store", () => {
     expect(await store.replayIdempotent("other-scope", key, "fingerprint-a")).toBeUndefined();
   });
 
+  it("hands a concurrently claimed key to exactly one caller", async () => {
+    const key = randomUUID();
+    // Two replicas, two pools, one key, at the same moment. This is the case a
+    // check-then-write-afterwards implementation cannot get right: both would see no record, both
+    // would do the work, and only then would one of the two responses survive.
+    const otherPool = new pg.Pool({ connectionString: DATABASE_URL });
+    const other = new PostgresRuntimeStore(otherPool);
+    try {
+      const claims = await Promise.all([
+        store.claimIdempotent("concurrent-scope", key, "fingerprint", 60000),
+        other.claimIdempotent("concurrent-scope", key, "fingerprint", 60000),
+      ]);
+      expect(claims.filter((claim) => claim.state === "reserved")).toHaveLength(1);
+      expect(claims.filter((claim) => claim.state === "in_flight")).toHaveLength(1);
+
+      // Until the winner completes, the loser's retry is still told the work is in flight — never
+      // handed a half-finished answer and never allowed to repeat the work.
+      expect((await other.claimIdempotent("concurrent-scope", key, "fingerprint", 60000)).state).toBe("in_flight");
+
+      await store.completeIdempotent("concurrent-scope", key, 201, { attempt_id: "the-only-one" });
+      const replay = await other.claimIdempotent("concurrent-scope", key, "fingerprint", 60000);
+      expect(replay).toEqual({ state: "replay", status_code: 201, response: { attempt_id: "the-only-one" } });
+
+      // A different request under the same key is refused rather than replayed.
+      expect((await store.claimIdempotent("concurrent-scope", key, "other-fingerprint", 60000)).state).toBe("mismatch");
+    } finally {
+      await otherPool.end();
+    }
+  });
+
+  it("frees a claim whose work never produced a response", async () => {
+    const key = randomUUID();
+    expect((await store.claimIdempotent("release-scope", key, "fingerprint", 60000)).state).toBe("reserved");
+    await store.releaseIdempotent("release-scope", key);
+    expect((await store.claimIdempotent("release-scope", key, "fingerprint", 60000)).state).toBe("reserved");
+
+    // A completed claim is not released: the stored response outlives the request that made it.
+    await store.completeIdempotent("release-scope", key, 201, { kept: true });
+    await store.releaseIdempotent("release-scope", key);
+    expect((await store.claimIdempotent("release-scope", key, "fingerprint", 60000)).state).toBe("replay");
+  });
+
+  it("lets an expired key be claimed again rather than replaying a stale response", async () => {
+    const key = randomUUID();
+    await store.claimIdempotent("expiry-scope", key, "fingerprint", 1);
+    await store.completeIdempotent("expiry-scope", key, 201, { stale: true });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect((await store.claimIdempotent("expiry-scope", key, "fingerprint", 60000)).state).toBe("reserved");
+  });
+
   it("purges idempotency records once they expire", async () => {
     const key = randomUUID();
     await store.recordIdempotent("test-scope", key, "f", 201, {}, 1);

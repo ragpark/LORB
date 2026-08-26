@@ -34,6 +34,19 @@ export function descriptorTtlSeconds(): number {
   return Number.isInteger(raw) && raw >= 60 && raw <= 900 ? raw : DEFAULT_DESCRIPTOR_TTL_SECONDS;
 }
 
+/**
+ * When the attempt this descriptor opens stops being usable.
+ *
+ * It has to be the same lifetime as the descriptor itself. Reporting a fixed ten minutes while
+ * `DESCRIPTOR_TTL_SECONDS` said something else told the player its session was still valid after
+ * authentication had already started failing — or, with a longer configured lifetime, let attempt
+ * maintenance expire a session whose descriptor a learner was still holding. One value, derived
+ * once, used by every launch path.
+ */
+export function sessionExpiresAt(now: Date = new Date()): string {
+  return new Date(now.getTime() + descriptorTtlSeconds() * 1000).toISOString();
+}
+
 export function defaultTenantId(): string {
   return process.env.LORB_TENANT_ID ?? "lorb-default";
 }

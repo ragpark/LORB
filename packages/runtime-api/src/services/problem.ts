@@ -32,6 +32,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   EVIDENCE_DELIVERY_DELAYED: 202,
   IDEMPOTENCY_KEY_REQUIRED: 400,
   IDEMPOTENCY_KEY_REUSED: 409,
+  IDEMPOTENCY_KEY_IN_FLIGHT: 409,
   RATE_LIMITED: 429,
   SERVICE_UNAVAILABLE: 503,
   SMART_LINK_NOT_FOUND: 404,
@@ -49,6 +50,7 @@ const TITLE_BY_CODE: Record<string, string> = {
   ATTEMPT_CONFLICT: "That attempt has already moved on",
   IDEMPOTENCY_KEY_REQUIRED: "An idempotency key is required",
   IDEMPOTENCY_KEY_REUSED: "That idempotency key was used for a different request",
+  IDEMPOTENCY_KEY_IN_FLIGHT: "That idempotency key is still being processed",
   RATE_LIMITED: "Too many requests",
   SERVICE_UNAVAILABLE: "The service is temporarily unavailable",
   SMART_LINK_NOT_FOUND: "That link is no longer available",
@@ -60,6 +62,7 @@ const DETAIL_BY_CODE: Record<string, string> = {
   SESSION_EXPIRED: "Sign in again to continue.",
   IDEMPOTENCY_KEY_REQUIRED: "Send an Idempotency-Key header with this request.",
   IDEMPOTENCY_KEY_REUSED: "Use a new idempotency key, or repeat the original request unchanged.",
+  IDEMPOTENCY_KEY_IN_FLIGHT: "The first request with this key has not finished. Retry the identical request shortly to receive its response.",
   RATE_LIMITED: "Wait a moment and try again.",
   SERVICE_UNAVAILABLE: "Try again shortly.",
 };
