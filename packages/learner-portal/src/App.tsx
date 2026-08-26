@@ -1,11 +1,11 @@
-import * as Dialog from '@radix-ui/react-dialog';import {format} from 'date-fns';import {useEffect,useRef,useState,useSyncExternalStore} from 'react';import {apiRequest,ApiProblem} from './api.js';import type {Config} from './config.js';import {diagnostics} from './diagnostics.js';import {verifyLaunchDescriptor} from './descriptor.js';import {getErrorCopy} from './errors.js';import {acceptPlayerMessage} from './messages.js';import {installTabCloseClear,tokenStore,adminTokenStore} from './security.js';import {AdminWorkspace} from './admin.js';import {adminSignIn,adminSignInAgain,adminSignInIntent,completeAdminSignIn} from './admin-auth.js';
+import * as Dialog from '@radix-ui/react-dialog';import {format} from 'date-fns';import {useEffect,useRef,useState,useSyncExternalStore} from 'react';import {apiRequest,ApiProblem} from './api.js';import type {Config} from './config.js';import {diagnostics} from './diagnostics.js';import {verifyLaunchDescriptor} from './descriptor.js';import {fetchCatalogue,type CatalogueObject} from './catalogue.js';import {getErrorCopy} from './errors.js';import {acceptPlayerMessage} from './messages.js';import {installTabCloseClear,tokenStore,adminTokenStore} from './security.js';import {AdminWorkspace} from './admin.js';import {adminSignIn,adminSignInAgain,adminSignInIntent,completeAdminSignIn} from './admin-auth.js';
 import {allowsDevelopmentSignIn,environmentNotice,OidcClient,session as providerSession} from '@lorb/web-auth';
 /**
  * The notice a non-production portal carries, so a learner or a teacher can tell that the work they
  * are doing here is not the work of record. Production shows nothing.
  */
 export const environmentNoticeFor=environmentNotice;
-type ObjectRecord={object_id:string;repository_id:string;title?:string;status:string;active_package_version_id:string;active_object_version_id:string;description?:string;duration?:string;kind?:string};type Package={semver:string;sha256:string;delivery_profile:string};type Page='signin'|'catalogue'|'detail'|'launch'|'summary'|'error'|'admin';
+type ObjectRecord=CatalogueObject;type Package={semver:string;sha256:string;delivery_profile:string};type Page='signin'|'catalogue'|'detail'|'launch'|'summary'|'error'|'admin';
 const developmentIdentities=['learner-a','learner-b'];
 /**
  * A provider callback is completed once per document load.
@@ -20,7 +20,7 @@ const developmentIdentities=['learner-a','learner-b'];
 let callbackCompleted=false;
 export function App({config}: {config:Config}){const [page,setPage]=useState<Page>(tokenStore.get()?'catalogue':'signin');const [objects,setObjects]=useState<ObjectRecord[]>([]);const [selected,setSelected]=useState<ObjectRecord>();const [pkg,setPkg]=useState<Package>();const [launch,setLaunch]=useState<{player_url:string;signed_descriptor:string;correlation_id:string}>();const [notice,setNotice]=useState('');const [summary,setSummary]=useState<{complete:boolean;at:string;correlation:string;unsaved?:boolean}>();const [problem,setProblem]=useState<{code:string;correlation:string;recoverable:boolean}>();const [sessionEnd,setSessionEnd]=useState('');const [leak,setLeak]=useState(false);const frame=useRef<HTMLIFrameElement>(null);
  useEffect(()=>installTabCloseClear(),[]);useEffect(()=>{if(location.hash.startsWith('#/launch')&&!launch){setPage(tokenStore.get()?'catalogue':'signin');setNotice('Launch links cannot be reopened. Choose the activity from the catalogue.')}},[]);
- const load=async()=>{try{const repos=await apiRequest<{items:{repository_id:string}[]}>(config,'repositories',{},()=>setLeak(true));if(repos.items[0]){const data=await apiRequest<{items:ObjectRecord[]}>(config,`learning-objects?repository_id=${encodeURIComponent(repos.items[0].repository_id)}`,{},()=>setLeak(true));setObjects(data.items)}}catch(e){showProblem(e)}};
+ const load=async()=>{try{setObjects(await fetchCatalogue(config,()=>setLeak(true)))}catch(e){showProblem(e)}};
  useEffect(()=>{if(page==='catalogue')void load()},[page]);
  function showProblem(error:unknown,recoverable=false){const e=error instanceof ApiProblem?error:new ApiProblem('UNKNOWN_ERROR',crypto.randomUUID());setProblem({code:e.code,correlation:e.correlationId,recoverable});setPage('error')}
  // Sign-in. A configured identity provider is the only way in wherever one exists; the development
