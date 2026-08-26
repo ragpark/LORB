@@ -143,6 +143,14 @@ The residual risk, stated rather than hidden: a `package_url` that redirects off
 first load carries the fragment to the redirect target, and the embedding page cannot detect that
 from inside the browser. `frame-src 'self'` closes it where the topology allows.
 
+A module may open its channel more than once, and the shell accepts the later `module.hello` rather
+than ignoring it. A framework that mounts, tears down and remounts its root closes the first port and
+sends a fresh hello; while the shell kept the first port it went on replying down a channel whose
+other end was closed, and the module waited for a context that could never arrive — no error, no
+console output, an activity that simply never started. Accepting the later hello is no weaker than
+accepting the first: every check still applies, and the launch nonce is what authenticates it, so a
+document that replaced the module in the same browsing context has already ended the session.
+
 The opaque origin reaches further than the module. A consumer that embeds the *shell* the same way —
 which the Learner Portal does — gives the shell an opaque origin too, so the shell's own calls also
 arrive as `Origin: null`. Every route a launch needs therefore accepts `"null"`: the key set, attempt

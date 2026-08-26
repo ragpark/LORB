@@ -75,7 +75,11 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # The workspace build includes three Vite SPAs, so it carries the same NODE_ENV exposure as the
+      # player bundle step below.
       - name: Build
+        env:
+          NODE_ENV: production
         run: pnpm build
 
       # The enforced anti-requirements, the Postgres persistence suite, evidence delivery, signing-key
@@ -102,7 +106,15 @@ jobs:
       # Built separately from `pnpm build`, which covers only the workspaces the Runtime API image
       # needs. These three produce the Player Shell origin's static bundles, so a break here means a
       # launch that cannot render even though everything above is green.
+      #
+      # NODE_ENV is set explicitly because the job-level `test` leaks into the bundler and Vite hands
+      # it straight to React, which treats anything that is not "production" as a development build.
+      # That ships a React with development-only behaviour in it — among them StrictMode's double
+      # mount — and a bundle nearly three times the size. What a deployment serves has to be built
+      # the way a deployment builds it.
       - name: Build player bundles
+        env:
+          NODE_ENV: production
         run: |
           pnpm --filter player-shell build
           pnpm --filter quiz-player build

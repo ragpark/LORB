@@ -61,6 +61,11 @@ RUN case "${VITE_ENVIRONMENT_LABEL}" in \
            || { echo "VITE_OIDC_ISSUER and VITE_OIDC_CLIENT_ID are required outside development" >&2; exit 1; }; \
        fi
 
+# Explicit, because Vite hands NODE_ENV straight to React and React treats anything that is not
+# "production" as a development build — development-only behaviour shipped to learners, in a
+# bundle nearly three times the size. Unset happens to mean production here; inherited does not.
+ENV NODE_ENV=production
+
 RUN pnpm --filter learner-portal build
 
 FROM nginx:1.27-alpine AS runtime

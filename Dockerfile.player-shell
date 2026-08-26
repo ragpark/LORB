@@ -13,6 +13,11 @@ COPY packages/example-react-xapi-experience ./packages/example-react-xapi-experi
 COPY packages/example-coaching-chatbot ./packages/example-coaching-chatbot
 COPY packages/quiz-player ./packages/quiz-player
 COPY tsconfig.json ./
+# Explicit, because Vite hands NODE_ENV straight to React and React treats anything that is not
+# "production" as a development build — development-only behaviour shipped to learners, in a
+# bundle nearly three times the size. Unset happens to mean production here; inherited does not.
+ENV NODE_ENV=production
+
 RUN pnpm --filter player-shell build
 RUN pnpm --filter example-react-xapi-experience build
 RUN pnpm --filter quiz-player build

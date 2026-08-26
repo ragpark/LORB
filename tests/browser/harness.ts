@@ -9,10 +9,10 @@
  * tokens in-process, so the suite generates the key pair itself and signs tokens with the stub issuer.
  */
 import { createReadStream, existsSync } from "node:fs";
-import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { join, normalize, resolve } from "node:path";
+import { dirname, join, normalize, resolve } from "node:path";
 import { generateKeyPair, type KeyLike } from "jose";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
 import { registerEvidenceRoutes } from "../../packages/evidence-api/src/app.js";
@@ -128,5 +128,9 @@ export async function startHarness(): Promise<Harness> {
 
 /** Writes a fixture page into the served root. Test-only; nothing here ships. */
 export async function addFixturePage(harness: Harness, path: string, html: string): Promise<void> {
-  await writeFile(join(harness.playerRoot, path), html, "utf8");
+  const file = join(harness.playerRoot, path);
+  // A fixture may sit under its own directory, because a module's package path is part of what is
+  // being tested and not every one of them lives at the root.
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, html, "utf8");
 }
