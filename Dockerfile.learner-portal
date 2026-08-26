@@ -30,6 +30,13 @@ ARG VITE_OIDC_REDIRECT_URI
 ARG VITE_OIDC_AUDIENCE
 ARG VITE_OIDC_SCOPE
 ARG VITE_ADMIN_API_BASE
+# The development sign-in, for a build with no identity provider. Undeclared here it could not
+# be set at all: Vite substitutes at build time, so a variable the image never receives leaves
+# the bundle holding its localhost default — which is what a deployed front end then tried to
+# reach, from the learner's own machine.
+ARG VITE_DEVELOPMENT_LOGIN_URL
+ARG VITE_DEVELOPMENT_IDENTITY_LOGIN_URL
+ARG VITE_DEVELOPMENT_IDENTITY_ISSUER
 
 ENV VITE_RUNTIME_API_BASE=${VITE_RUNTIME_API_BASE}
 ENV VITE_JWKS_URL=${VITE_JWKS_URL}
@@ -42,6 +49,9 @@ ENV VITE_OIDC_REDIRECT_URI=${VITE_OIDC_REDIRECT_URI}
 ENV VITE_OIDC_AUDIENCE=${VITE_OIDC_AUDIENCE}
 ENV VITE_OIDC_SCOPE=${VITE_OIDC_SCOPE}
 ENV VITE_ADMIN_API_BASE=${VITE_ADMIN_API_BASE}
+ENV VITE_DEVELOPMENT_LOGIN_URL=${VITE_DEVELOPMENT_LOGIN_URL}
+ENV VITE_DEVELOPMENT_IDENTITY_LOGIN_URL=${VITE_DEVELOPMENT_IDENTITY_LOGIN_URL}
+ENV VITE_DEVELOPMENT_IDENTITY_ISSUER=${VITE_DEVELOPMENT_IDENTITY_ISSUER}
 
 # The build refuses anything that would produce a portal nobody can trust: an unrecognised
 # environment, a missing integration endpoint, a wildcard shell origin, or — outside development —
@@ -59,6 +69,10 @@ RUN case "${VITE_ENVIRONMENT_LABEL}" in \
     && if [ "${VITE_ENVIRONMENT_LABEL}" != "DEVELOPMENT" ]; then \
            test -n "${VITE_OIDC_ISSUER}" && test -n "${VITE_OIDC_CLIENT_ID}" \
            || { echo "VITE_OIDC_ISSUER and VITE_OIDC_CLIENT_ID are required outside development" >&2; exit 1; }; \
+       fi \
+    && if [ "${VITE_ENVIRONMENT_LABEL}" != "DEVELOPMENT" ]; then \
+           test -z "${VITE_DEVELOPMENT_LOGIN_URL}" && test -z "${VITE_DEVELOPMENT_IDENTITY_LOGIN_URL}" \
+           || { echo "the development sign-in must not be built into a non-development image" >&2; exit 1; }; \
        fi
 
 # Explicit, because Vite hands NODE_ENV straight to React and React treats anything that is not

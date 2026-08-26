@@ -10,7 +10,9 @@ export interface Config {runtimeApiBase:string;adminApiBase:string;runtimeIssuer
 export function readConfig(env:ImportMetaEnv=import.meta.env):Config{
  const environment=environmentSchema.parse(env.VITE_ENVIRONMENT_LABEL??'DEVELOPMENT');
  const runtimeApiBase=env.VITE_RUNTIME_API_BASE?.trim()||'http://localhost:3000/api/v1/runtime';
- const runtimeIssuer=env.VITE_RUNTIME_ISSUER?.trim()||new URL(runtimeApiBase).origin;
+ // Derived, never configured separately: an issuer that can disagree with the API it belongs to is
+ // a setting whose only reachable states are 'correct' and 'subtly wrong'.
+ const runtimeIssuer=new URL(runtimeApiBase).origin;
  // Roster administration lives under a different path prefix from the learner-facing runtime routes.
  const adminApiBase=env.VITE_ADMIN_API_BASE?.trim()||`${new URL(runtimeApiBase).origin}/api/v1/admin`;
  const playerShellOrigin=env.VITE_PLAYER_SHELL_ORIGIN??'http://localhost:3200';

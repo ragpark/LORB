@@ -38,9 +38,17 @@ describe("learner portal deployment", () => {
     expect(dockerfile).toContain('required outside development');
   });
 
-  it("does not bake a development sign-in endpoint into the image", () => {
-    expect(dockerfile).not.toContain("ARG VITE_DEVELOPMENT_IDENTITY_LOGIN_URL");
-    expect(dockerfile).not.toContain("ARG VITE_DEVELOPMENT_LOGIN_URL");
+  // The development sign-in accepts a chosen subject, so a deployed portal carrying one has no
+  // authentication at all. It was previously kept out by refusing the build argument entirely — which
+  // also meant a development *deployment* could never sign in, because the bundle kept its localhost
+  // default and the browser tried to reach the learner's own machine. The endpoint is now settable
+  // and the ban moved to where the risk actually is: it must be empty unless the image is a
+  // development one, which is the same condition that already demands a real provider.
+  it("permits a development sign-in endpoint only in a development image", () => {
+    expect(dockerfile).toContain("ARG VITE_DEVELOPMENT_LOGIN_URL");
+    expect(dockerfile).toContain('test -z "${VITE_DEVELOPMENT_LOGIN_URL}"');
+    expect(dockerfile).toContain('test -z "${VITE_DEVELOPMENT_IDENTITY_LOGIN_URL}"');
+    expect(dockerfile).toContain("the development sign-in must not be built into a non-development image");
   });
 
   it("sets the response headers a static origin should always carry", () => {
@@ -52,6 +60,8 @@ describe("learner portal deployment", () => {
     expect(dockerfile).not.toContain("ARG VITE_RUNTIME_ISSUER");
     expect(dockerfile).not.toContain("ENV VITE_RUNTIME_ISSUER");
     expect(dockerfile).not.toContain('test -n "${VITE_RUNTIME_ISSUER}"');
+    // And the portal does not read one either, so the image and the code agree that it is derived.
+    expect(readFileSync("packages/learner-portal/src/config.ts", "utf8")).not.toContain("VITE_RUNTIME_ISSUER");
   });
 
   it("serves static output with health and SPA fallback routes", () => {

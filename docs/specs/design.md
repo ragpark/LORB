@@ -42,6 +42,23 @@ sitting in the database, which is precisely the artefact pseudonymisation is sup
 cost of the choice is real: results queries recompute, and rotating the tenant secret orphans every
 historical actor. Both are accepted deliberately.
 
+### The development sign-in
+
+A build with no provider configured falls back to a local sign-in that mints a token for whatever
+subject it is handed. That is not authentication, and it is confined by the same build-time check
+twice over: an image not labelled `DEVELOPMENT` must name a real provider, and must carry no
+development sign-in endpoint at all.
+
+The endpoint *is* a build argument, which it briefly was not. Refusing it outright looked stricter and
+was not: it left the localhost default compiled into every image, so a development deployment could
+not sign in at all — the browser tried to reach the developer's own machine — while doing nothing
+about the risk, which is a non-development image carrying a sign-as-anyone path. The ban now sits on
+that condition instead of on the argument.
+
+What this does not do is make a deployed development environment safe to put real people in. A
+development identity provider reachable on the internet is a way in for anyone who finds it,
+whether or not a front end offers the button. That is a property of choosing to deploy one.
+
 ## 3. Persistence, and why in-memory is refused
 
 Postgres is the system of record for attempts, launches, idempotency records, the evidence outbox,
