@@ -19,9 +19,11 @@ let revision=1;
 // entirely — it is a capability held by exactly two endpoints, so it needs no target origin at all and
 // cannot be listened to by any other document.
 //
-// `content_url` is derived here from the descriptor's own issuer and object id rather than carried as
-// a new descriptor claim, so content-driven packages (e.g. quiz-player) can fetch their JSON payload
-// without changing the launch descriptor contract. Modules that never handshake are unaffected.
+// `content_url` is derived here from the descriptor's own issuer, object id and object version rather
+// than carried as a new descriptor claim, so content-driven packages (e.g. quiz-player) can fetch
+// their JSON payload without changing the launch descriptor contract. Modules that never handshake
+// are unaffected. The object version is on the URL because content can be edited: it pins the fetch
+// to what this launch was issued against, so a learner mid-attempt keeps the questions they started.
 // Per-launch handshake secret. Placed in the iframe URL fragment, so only the document the shell
 // itself navigates to ever sees it.
 const handshakeNonce=crypto.randomUUID();
@@ -41,7 +43,7 @@ frame.addEventListener("load",()=>{
  endSession("MODULE_NAVIGATED","The learning activity left its packaged document.");
 });
 const envelope=(type:string,payload:Record<string,unknown>)=>({protocol:"lorb-player",version:"1.0",type,message_id:crypto.randomUUID(),correlation_id:descriptor?.correlation_id??crypto.randomUUID(),reply_to:null,sent_at:new Date().toISOString(),payload});
-function shellContextPayload(d:Descriptor){return {repository_id:d.repository_id,object_id:d.object_id,object_version_id:d.object_version_id,package_version_id:d.package_version_id,attempt_id:d.attempt_id,correlation_id:d.correlation_id,pseudonym:d.sub,content_url:`${d.iss.replace(/\/$/,"")}/api/v1/runtime/learning-objects/${d.object_id}/content`}}
+function shellContextPayload(d:Descriptor){return {repository_id:d.repository_id,object_id:d.object_id,object_version_id:d.object_version_id,package_version_id:d.package_version_id,attempt_id:d.attempt_id,correlation_id:d.correlation_id,pseudonym:d.sub,content_url:`${d.iss.replace(/\/$/,"")}/api/v1/runtime/learning-objects/${d.object_id}/content?object_version_id=${encodeURIComponent(d.object_version_id)}`}}
 async function request(url:string,method:string,body?:unknown){const response=await fetch(url,{method,headers:{authorization:`Bearer ${token()}`,'content-type':'application/json','idempotency-key':crypto.randomUUID()},body:body===undefined?undefined:JSON.stringify(body)});if(!response.ok)throw new Error(`Runtime request failed (${response.status})`);return response.json()}
 function token(){return decodeURIComponent(location.hash.match(/(?:^#|&)descriptor=([^&]+)/)?.[1]??"")}
 async function start(){try{const signed=token();if(!signed)throw new Error("Launch descriptor is missing");const unverified=JSON.parse(atob(signed.split('.')[1]!.replace(/-/g,'+').replace(/_/g,'/'))) as Descriptor;const jwks=createRemoteJWKSet(new URL(`${unverified.iss.replace(/\/$/,'')}/api/v1/runtime/jwks`));descriptor=(await jwtVerify(signed,jwks,{issuer:unverified.iss,audience:"lorb-player",algorithms:["ES256"]})).payload as unknown as Descriptor;awaitingInitialLoad=true;frame.src=`${descriptor.package_url}${descriptor.package_url.includes("#")?"&":"#"}${HANDSHAKE_FRAGMENT_KEY}=${handshakeNonce}`;status.textContent="Learning activity loaded"}catch(error){status.textContent="This activity could not be opened.";emit("experience.error",{code:"LAUNCH_INVALID",recoverable:false,detail:error instanceof Error?error.message:"Unknown error"})}}

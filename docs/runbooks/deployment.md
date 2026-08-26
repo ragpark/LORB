@@ -130,8 +130,9 @@ portal falling back to the local sign-in, which accepts any subject you name.
 
 ### 7. Register content
 
-A new catalogue is empty. Register the first learning object through the Publisher API, as an
-administrator:
+A new catalogue is empty. The Administration workspace does this on the Learning objects page — "New
+learning object" either authors a quiz or registers a packaged module. The same thing through the
+Publisher API directly, as an administrator:
 
 ```sh
 curl -X POST https://runtime.lorb.example/api/v1/publisher/learning-objects \
@@ -145,6 +146,24 @@ curl -X POST https://runtime.lorb.example/api/v1/publisher/learning-objects \
 Publishing a later version is `POST …/{objectId}/versions`. It never modifies the previous package
 version: it inserts a new immutable one and supersedes the old, so a descriptor that pinned the old
 version still describes what was actually delivered.
+
+The rest of the surface, all of it requiring an administrator token, an `idempotency-key` and
+membership of the object's repository:
+
+| Request | What it does |
+| --- | --- |
+| `GET …/learning-objects?repository_id=&status=` | The catalogue, filtered |
+| `GET …/learning-objects/{id}` | One object with its version chain |
+| `POST …/learning-objects/quizzes` | Authors a quiz — questions as data on the shared quiz player, never a bundle |
+| `PATCH …/learning-objects/{id}` | Edits title, description, duration, kind. Nothing a launch resolves to |
+| `GET …/learning-objects/{id}/content` | The authored questions, marking key included. Audited, never cached |
+| `PUT …/learning-objects/{id}/content` | Publishes new questions as a new content version; the superseded one stays readable |
+| `POST …/learning-objects/{id}/suspend` \| `/restore` | Takes an object out of the catalogue, and puts it back |
+| `POST …/learning-objects/{id}/retire` | Ends it. Does not reverse |
+| `DELETE …/learning-objects/{id}` | Removes it — refused for any object ever launched or assigned |
+
+Suspension, retirement and deletion also revoke the object's smart link: a withdrawn object must not
+stay reachable through a link that needs no sign-in.
 
 ## Deploying a new version
 

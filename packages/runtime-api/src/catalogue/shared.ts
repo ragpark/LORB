@@ -3,7 +3,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { quizContentSchema, type QuizContent, type QuizDraft } from "../../../contracts/src/index.js";
-import type { LearningObjectRow, PackageVersionRow, RegisteredQuiz } from "./types.js";
+import type { LearningObjectRow, ObjectContentRevision, PackageVersionRow, RegisteredQuiz } from "./types.js";
 
 /**
  * One fixed, already-reviewed player package version shared by every authored quiz. A quiz author —
@@ -75,6 +75,72 @@ export function buildQuizRegistration(
       content_version: content.content_version,
       question_count: draft.questions.length,
       title: draft.title,
+    },
+  };
+}
+
+/**
+ * The version an edit publishes next.
+ *
+ * Editing a quiz does not overwrite the version an attempt was launched against; it supersedes it,
+ * and a superseded version needs a successor whose identifier is larger than every one already
+ * issued. Taking the highest existing version rather than counting revisions means a catalogue that
+ * was published into by hand still gets a version nobody has used.
+ */
+export function nextMinorSemver(existing: string[]): string {
+  const parsed = existing
+    .map((value) => /^(\d+)\.(\d+)\.(\d+)$/.exec(value))
+    .filter((match): match is RegExpExecArray => match !== null)
+    .map((match) => [Number(match[1]), Number(match[2]), Number(match[3])] as const);
+  if (parsed.length === 0) return "1.0.0";
+  const highest = parsed.reduce((best, current) =>
+    current[0] !== best[0] ? (current[0] > best[0] ? current : best)
+      : current[1] !== best[1] ? (current[1] > best[1] ? current : best)
+        : current[2] > best[2] ? current : best);
+  return `${highest[0]}.${highest[1] + 1}.0`;
+}
+
+/** The content version an edit writes: the previous one incremented, starting at 1. */
+export function nextContentVersion(previous: string | undefined): string {
+  const numeric = Number.parseInt(previous ?? "0", 10);
+  return String((Number.isFinite(numeric) ? numeric : 0) + 1);
+}
+
+/**
+ * Builds the rows a quiz *edit* produces. The object keeps its identity — every assignment, smart
+ * link and class result already points at it — while the content, the content version and the object
+ * version are all new.
+ */
+export function buildQuizRevision(
+  object: LearningObjectRow,
+  draft: QuizDraft,
+  previousContentVersion: string | undefined,
+  existingSemvers: string[],
+): { content: QuizContent; revision: ObjectContentRevision; objectPatch: Pick<LearningObjectRow, "title" | "description" | "duration"> } {
+  const object_version_id = randomUUID();
+  const content_version = nextContentVersion(previousContentVersion);
+  const semver = nextMinorSemver(existingSemvers);
+  const content = quizContentSchema.parse({
+    ...draft,
+    object_id: object.object_id,
+    content_version,
+    created_at: new Date().toISOString(),
+  });
+  return {
+    content,
+    revision: {
+      object_id: object.object_id,
+      object_version_id,
+      package_version_id: QUIZ_PLAYER.package_version_id,
+      semver,
+      content_version,
+      question_count: draft.questions.length,
+      title: draft.title,
+    },
+    objectPatch: {
+      title: draft.title,
+      description: draft.description ?? object.description,
+      duration: `${Math.max(1, Math.round(draft.questions.length * 0.75))} minutes`,
     },
   };
 }

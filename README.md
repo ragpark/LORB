@@ -31,9 +31,14 @@ learning record store being reachable at that moment.
 audit trail, with separation of duties on the actions that warrant it: the database itself refuses a
 self-approval.
 
-**Publish.** Learning objects are registered and versioned through the Publisher API. Publishing a
-new version inserts a new immutable package version and supersedes the previous one; nothing is
-modified in place.
+**Publish.** Learning objects are registered, authored, edited, versioned and withdrawn through the
+Publisher API, and through the Administration workspace that sits on it. The line it draws is between
+what the catalogue *says* and what is *delivered*: a title, description, stated duration and kind are
+edited in place, while anything a launch resolves to is versioned. Publishing a new version — a
+package or a quiz's questions — inserts a new immutable version and supersedes the previous one;
+nothing is modified in place, so an attempt still describes what was actually delivered. Withdrawal
+goes suspend (reversible), retire (not), delete (refused outright for anything ever launched or
+assigned: evidence outlives the catalogue).
 
 ## Identity and pseudonymity
 
@@ -120,7 +125,8 @@ connector.
    than starting in a shape nobody would accept.
 5. Build the front ends. Each image refuses to build for a deployed environment with no identity
    provider configured, which is what stops one falling back to the local sign-in.
-6. Register content through the Publisher API. A new catalogue is empty.
+6. Register content — through the Administration workspace, or the Publisher API directly. A new
+   catalogue is empty.
 
 The included `railway.*.json` files describe one deployment on Railway; nothing in the images is
 specific to it.

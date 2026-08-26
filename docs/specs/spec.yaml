@@ -25,7 +25,7 @@ implementation_status:
   evidence_forwarder: IMPLEMENTED      # claim/retry/backoff/dead-letter, xAPI PUT with statementId
   player_shell: IMPLEMENTED            # sandboxed iframe, nonce-authenticated MessageChannel
   learner_portal: IMPLEMENTED
-  administration_workspace: IMPLEMENTED
+  administration_workspace: IMPLEMENTED # incl. catalogue authoring and CRUD over the Publisher API
   operations_console: IMPLEMENTED
   agent_connector: IMPLEMENTED         # OAuth resource server, roster scoped by explicit link
   persistence: POSTGRES                # system of record for every mutable surface
@@ -182,7 +182,7 @@ data_and_integration:
   api_surfaces:
     - {name: Runtime,        base: /api/v1/runtime,   auth: OIDC bearer,       status: IMPLEMENTED}
     - {name: Evidence,       base: /api/v1/evidence,  auth: launch descriptor, status: IMPLEMENTED}
-    - {name: Publisher,      base: /api/v1/publisher, auth: OIDC bearer + admin role, status: IMPLEMENTED}
+    - {name: Publisher,      base: /api/v1/publisher, auth: OIDC bearer + admin role + repository membership, status: IMPLEMENTED}
     - {name: Administration, base: /api/v1/admin,     auth: OIDC bearer + admin role, status: IMPLEMENTED}
     - {name: Internal,       base: /api/v1/internal,  auth: service credential, status: IMPLEMENTED}
     - {name: Integrator,     base: /api/v1/integrator, status: NOT_BUILT}
@@ -304,5 +304,16 @@ operator_prerequisites:
     decision: >
       Who may publish, and what review a package gets before it is published.
       The Publisher API enforces that a publisher is an authenticated
-      administrator and that a module path stays under the player origin. It does
-      not review content.
+      administrator with membership of the object's repository, and that a module
+      path stays under the player origin. It does not review content.
+
+      The surface is now a full lifecycle — register, author, edit, version,
+      suspend, restore, retire, delete — split along one line: catalogue metadata
+      (title, description, duration, kind) is edited in place, and anything a
+      launch resolves to is versioned. A content edit writes a new immutable
+      content version and supersedes the object version bound to the old one, so
+      evidence recorded against superseded questions still names content that
+      exists. Deletion is refused for any object with an attempt or an assignment
+      against it; those are retired. Held by
+      tests/runtime-api/publisher-authoring.spec.ts and
+      tests/runtime-api/publisher-authoring-postgres.spec.ts.

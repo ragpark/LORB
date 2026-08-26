@@ -4,12 +4,14 @@ import * as AlertDialog from '@radix-ui/react-alert-dialog';
 import * as Tabs from '@radix-ui/react-tabs';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { adminApiRequest, AdminApiError, diagnostics } from './lib/api-client.js';
+import { AdminApiError, diagnostics } from './lib/api-client.js';
+import { admin, errorMessage } from './lib/catalogue-api.js';
+import { AuditTab } from './audit.js';
+import { LearningObjectDetail, LearningObjectsView } from './learning-objects.js';
 import { session, signInForDevelopment, adminOidcClient, adoptProviderSession, installTabCloseClear } from './lib/auth.js';
 import { ENVIRONMENT_LABELS, environmentNotice, isEnvironmentLabel, session as providerSession } from '@lorb/web-auth';
 import { isSelfApproval } from './lib/separation-of-duties.js';
 
-const ADMIN_API_BASE = import.meta.env.VITE_ADMIN_API_BASE ?? 'http://localhost:3000/api/v1/admin';
 const DEVELOPMENT_LOGIN_URL = import.meta.env.VITE_DEVELOPMENT_LOGIN_URL ?? import.meta.env.VITE_DEVELOPMENT_IDENTITY_LOGIN_URL ?? 'http://localhost:4000/dev-login';
 const ENVIRONMENT = import.meta.env.VITE_ENVIRONMENT_LABEL ?? 'DEVELOPMENT';
 
@@ -20,18 +22,8 @@ const ENVIRONMENT = import.meta.env.VITE_ENVIRONMENT_LABEL ?? 'DEVELOPMENT';
  */
 export const ENVIRONMENT_NOTICE = isEnvironmentLabel(ENVIRONMENT) ? environmentNotice(ENVIRONMENT) : undefined;
 
-type Page = 'signin' | 'overview' | 'repositories' | 'repository-detail' | 'learning-objects' | 'players' | 'player-detail' | 'launch-policies' | 'launch-policy-detail' | 'audit' | 'approvals';
+type Page = 'signin' | 'overview' | 'repositories' | 'repository-detail' | 'learning-objects' | 'learning-object-detail' | 'players' | 'player-detail' | 'launch-policies' | 'launch-policy-detail' | 'audit' | 'approvals';
 type Row = Record<string, unknown>;
-
-function admin<T>(path: string, options?: Parameters<typeof adminApiRequest>[2]) {
-  return adminApiRequest<T>(ADMIN_API_BASE, path, options);
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof AdminApiError) return error.problem.detail || error.problem.title;
-  if (error instanceof Error) return error.message;
-  return 'The request failed.';
-}
 
 function GovernanceNote() {
   return (
@@ -229,20 +221,6 @@ function ApprovalRequiredButton({ label, onRequested, action }: { label: string;
   );
 }
 
-function AuditTab({ targetType, targetId }: { targetType: string; targetId: string }) {
-  const records = useQuery({ queryKey: ['audit-records', targetType, targetId], queryFn: () => admin<{ items: Row[] }>(`audit-records?target_type=${targetType}&target_id=${targetId}`) });
-  return (
-    <ul className="list">
-      {(records.data?.items ?? []).map((row) => (
-        <li key={String(row.audit_id)}>
-          <span className="mono">{String(row.action_type)}</span> — <span className={`outcome outcome-${String(row.outcome).toLowerCase()}`}>{String(row.outcome)}</span> — {String(row.created_at)}
-        </li>
-      ))}
-      {!records.data?.items.length && <li>No audit records yet.</li>}
-    </ul>
-  );
-}
-
 function RepositoryDetail({ repositoryId, onRequested }: { repositoryId: string; onRequested: (id: string) => void }) {
   const repo = useQuery({ queryKey: ['repository', repositoryId], queryFn: () => admin<Row>(`repositories/${repositoryId}`) });
   const memberships = useQuery({ queryKey: ['memberships', repositoryId], queryFn: () => admin<{ items: Row[] }>(`repositories/${repositoryId}/memberships`) });
@@ -314,95 +292,6 @@ function RepositoryDetail({ repositoryId, onRequested }: { repositoryId: string;
           <AuditTab targetType="repository" targetId={repositoryId} />
         </Tabs.Content>
       </Tabs.Root>
-    </section>
-  );
-}
-
-type SmartLink = { smart_link_id: string; object_id: string; token: string; url: string; created_at: string; revoked_at: string | null };
-
-function LearningObjectSmartLink({ objectId }: { objectId: string }) {
-  const queryClient = useQueryClient();
-  const [copied, setCopied] = useState(false);
-  const [error, setError] = useState('');
-  const link = useQuery({
-    queryKey: ['smart-link', objectId],
-    queryFn: async (): Promise<SmartLink | null> => {
-      try {
-        return await admin<SmartLink>(`learning-objects/${objectId}/smart-link`);
-      } catch (e) {
-        if (e instanceof AdminApiError && e.problem.code === 'SMART_LINK_NOT_FOUND') return null;
-        throw e;
-      }
-    },
-  });
-  const copy = async () => {
-    setError('');
-    setCopied(false);
-    try {
-      const result = await admin<SmartLink>(`learning-objects/${objectId}/smart-link`, { method: 'POST' });
-      await navigator.clipboard.writeText(result.url);
-      setCopied(true);
-      void queryClient.invalidateQueries({ queryKey: ['smart-link', objectId] });
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  };
-  const revoke = async () => {
-    setError('');
-    setCopied(false);
-    try {
-      await admin(`learning-objects/${objectId}/smart-link/revoke`, { method: 'POST' });
-      void queryClient.invalidateQueries({ queryKey: ['smart-link', objectId] });
-    } catch (e) {
-      setError(errorMessage(e));
-    }
-  };
-  return (
-    <p className="mono small">
-      <button onClick={() => void copy()}>{link.data ? 'Copy smart link' : 'Create smart link'}</button>{' '}
-      {link.data && (
-        <button onClick={() => void revoke()}>Revoke</button>
-      )}
-      {link.data && <span> {link.data.url}</span>}
-      {copied && <span role="status"> Copied to clipboard.</span>}
-      {error && <span role="alert" className="error-text"> {error}</span>}
-    </p>
-  );
-}
-
-function LearningObjectsView() {
-  const objects = useQuery({ queryKey: ['learning-objects'], queryFn: () => admin<{ items: Row[] }>('learning-objects') });
-  return (
-    <section>
-      <h1>Learning objects</h1>
-      <p className="governance-note">
-        Read-only projection of the non-production content catalogue. Content authoring is out of scope for this administration workspace. A smart link lets a
-        learner open a published learning object directly in the Player Shell without a consumer or IES login — it is pseudonymous per browser, not tied to a
-        real identity, so it must not be used where a real identity is required downstream.
-      </p>
-      <ul className="list">
-        {(objects.data?.items ?? []).map((row) => {
-          const pkg = row.package_version as Row | undefined;
-          return (
-            <li key={String(row.object_id)} className="version-card">
-              <p>
-                <strong>{String(row.title ?? 'Untitled learning activity')}</strong> <span className="status-badge">{String(row.status)}</span>
-              </p>
-              <p className="mono small">
-                {String(row.kind)} · {String(row.duration ?? 'duration not stated')}
-              </p>
-              <p>{String(row.description ?? '')}</p>
-              {pkg && (
-                <p className="mono small">
-                  Active package: <span className="mono">{String(pkg.semver)}</span> — <span className="status-badge">{String(pkg.status)}</span>
-                </p>
-              )}
-              {row.status === 'PUBLISHED' && <LearningObjectSmartLink objectId={String(row.object_id)} />}
-            </li>
-          );
-        })}
-        {!objects.data?.items.length && <li>No learning objects returned.</li>}
-      </ul>
     </section>
   );
 }
@@ -914,6 +803,15 @@ export function App() {
   const [signInError, setSignInError] = useState('');
   useEffect(() => installTabCloseClear(), []);
 
+  // A deep link from the Operations Console: that console reads the catalogue and does not edit it,
+  // so an operator who finds something wrong there arrives here already pointed at the record.
+  useEffect(() => {
+    const match = /^#learning-object\/([0-9a-fA-F-]{36})$/.exec(window.location.hash);
+    if (!match || !session.getToken()) return;
+    setSelectedId(match[1]!);
+    setPage('learning-object-detail');
+  }, []);
+
   // Completes a provider redirect if this load is one. Called unconditionally: the client reports
   // false when the URL is not a callback, so there is nothing to branch on before asking.
   useEffect(() => {
@@ -998,7 +896,8 @@ export function App() {
             {page === 'overview' && <Overview navigate={setPage} />}
             {page === 'repositories' && <RepositoriesView onOpen={(id) => navigateAndOpen('repository-detail', id)} />}
             {page === 'repository-detail' && <RepositoryDetail repositoryId={selectedId} onRequested={setLastApprovalRequestId} />}
-            {page === 'learning-objects' && <LearningObjectsView />}
+            {page === 'learning-objects' && <LearningObjectsView onOpen={(id) => navigateAndOpen('learning-object-detail', id)} />}
+            {page === 'learning-object-detail' && <LearningObjectDetail objectId={selectedId} onClosed={() => setPage('learning-objects')} />}
             {page === 'players' && <PlayersView onOpen={(id) => navigateAndOpen('player-detail', id)} />}
             {page === 'player-detail' && <PlayerDetail playerId={selectedId} onRequested={setLastApprovalRequestId} />}
             {page === 'launch-policies' && <LaunchPoliciesView onOpen={(id) => navigateAndOpen('launch-policy-detail', id)} />}
