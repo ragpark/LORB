@@ -222,6 +222,15 @@ front ends will request. Then, on that API:
 - Settings → Token Expiration — 24 hours (86400) is the default and is fine; the portal renews early.
 - RBAC → **Enable RBAC** and **Add Permissions in the Access Token** if you intend to use scopes
   later. Neither is required for the role check below, which reads a claim rather than a scope.
+- **Permissions** → add `lorb.teacher` (any description), then Settings → **Default Permissions for
+  Third-Party Applications** → *Authorized for User-Delegated Access*. This is A2–A3 again, applied
+  to this API: a tenant that serves third-party clients (Part A) can treat the SPA applications the
+  same way, and an application with no grant is refused at the authorize step, before any login
+  screen. If the option is missing or does not clear it, mark the three applications first-party
+  via the Management API instead: `PATCH /api/v2/clients/{client_id}` with `{"is_first_party": true}`.
+
+*Symptom if skipped:* `invalid_request: Client "…" is not authorized to access resource server
+"lorb-runtime"` in the redirect back to the front end.
 
 ### B2. Emit the role claim
 
