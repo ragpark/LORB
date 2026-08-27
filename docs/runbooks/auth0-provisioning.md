@@ -222,12 +222,15 @@ front ends will request. Then, on that API:
 - Settings → Token Expiration — 24 hours (86400) is the default and is fine; the portal renews early.
 - RBAC → **Enable RBAC** and **Add Permissions in the Access Token** if you intend to use scopes
   later. Neither is required for the role check below, which reads a claim rather than a scope.
-- **Permissions** → add `lorb.teacher` (any description), then Settings → **Default Permissions for
-  Third-Party Applications** → *Authorized for User-Delegated Access*. This is A2–A3 again, applied
-  to this API: a tenant that serves third-party clients (Part A) can treat the SPA applications the
-  same way, and an application with no grant is refused at the authorize step, before any login
-  screen. If the option is missing or does not clear it, mark the three applications first-party
-  via the Management API instead: `PATCH /api/v2/clients/{client_id}` with `{"is_first_party": true}`.
+- In a tenant that serves third-party clients (Part A), the SPA applications can end up treated as
+  third-party too, and an application with no grant on this API is refused at the authorize step.
+  The fix is to mark the three SPA applications first-party via the Management API —
+  `PATCH /api/v2/clients/{client_id}` with `{"is_first_party": true}` for each — after creating
+  them in B3. Do **not** clear it by setting this API's *Default Permissions for Third-Party
+  Applications*: A5 leaves dynamic client registration open to anyone, so that API-wide default
+  would authorise an arbitrary attacker-registered client for `lorb-runtime`, and a teacher who
+  completed such a client's flow would hand it a token B2 has stamped with the admin role. The
+  connector's own API keeps its A3 grant; this one must not get one.
 
 *Symptom if skipped:* `invalid_request: Client "…" is not authorized to access resource server
 "lorb-runtime"` in the redirect back to the front end.
