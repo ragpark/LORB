@@ -39,7 +39,11 @@ describe('Operations Console enforcement controls',()=>{
  it('9 restarts sign-in on an expired session, at most once',()=>{expect(api).toContain("['AUTHENTICATION_EXPIRED','SESSION_EXPIRED']");expect(api).toContain('expireSession');expect(api).toContain("sessionStorage.getItem('lorb_auth_bounced')");expect(api).toContain('window.location.assign(window.location.origin)');expect(api).not.toContain('VITE_DEVELOPMENT_IDENTITY_LOGIN_URL')});
  // The provider client's in-memory session must be copied into the token every request reads, or a
  // deployed console completes sign-in and then sends every request unauthenticated.
- it('9a adopts the provider session after a completed sign-in',()=>{expect(app).toContain('providerSession');expect(app).toMatch(/completeSignIn\(\)\)\{const token=providerSession\.token;if\(token&&!cancelled\)session\.set\(token\)/)});
+ it('9a adopts the provider session after a completed sign-in',()=>{expect(app).toContain('providerSession');expect(app).toMatch(/await callbackCompletion\)\{const token=providerSession\.token;if\(token\)session\.set\(token\)/)});
+ // StrictMode mounts the application twice and the PKCE handshake can be used once, so the two
+ // mounts must share one completion rather than the second redirecting away from the first's
+ // exchange. Queries wait for a session so pre-sign-in 401s cannot masquerade as expiry.
+ it('9b completes the provider callback once per document load and gates queries on a session',()=>{expect(app).toContain('callbackCompletion??=oidc.completeSignIn()');expect(app).toMatch(/let callbackCompletion:Promise<boolean>\|undefined/);expect(app).toContain('retry:false,enabled');expect(api).toContain('hadToken&&')});
  it('10 does not use unsafe HTML rendering',()=>expect(app).not.toContain(['dangerously','SetInnerHTML'].join('')));
  it('11 has no wildcard messaging or CORS patterns',()=>{expect(app).not.toMatch(/window\.open\(['"]\*/);expect(app).not.toContain("postMessage('*'");expect(app).not.toContain('Access-Control-Allow-Origin: *')});
  it('12 stores tokens only for the session',()=>{expect(api).toContain('sessionStorage');expect(api).not.toContain(['local','Storage'].join(''))});
@@ -48,5 +52,5 @@ describe('Operations Console enforcement controls',()=>{
  it('15 delegates focus trapping, restoration and Escape to Radix Dialog',()=>{expect(app).toContain('<Dialog.Content');expect(app).toContain('<Dialog.Close>')});
  it('joins resource paths without dropping the runtime path segment',()=>expect(apiUrl('https://runtime.example/api/v1/runtime','repositories').href).toBe('https://runtime.example/api/v1/runtime/repositories'));
  it('permits approved display and pseudonym projections but blocks identifying fields',()=>{expect(containsSensitiveField({display_name:'Synthetic repository',pseudonymous_subject_id:'psn_123'})).toBe(false);expect(containsSensitiveField({name:'Person',subject:'raw'})).toBe(true)});
- it('loads live projections rather than bundled seed records',()=>{expect(app).toContain("useProjection('repositories','repositories')");expect(app).not.toContain('repo_01HZX6T8N9')});
+ it('loads live projections rather than bundled seed records',()=>{expect(app).toContain("useProjection('repositories','repositories',authed)");expect(app).not.toContain('repo_01HZX6T8N9')});
 });
