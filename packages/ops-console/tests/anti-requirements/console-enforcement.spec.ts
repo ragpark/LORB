@@ -18,6 +18,9 @@ describe('Operations Console enforcement controls',()=>{
  // a banner that is always on stops being read.
  it('1 places the environment notice before the first interactive skip link',()=>expect(app.indexOf('className="environment-notice"')).toBeLessThan(app.indexOf('className="skip"')));
  it('2 allows only the known environment labels and visibly fails otherwise',()=>{expect(app).toContain('ENVIRONMENT_LABELS.includes');expect(app).toContain('Environment configuration error')});
+ // A deployed build with no identity provider must refuse to open, not render a console whose
+ // every request fails with a 401 the operator cannot act on.
+ it('2e refuses a non-development build without an identity provider',()=>{expect(app).toContain('!oidc&&!allowsDevelopmentSignIn(env as never)');expect(app).toContain('requires an identity provider')});
  it('2a shows no notice in production and names the environment otherwise',()=>{expect(environmentNotice('PRODUCTION')).toBeUndefined();expect(environmentNotice('STAGING')).toMatch(/Staging/);expect(environmentNotice('DEVELOPMENT')).toMatch(/Development/)});
  // The development login must be reachable only from a development build. A deployed console that
  // could POST a subject string to a login endpoint would have no authentication worth the name.
@@ -30,7 +33,13 @@ describe('Operations Console enforcement controls',()=>{
  it('6 attaches an Idempotency-Key to state-changing requests',()=>expect(api).toContain("method!=='GET'&&!headers['Idempotency-Key']"));
  it('7 fixes launch mode and en-GB locale',()=>{expect(app).toContain('disabled value="embedded-iframe"');expect(app).toContain('value="en-GB" readOnly')});
  it('8 preserves statement provenance in replay contracts',()=>{const evidence=readFileSync(new URL('../../../evidence-api/src/app.ts',import.meta.url),'utf8');expect(evidence).toContain('store.requeueStatement(request.params.outboxId, statementId)')});
- it('9 redirects expired sessions to stub sign-in',()=>expect(api).toContain("['AUTHENTICATION_EXPIRED','SESSION_EXPIRED']"));
+ // An expired session restarts sign-in at the console's own origin — never at a route this
+ // application does not serve — and bounces at most once, so an unauthorised operator sees the
+ // error instead of a reload loop.
+ it('9 restarts sign-in on an expired session, at most once',()=>{expect(api).toContain("['AUTHENTICATION_EXPIRED','SESSION_EXPIRED']");expect(api).toContain('expireSession');expect(api).toContain("sessionStorage.getItem('lorb_auth_bounced')");expect(api).toContain('window.location.assign(window.location.origin)');expect(api).not.toContain('VITE_DEVELOPMENT_IDENTITY_LOGIN_URL')});
+ // The provider client's in-memory session must be copied into the token every request reads, or a
+ // deployed console completes sign-in and then sends every request unauthenticated.
+ it('9a adopts the provider session after a completed sign-in',()=>{expect(app).toContain('providerSession');expect(app).toMatch(/completeSignIn\(\)\)\{const token=providerSession\.token;if\(token&&!cancelled\)session\.set\(token\)/)});
  it('10 does not use unsafe HTML rendering',()=>expect(app).not.toContain(['dangerously','SetInnerHTML'].join('')));
  it('11 has no wildcard messaging or CORS patterns',()=>{expect(app).not.toMatch(/window\.open\(['"]\*/);expect(app).not.toContain("postMessage('*'");expect(app).not.toContain('Access-Control-Allow-Origin: *')});
  it('12 stores tokens only for the session',()=>{expect(api).toContain('sessionStorage');expect(api).not.toContain(['local','Storage'].join(''))});

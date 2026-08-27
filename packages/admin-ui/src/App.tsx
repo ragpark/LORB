@@ -9,7 +9,7 @@ import { admin, errorMessage } from './lib/catalogue-api.js';
 import { AuditTab } from './audit.js';
 import { LearningObjectDetail, LearningObjectsView } from './learning-objects.js';
 import { session, signInForDevelopment, adminOidcClient, adoptProviderSession, installTabCloseClear } from './lib/auth.js';
-import { ENVIRONMENT_LABELS, environmentNotice, isEnvironmentLabel, session as providerSession } from '@lorb/web-auth';
+import { allowsDevelopmentSignIn, ENVIRONMENT_LABELS, environmentNotice, isEnvironmentLabel, session as providerSession } from '@lorb/web-auth';
 import { isSelfApproval } from './lib/separation-of-duties.js';
 
 const DEVELOPMENT_LOGIN_URL = import.meta.env.VITE_DEVELOPMENT_LOGIN_URL ?? import.meta.env.VITE_DEVELOPMENT_IDENTITY_LOGIN_URL ?? 'http://localhost:4000/dev-login';
@@ -833,6 +833,17 @@ export function App() {
       <main className="fatal">
         <h1>Environment configuration error</h1>
         <p>VITE_ENVIRONMENT_LABEL must be one of {ENVIRONMENT_LABELS.join(', ')}.</p>
+      </main>
+    );
+  }
+
+  // Outside development the identity provider is the only way in, so a build without one is a
+  // misconfiguration to refuse loudly — not a workspace that renders and then fails every request.
+  if (!allowsDevelopmentSignIn(ENVIRONMENT as never) && !adminOidcClient()) {
+    return (
+      <main className="fatal">
+        <h1>Environment configuration error</h1>
+        <p>This environment requires an identity provider: set VITE_OIDC_ISSUER and VITE_OIDC_CLIENT_ID.</p>
       </main>
     );
   }

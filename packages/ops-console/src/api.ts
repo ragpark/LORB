@@ -2,7 +2,12 @@ import { nanoid } from 'nanoid';
 import { containsSensitiveField,redactHeaders,SuspectedLeakError } from './security.js';
 export type Diagnostic={direction:'outbound'|'inbound';method:string;url:string;correlationId:string;status?:number;duration?:number;headers?:Record<string,string>;errorCode?:string};
 const log:Diagnostic[]=[]; export const diagnostics=()=>[...log];
-export const session={get:()=>sessionStorage.getItem('lorb_stub_token'),set:(token:string)=>sessionStorage.setItem('lorb_stub_token',token),clear:()=>sessionStorage.removeItem('lorb_stub_token')};
+export const session={get:()=>sessionStorage.getItem('lorb_stub_token'),set:(token:string)=>{sessionStorage.setItem('lorb_stub_token',token);sessionStorage.removeItem('lorb_auth_bounced')},clear:()=>sessionStorage.removeItem('lorb_stub_token')};
+// An expired session restarts sign-in by reloading the console at its own origin, where the sign-in
+// effect goes back to the configured provider — or the development login — rather than to a route
+// this application does not serve. The one-shot flag stops a console that comes back still
+// unauthorised from reloading itself forever; a successful sign-in clears it.
+function expireSession(){session.clear();if(sessionStorage.getItem('lorb_auth_bounced'))return;sessionStorage.setItem('lorb_auth_bounced','1');window.location.assign(window.location.origin)}
 export type ApiProblem={code:string;title:string;detail:string;retryable:boolean;correlation_id:string;field_errors:unknown[]};
 export function apiUrl(base:string,path:string){return new URL(path.replace(/^\/+/,''),`${base.replace(/\/+$/,'')}/`)}
 type ApiRequestOptions=RequestInit&{discardResponseFields?:string[]};
@@ -17,6 +22,6 @@ export async function apiRequest<T>(base:string,path:string,options:ApiRequestOp
  data=discardFields(data,new Set(discardResponseFields));
  log.push({direction:'inbound',method,url:url.toString(),correlationId,status:response.status,duration:performance.now()-start,errorCode:response.ok?undefined:(data as ApiProblem).code}); if(log.length>100)log.splice(0,log.length-100);
  if(containsSensitiveField(data)) throw new SuspectedLeakError();
- if(!response.ok){const problem=data as ApiProblem;if(['AUTHENTICATION_EXPIRED','SESSION_EXPIRED'].includes(problem.code)) window.location.assign(import.meta.env.VITE_DEVELOPMENT_IDENTITY_LOGIN_URL??'/sign-in');throw problem;}
+ if(!response.ok){const problem=data as ApiProblem;if(['AUTHENTICATION_EXPIRED','SESSION_EXPIRED'].includes(problem.code)) expireSession();throw problem;}
  return data as T;
 }

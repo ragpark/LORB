@@ -289,7 +289,8 @@ describe("MCP agent connector", () => {
     }
 
     // Every quiz reuses the one fixed, already-reviewed player package version.
-    const object = (await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/learning-objects/${objectId}` })).json();
+    const readerToken = await issueIesToken(iesPrivateKey as any, "smoke-catalogue-reader");
+    const object = (await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/learning-objects/${objectId}`, headers: { authorization: `Bearer ${readerToken}` } })).json();
     expect(object.active_package_version_id).toBe("5cbe1b8a-2f2a-4a5c-9f8b-6d1c0a7e4b21");
     expect(object.module_path).toBe("/modules/quiz-player/index.html");
     await client.close();

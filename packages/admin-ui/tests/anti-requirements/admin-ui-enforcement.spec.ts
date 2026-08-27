@@ -40,6 +40,13 @@ describe('Administration workspace enforcement controls', () => {
     expect(app).toContain('Environment configuration error');
   });
 
+  // A deployed build with no identity provider must refuse to open, not render a workspace whose
+  // every request fails with a 401 the administrator cannot act on.
+  it('2b refuses a non-development build without an identity provider', () => {
+    expect(app).toContain('!allowsDevelopmentSignIn(ENVIRONMENT as never) && !adminOidcClient()');
+    expect(app).toContain('requires an identity provider');
+  });
+
   it('2a shows no environment notice in production', () => {
     expect(environmentNotice('PRODUCTION')).toBeUndefined();
     expect(environmentNotice('STAGING')).toBeTruthy();
