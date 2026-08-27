@@ -15,7 +15,8 @@
     "db:setup:production": "node dist/packages/runtime-api/src/db/setup.js",
     "keys:generate": "tsx packages/runtime-api/src/cli/keygen.ts",
     "dev:identity": "tsx packages/dev-identity/src/server.ts",
-    "dev:lrs": "tsx packages/dev-lrs/src/server.ts"
+    "dev:lrs": "tsx packages/dev-lrs/src/server.ts",
+    "serve:lrs": "tsx packages/lrs/src/server.ts"
   },
   "engines": {
     "node": "20.x"

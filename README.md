@@ -27,6 +27,13 @@ A worker delivers from that outbox to the learning record store with retry, back
 dead-lettering — acceptance and delivery are separated so a learner's work never depends on the
 learning record store being reachable at that moment.
 
+**Retain.** The learning record store is the durable end of that trail, and the platform ships one
+(`packages/lrs`) rather than assuming you have bought one. It speaks the xAPI statements resource, so
+`LRS_ENDPOINT` can point at it or at a commercial store without either side knowing the difference.
+A statement is immutable once accepted — enforced by a database trigger — a redelivery is a no-op,
+and an actor that identifies a person is refused, because the evidence chain is pseudonymous by
+construction and a record store is where that would leak.
+
 **Administer.** Repositories, memberships, players, launch policies, class rosters and an append-only
 audit trail, with separation of duties on the actions that warrant it: the database itself refuses a
 self-approval.
@@ -69,7 +76,7 @@ identity provider ──▶ learner portal ──▶ Runtime API ──▶ launc
                               evidence forwarder ◀── outbox ◀── Evidence API
                                               │
                                               ▼
-                                    learning record store
+                                    learning record store  (packages/lrs, or your own)
 ```
 
 | Service | Package | Notes |
@@ -81,6 +88,7 @@ identity provider ──▶ learner portal ──▶ Runtime API ──▶ launc
 | Learner portal | `packages/learner-portal` | Catalogue, launch, and the teacher-facing roster area |
 | Administration workspace | `packages/admin-ui` | Repositories, players, policies, approvals, audit |
 | Operations console | `packages/ops-console` | Read-only operational projections and a test launcher |
+| Learning record store | `packages/lrs` | The durable end of the evidence trail: xAPI statements, stored immutably |
 | Agent connector | `packages/mcp-connector` | A remote MCP server for a teacher's assistant |
 | Web sign-in | `packages/web-auth` | Authorization code with PKCE, shared by the three front ends |
 

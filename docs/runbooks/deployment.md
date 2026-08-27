@@ -128,6 +128,42 @@ the shell origin allow-list is empty or contains a wildcard; or if the label is 
 `DEVELOPMENT` and no identity provider is configured. That last check is what stops a deployed
 portal falling back to the local sign-in, which accepts any subject you name.
 
+### 6a. Deploy the learning record store
+
+`LRS_ENDPOINT` may point at a commercial learning record store or at the one this platform ships
+(`packages/lrs`, `Dockerfile.lrs`, `railway.lrs.json`). Deploy it before the Runtime API: the Runtime
+refuses to start without a reachable endpoint configured, and the forwarder will queue rather than
+lose anything if the store is briefly unavailable afterwards.
+
+```
+LRS_DATABASE_URL=…                        # or DATABASE_URL; required in production
+LRS_ACCEPTED_BEARER_TOKENS=…              # or LRS_ACCEPTED_BASIC_CREDENTIALS; at least one required
+```
+
+Then point the Runtime API at it — `LRS_ENDPOINT` is the origin, and the service appends
+`/statements` itself — with `LRS_BEARER_TOKEN` set to one of the tokens the store accepts. Confirm
+the two agree before trusting it:
+
+```sh
+curl -s https://lrs.example/about                       # {"version":["1.0.3"]}
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -X PUT "https://lrs.example/statements?statementId=$(uuidgen)" \
+  -H "authorization: Bearer $LRS_BEARER_TOKEN" \
+  -H 'content-type: application/json' -H 'x-experience-api-version: 1.0.3' \
+  -d '{"actor":{"objectType":"Agent","account":{"homePage":"https://lorb.example/pseudonym","name":"'"$(printf '0%.0s' {1..64})"'"}},
+       "verb":{"id":"http://adlnet.gov/expapi/verbs/completed"},
+       "object":{"id":"https://lorb.example/activities/smoke","objectType":"Activity"}}'
+# 204 stored · 204 again on a repeat · 409 if a different statement holds that id · 401 if the token is wrong
+```
+
+Both credential settings are lists. To rotate the forwarder's token, add the new one to
+`LRS_ACCEPTED_BEARER_TOKENS` alongside the old, change `LRS_BEARER_TOKEN` on the Runtime API, then
+drop the old one — in that order, so no delivery falls between the two changes.
+
+The store refuses a statement whose actor carries an `mbox`, `openid`, `mbox_sha1sum` or display
+name. If a deployment genuinely receives identified statements from elsewhere, that is a deliberate
+`LRS_REQUIRE_PSEUDONYMOUS_ACTOR=false`, not a default to drift into.
+
 ### 7. Register content
 
 A new catalogue is empty. The Administration workspace does this on the Learning objects page — "New
