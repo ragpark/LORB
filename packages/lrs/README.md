@@ -18,6 +18,14 @@ xAPI 1.0.3, the statements resource:
 | `POST /statements` | Stores one statement or a batch; answers `200` with the ids |
 | `GET /statements?statementId=…` | One statement, voided or not |
 | `GET /statements?…` | A filtered page: `agent`, `verb`, `activity`, `registration`, `since`, `until`, `limit`, `ascending`, plus `attempt_id` and `repository_id`, which are not xAPI and are the two questions an operator actually asks. Answers `{statements, more}` |
+
+`agent` takes a JSON-encoded xAPI Agent, and this store's actors are account pseudonyms, so the
+filter is that account's name. A bare pseudonym is accepted too, because it is what the platform's
+own tools pass. An Agent identified by `mbox` or `openid` matches nothing rather than everything:
+there is no statement here it could be about.
+
+Every statement served carries a `stored` assigned by this store, whatever the sender said — xAPI
+reserves that field for the store, and provenance that a sender can set is not provenance.
 | `GET /about` | The version it speaks. Unauthenticated, per the specification |
 | `GET /health`, `GET /ready` | Liveness, and readiness including the database |
 
@@ -29,8 +37,18 @@ the state, agent-profile and activity-profile resources. Nothing in this platfor
 **A statement that would overwrite one already stored.** xAPI makes the statement id the
 deduplication key. A redelivery of the same statement is a no-op — which is exactly what makes the
 forwarder's retry safe — and a *different* statement under a taken id is a `409` rather than a
-silent overwrite. The comparison is a digest of the statement with `stored` and the id excluded, so
-key order and the store's own clock cannot make an identical redelivery look like a conflict.
+silent overwrite.
+
+The comparison is a digest of the statement *as it arrived*, with the top-level `id` and `stored`
+excluded and nothing else. Digesting what is stored instead would break idempotency for a statement
+that carries no `timestamp`, because this store fills one in from its own clock and the same request
+would get a new identity every time it was sent. And excluding `stored` at every depth rather than
+at the top would collapse two genuinely different statements whose telemetry happens to use that
+word — reported as a duplicate, with the first silently kept.
+
+A batch on `POST` is written in one transaction. Stopping at the first conflict and keeping what came
+before it leaves the sender unable to tell which half landed, and — for entries it supplied no id
+for — with statements stored under ids it was never told.
 
 **An actor that identifies a person.** LORB's evidence is pseudonymous by construction: the actor on
 every statement is an HMAC, and the mapping back to a learner is never stored. A record store that
@@ -39,7 +57,12 @@ that chain leaks. On by default; `LRS_REQUIRE_PSEUDONYMOUS_ACTOR=false` turns it
 that genuinely receives identified statements from elsewhere.
 
 **Any change to a statement once accepted.** Enforced by a database trigger rather than by
-application code, because a store whose statements can be edited is not evidence of anything.
+application code, because a store whose statements can be edited is not evidence of anything. The
+trigger is an allow-list — only the three voiding columns may differ — rather than a list of
+protected ones, so a column added later is frozen by default. That matters beyond the payload: the
+facets decide which statements a reader is shown and in what order, and a payload nobody can edit is
+worth little if the row's answer to "whose statement is this?" can be edited instead.
+
 Voiding is the xAPI way to retract a statement, and it asserts a new statement rather than altering
 the old one: a voided statement stops appearing in queries and is still there when asked for by id.
 

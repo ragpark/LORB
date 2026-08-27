@@ -150,15 +150,16 @@ export async function buildLrs(options: LrsAppOptions): Promise<{ app: FastifyIn
       prepared.push(result.prepared);
     }
 
-    // The whole batch is checked before any of it is written: a batch that is half-stored and then
-    // rejected leaves the sender with no way to know which half landed.
-    const ids: string[] = [];
-    for (const entry of prepared) {
-      const outcome = await store.accept(entry.facets);
-      if (outcome === "CONFLICT") return fail(reply, 409, "STATEMENT_CONFLICT", `a different statement is already stored under id ${entry.facets.statement_id}`);
-      ids.push(entry.facets.statement_id);
+    // One transaction for the whole batch. Writing them one at a time and stopping at the first
+    // conflict leaves the earlier ones stored and unacknowledged — and where the sender supplied no
+    // id, this store generated one it never got to answer with, so a retry of the rejected batch
+    // stores them a second time under ids nobody can reach.
+    const result = await store.acceptAll(prepared.map((entry) => entry.facets));
+    if (!result.ok) {
+      const conflicting = prepared[result.conflictAt]!.facets.statement_id;
+      return fail(reply, 409, "STATEMENT_CONFLICT", `statement ${result.conflictAt}: a different statement is already stored under id ${conflicting}`);
     }
-    return reply.code(200).send(ids);
+    return reply.code(200).send(prepared.map((entry) => entry.facets.statement_id));
   });
 
   app.get("/statements", async (req, reply) => {
@@ -179,8 +180,14 @@ export async function buildLrs(options: LrsAppOptions): Promise<{ app: FastifyIn
     const after = query.cursor ? decodeCursor(query.cursor) : undefined;
     if (query.cursor && !after) return fail(reply, 400, "CURSOR_INVALID", "the continuation token is not one this store issued");
 
+    const agent = agentFilter(query.agent);
+    if (agent === "UNPARSEABLE") return fail(reply, 400, "AGENT_INVALID", "agent must be a JSON-encoded xAPI Agent, or a pseudonym");
+    // An Agent this store can hold no statement for — one identified by mbox or openid, where every
+    // actor here is an account pseudonym — matches nothing rather than everything.
+    if (agent === "UNMATCHABLE") return reply.send({ statements: [], more: "" });
+
     const statementQuery: StatementQuery = {
-      agent: query.agent,
+      agent,
       verb: query.verb,
       activity: query.activity,
       registration: query.registration,
@@ -211,6 +218,7 @@ export async function buildLrs(options: LrsAppOptions): Promise<{ app: FastifyIn
 
   app.setNotFoundHandler(async (_req, reply) => fail(reply, 404, "NOT_FOUND"));
 
+
   app.setErrorHandler(async (error, _req, reply) => {
     const status = (error as { statusCode?: number }).statusCode ?? 500;
     if (status === 400) return fail(reply, 400, "MALFORMED_REQUEST", "the request body is not valid JSON");
@@ -218,6 +226,34 @@ export async function buildLrs(options: LrsAppOptions): Promise<{ app: FastifyIn
   });
 
   return { app, store };
+}
+
+/**
+ * The actor a query filters on.
+ *
+ * xAPI sends `agent` as a JSON-encoded Agent, and this store's actors are account pseudonyms, so the
+ * filter is that account's name. A bare string is accepted too: it is what the platform's own tools
+ * pass, and rejecting it would break them to satisfy a specification neither side is speaking at
+ * that moment.
+ *
+ * Returns the pseudonym to filter by, `undefined` for no filter, `UNMATCHABLE` for a well-formed
+ * Agent this store could never hold a statement for, and `UNPARSEABLE` for something that is neither.
+ */
+export function agentFilter(raw: string | undefined): string | undefined | "UNMATCHABLE" | "UNPARSEABLE" {
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{")) return trimmed;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return "UNPARSEABLE";
+  }
+  if (!parsed || typeof parsed !== "object") return "UNPARSEABLE";
+  const agent = parsed as { account?: { name?: unknown }; mbox?: unknown; openid?: unknown; mbox_sha1sum?: unknown };
+  if (typeof agent.account?.name === "string" && agent.account.name.length > 0) return agent.account.name;
+  if (agent.mbox || agent.openid || agent.mbox_sha1sum) return "UNMATCHABLE";
+  return "UNPARSEABLE";
 }
 
 /** Test seam: a store with one throwaway credential, so a suite need not configure the world. */

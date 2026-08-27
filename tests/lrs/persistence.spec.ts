@@ -72,6 +72,63 @@ describeIfDatabase("learning record store on Postgres", () => {
     expect(await store.get(facets.statement_id)).toBeDefined();
   });
 
+  /**
+   * The facets decide which statements a reader is shown and in what order, so a payload nobody can
+   * edit is worth little if the row's answer to "whose statement is this?" can be edited instead.
+   */
+  it("freezes the query facets and the sequence too, not only the payload", async () => {
+    const facets = facetsFor();
+    await store.accept(facets);
+    for (const [column, value] of [
+      ["actor_pseudonym", "'someone-else'"],
+      ["verb_id", "'http://adlnet.gov/expapi/verbs/launched'"],
+      ["object_id", "'https://lorb.example/activities/other'"],
+      ["seq", "seq + 1000"],
+      ["stored_at", "now()"],
+      ["timestamp", "now()"],
+      ["payload_digest", "'0'"],
+      ["repository_id", "gen_random_uuid()"],
+      ["correlation_id", "'rewritten'"],
+    ] as const) {
+      await expect(
+        pool.query(`update statement set ${column} = ${value} where statement_id = $1`, [facets.statement_id]),
+        column,
+      ).rejects.toThrow(/STATEMENT_IMMUTABLE/);
+    }
+    // Voiding is the one thing an update may do, because that is how xAPI retracts a statement.
+    await expect(
+      pool.query("update statement set voided = true, voided_at = now() where statement_id = $1", [facets.statement_id]),
+    ).resolves.toBeDefined();
+  });
+
+  it("stores a whole batch or none of it", async () => {
+    const taken = randomUUID();
+    await store.accept(facetsFor({ result: { completion: true } }, taken));
+    const before = await store.count();
+
+    const conflicting = await store.acceptAll([
+      facetsFor({ result: { completion: true } }),
+      facetsFor({ result: { completion: false } }, taken),
+      facetsFor({ result: { completion: true } }),
+    ]);
+    expect(conflicting.ok).toBe(false);
+    if (!conflicting.ok) expect(conflicting.conflictAt).toBe(1);
+    // Nothing from the batch landed, including the entry that preceded the conflict.
+    expect(await store.count()).toBe(before);
+
+    const clean = await store.acceptAll([facetsFor(), facetsFor()]);
+    expect(clean.ok).toBe(true);
+    expect(await store.count()).toBe(before + 2);
+  });
+
+  it("serves `stored` from the row rather than from the sender", async () => {
+    const facets = facetsFor({ stored: "1999-01-01T00:00:00.000Z" });
+    await store.accept(facets);
+    const read = await store.get(facets.statement_id);
+    expect((read?.payload as { stored?: string }).stored).toBe(read?.stored_at);
+    expect((read?.payload as { stored?: string }).stored).not.toBe("1999-01-01T00:00:00.000Z");
+  });
+
   it("stores one row when two replicas deliver the same statement at the same moment", async () => {
     const facets = facetsFor();
     const outcomes = await Promise.all([store.accept(facets), store.accept(facets), store.accept(facets)]);
