@@ -39,16 +39,30 @@ deduplication key. A redelivery of the same statement is a no-op — which is ex
 forwarder's retry safe — and a *different* statement under a taken id is a `409` rather than a
 silent overwrite.
 
-The comparison is a digest of the statement *as it arrived*, with the top-level `id` and `stored`
-excluded and nothing else. Digesting what is stored instead would break idempotency for a statement
+Two comparisons, covering the two ways the same statement can arrive. The first is a digest of the
+statement *as it arrived*, with the top-level `id` and `stored` excluded and nothing else — so a
+plain retry, the same bytes again, matches whether or not the sender supplied a `timestamp`. That is
+what the forwarder produces.
+
+The second is a structural comparison against the stored payload, for the case a digest cannot
+settle: a statement sent without a `timestamp` is stored with one this store assigned, so a client
+that reads it back and sends that authoritative representation in again is offering something that
+never arrived in that form. It ignores exactly the two fields this store owns — `id` and `stored`.
+
+`timestamp` is not among them. A statement asserting a time and one asserting none are different
+assertions, and treating the second as a duplicate of the first would accept a different statement
+under a taken id rather than refusing it. Digesting what is stored instead would break idempotency for a statement
 that carries no `timestamp`, because this store fills one in from its own clock and the same request
 would get a new identity every time it was sent. And excluding `stored` at every depth rather than
 at the top would collapse two genuinely different statements whose telemetry happens to use that
 word — reported as a duplicate, with the first silently kept.
 
-A batch on `POST` is written in one transaction. Stopping at the first conflict and keeping what came
-before it leaves the sender unable to tell which half landed, and — for entries it supplied no id
-for — with statements stored under ids it was never told.
+A batch on `POST` is written in one transaction, and is checked against its own earlier entries as
+well as against what is stored: two entries sharing an id are both absent from the store when the
+batch arrives, so a check that only reads the store would write the first and report success for
+both. Stopping at the first conflict and keeping what came before it leaves the sender unable to
+tell which half landed, and — for entries it supplied no id for — with statements stored under ids
+it was never told.
 
 **An actor that identifies a person.** LORB's evidence is pseudonymous by construction: the actor on
 every statement is an HMAC, and the mapping back to a learner is never stored. A record store that

@@ -121,6 +121,31 @@ describeIfDatabase("learning record store on Postgres", () => {
     expect(await store.count()).toBe(before + 2);
   });
 
+  it("recognises its own representation, and a batch that conflicts with itself", async () => {
+    const id = randomUUID();
+    const prepared = prepareStatement(
+      { actor: { objectType: "Agent", account: { homePage: "https://lorb.example/pseudonym", name: "e".repeat(64) } },
+        verb: { id: "http://adlnet.gov/expapi/verbs/completed" },
+        object: { id: "https://lorb.example/activities/ratios", objectType: "Activity" } },
+      { addressedTo: id, requirePseudonymousActor: true },
+    );
+    if (!prepared.ok) throw new Error("unexpected");
+    expect(await store.accept(prepared.prepared.facets)).toBe("STORED");
+
+    // The representation this store serves carries a timestamp it assigned; sending it back is the
+    // same statement, not a conflicting one.
+    const representation = (await store.get(id))!.payload;
+    const replay = prepareStatement(representation, { addressedTo: id, requirePseudonymousActor: true });
+    if (!replay.ok) throw new Error("unexpected");
+    expect(await store.accept(replay.prepared.facets)).toBe("DUPLICATE");
+
+    // A batch disagreeing with itself is refused before anything in it is written.
+    const before = await store.count();
+    const clash = await store.acceptAll([facetsFor({ result: { completion: true } }, id), facetsFor({ result: { completion: false } }, id)]);
+    expect(clash.ok).toBe(false);
+    expect(await store.count()).toBe(before);
+  });
+
   it("serves `stored` from the row rather than from the sender", async () => {
     const facets = facetsFor({ stored: "1999-01-01T00:00:00.000Z" });
     await store.accept(facets);

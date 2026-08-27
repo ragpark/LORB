@@ -106,6 +106,49 @@ export function statementDigest(statement: LrsStatement): string {
   return createHash("sha256").update(JSON.stringify(canonical(rest))).digest("hex");
 }
 
+/** Sorted-key JSON, so two encodings of the same value compare equal. */
+function canonicalJson(value: unknown): string {
+  const canonical = (item: unknown): unknown => {
+    if (Array.isArray(item)) return item.map(canonical);
+    if (item && typeof item === "object") {
+      return Object.fromEntries(
+        Object.entries(item as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, value_]) => [key, canonical(value_)]),
+      );
+    }
+    return item;
+  };
+  return JSON.stringify(canonical(value));
+}
+
+/**
+ * Whether an arriving statement is the one already stored under that id.
+ *
+ * Two comparisons, and between them they cover the two ways the same statement can arrive.
+ *
+ * The digest is over the statement *as sent*, so a plain retry — the same bytes again — matches it
+ * whether or not the sender supplied a `timestamp`. That is the case the forwarder produces.
+ *
+ * The other is the round trip: a statement sent without a `timestamp` is stored with one this store
+ * assigned, so a client that reads it back and offers the authoritative representation is sending
+ * something that never arrived in that form. Its digest cannot match. This comparison catches it,
+ * by ignoring exactly the two fields this store owns — `id`, which is the key it is filed under, and
+ * `stored`, which is the store's own clock.
+ *
+ * `timestamp` is deliberately *not* ignored. An earlier version excluded it whenever the arriving
+ * statement omitted one, which reads as generous and is wrong: a statement that asserts a time and
+ * one that asserts none are different assertions, and treating the second as a duplicate of the
+ * first accepts a different statement under a taken id instead of refusing it. Nothing needs the
+ * exclusion — the digest already covers the retry it was reaching for.
+ */
+export function sameStatement(facets: StatementFacets, storedPayload: unknown): boolean {
+  const strip = (value: unknown): unknown => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    const { id: _id, stored: _stored, ...rest } = value as Record<string, unknown>;
+    return rest;
+  };
+  return canonicalJson(strip(facets.payload)) === canonicalJson(strip(storedPayload));
+}
+
 /** True when the actor names a person rather than a pseudonym. */
 export function identifiesAPerson(actor: LrsStatement["actor"]): boolean {
   if (actor.mbox || actor.mbox_sha1sum || actor.openid || actor.name) return true;
