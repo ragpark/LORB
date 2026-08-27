@@ -45,7 +45,14 @@ the old one: a voided statement stops appearing in queries and is still there wh
 
 ## Storage
 
-Postgres. Facets worth querying — actor, verb, object, registration, and LORB's repository, attempt
+Its own Postgres, not the platform's. They can share one — `LRS_DATABASE_URL` falls back to
+`DATABASE_URL` so `pnpm dev` needs no second database — but a deployment should give this service a
+database of its own, and the reason is not tidiness. Evidence outlives most of what surrounds it: a
+catalogue can be rebuilt and a runtime restored from a backup taken this morning, while the record of
+what a learner did has to survive both of those operations untouched. Two databases means restoring
+one cannot roll the other back, and the store can be moved, sized and retained on its own terms.
+
+Facets worth querying — actor, verb, object, registration, and LORB's repository, attempt
 and package-version extensions — are pulled into columns; the whole statement is kept as `jsonb`, so
 telemetry a learning object puts in `result.extensions` or `context.extensions` is stored whether or
 not this platform has heard of it.
@@ -58,7 +65,7 @@ row it came from — and that row is handed out again on the next page.
 
 | Setting | Meaning |
 | --- | --- |
-| `LRS_DATABASE_URL` | The database. Falls back to `DATABASE_URL`. Required in production |
+| `LRS_DATABASE_URL` | This store's own database — see Storage. Falls back to `DATABASE_URL` for local development. Required in production |
 | `LRS_ACCEPTED_BEARER_TOKENS` | Comma-separated tokens this store accepts |
 | `LRS_ACCEPTED_BASIC_CREDENTIALS` | Comma-separated `username:password` pairs |
 | `LRS_REQUIRE_PSEUDONYMOUS_ACTOR` | Default `true`. See above |

@@ -136,9 +136,14 @@ refuses to start without a reachable endpoint configured, and the forwarder will
 lose anything if the store is briefly unavailable afterwards.
 
 ```
-LRS_DATABASE_URL=…                        # or DATABASE_URL; required in production
+LRS_DATABASE_URL=…                        # its own database, not the platform's; required in production
 LRS_ACCEPTED_BEARER_TOKENS=…              # or LRS_ACCEPTED_BASIC_CREDENTIALS; at least one required
 ```
+
+Give it a database of its own rather than pointing it at the platform's. Evidence outlives most of
+what surrounds it: a catalogue can be rebuilt and the runtime restored from this morning's backup,
+and the record of what a learner did has to survive both untouched. Sharing one database makes those
+two operations the same operation.
 
 Then point the Runtime API at it — `LRS_ENDPOINT` is the origin, and the service appends
 `/statements` itself — with `LRS_BEARER_TOKEN` set to one of the tokens the store accepts. Confirm
