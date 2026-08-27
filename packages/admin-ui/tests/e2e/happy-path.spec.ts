@@ -163,7 +163,7 @@ test('LORB-001 Administration workspace happy path (Section 15.6)', async ({ pag
   });
   expect(launch.status()).toBe(201);
   const launchBody = await launch.json();
-  const attempt = await page.request.fetch(`${RUNTIME_BASE}/attempts/${launchBody.attempt_id}`);
+  const attempt = await page.request.fetch(`${RUNTIME_BASE}/attempts/${launchBody.attempt_id}`, { headers: { authorization: `Bearer ${await getToken(page, 'synthetic-admin-a')}` } });
   const attemptBody = await attempt.json();
   expect(attemptBody.governed_by_launch_policy).toMatchObject({ display_name: policyName });
 });

@@ -189,6 +189,30 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
   const correlation = (req: unknown): string => (req as { correlationId?: string }).correlationId ?? randomUUID();
   const envelope = (items: unknown[], req: unknown) => ({ items, next_cursor: null, correlation_id: correlation(req) });
 
+  // The catalogue names every repository and object a deployment holds, and attempts carry state
+  // payloads and pseudonyms; neither is served anonymously. Any subject the identity provider will
+  // vouch for may read the catalogue — the same bar as launching. The routes a sandboxed launch
+  // itself calls (content, state, complete, jwks, smart-link redemption) stay public: the module
+  // runs from an opaque origin and holds no bearer token, only its descriptor.
+  const requireSubject = async (req: FastifyRequest, reply: FastifyReply): Promise<string | undefined> => {
+    try {
+      return (await verifier.verify(req.headers.authorization)).subject;
+    } catch (error) {
+      const code = error instanceof IdentityError ? error.code : "AUTHENTICATION_EXPIRED";
+      sendProblem(reply, code, correlation(req), code === "ACCESS_DENIED" ? 403 : 401);
+      return undefined;
+    }
+  };
+
+  const adminCtx = {
+    iesKey: verifier.keys,
+    iesIssuer: verifier.issuer,
+    tenantSecret: secret,
+    playerModuleOriginAllowlist: [playerOrigin, ...runtimeConfig.allowedConsumerOrigins],
+    audience: verifier.audience,
+    algorithms: runtimeConfig.identity.algorithms,
+  };
+
   // -------------------------------------------------------------------------
   // Service surface
   // -------------------------------------------------------------------------
@@ -199,20 +223,26 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
   // Catalogue (read)
   // -------------------------------------------------------------------------
 
-  app.get("/api/v1/runtime/repositories", async (req) => envelope(await catalogue.repositories(), req));
+  app.get("/api/v1/runtime/repositories", async (req, reply) => {
+    if (!(await requireSubject(req, reply))) return;
+    return envelope(await catalogue.repositories(), req);
+  });
 
   app.get("/api/v1/runtime/repositories/:repositoryId", async (req, reply) => {
+    if (!(await requireSubject(req, reply))) return;
     const { repositoryId } = (req as { params: { repositoryId: string } }).params;
     const repository = await catalogue.repository(repositoryId);
     return repository ?? sendProblem(reply, "OBJECT_NOT_FOUND", correlation(req));
   });
 
-  app.get("/api/v1/runtime/learning-objects", async (req) => {
+  app.get("/api/v1/runtime/learning-objects", async (req, reply) => {
+    if (!(await requireSubject(req, reply))) return;
     const query = (req as { query: { repository_id?: string } }).query;
     return envelope(await catalogue.learningObjects({ repository_id: query.repository_id }), req);
   });
 
   app.get("/api/v1/runtime/learning-objects/:objectId", async (req, reply) => {
+    if (!(await requireSubject(req, reply))) return;
     const object = await catalogue.learningObject((req as { params: { objectId: string } }).params.objectId);
     return object ?? sendProblem(reply, "OBJECT_NOT_FOUND", correlation(req));
   });
@@ -238,12 +268,14 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     return reply.header("cache-control", "no-store").send({ ...content, package_version_id: object.active_package_version_id });
   });
 
-  app.get("/api/v1/runtime/package-versions", async (req) => {
+  app.get("/api/v1/runtime/package-versions", async (req, reply) => {
+    if (!(await requireSubject(req, reply))) return;
     const query = (req as { query: { object_id?: string } }).query;
     return envelope(await catalogue.packageVersions({ object_id: query.object_id }), req);
   });
 
   app.get("/api/v1/runtime/package-versions/:packageVersionId", async (req, reply) => {
+    if (!(await requireSubject(req, reply))) return;
     const row = await catalogue.packageVersion((req as { params: { packageVersionId: string } }).params.packageVersionId);
     return row ?? sendProblem(reply, "OBJECT_NOT_FOUND", correlation(req));
   });
@@ -252,13 +284,17 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
   // Attempts (read)
   // -------------------------------------------------------------------------
 
-  app.get("/api/v1/runtime/attempts", async (req) => {
+  // Attempt records expose learner pseudonyms and stored state payloads, so reading them is an
+  // administration action, audited like the rest of the workspace.
+  app.get("/api/v1/runtime/attempts", async (req, reply) => {
+    if (!(await requireAdmin(req, reply, adminCtx, "attempt.list", "attempt"))) return;
     const query = (req as { query: { repository_id?: string; object_id?: string } }).query;
     const attempts = await store.listAttempts({ repository_id: query.repository_id, object_id: query.object_id });
     return envelope(attempts.map((attempt) => ({ ...attempt, pseudonymous_subject_id: attempt.pseudonym })), req);
   });
 
   app.get("/api/v1/runtime/attempts/:attemptId", async (req, reply) => {
+    if (!(await requireAdmin(req, reply, adminCtx, "attempt.read", "attempt"))) return;
     const attempt = await store.getAttempt((req as { params: { attemptId: string } }).params.attemptId);
     return attempt ?? sendProblem(reply, "OBJECT_NOT_FOUND", correlation(req));
   });
@@ -567,15 +603,6 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
   // -------------------------------------------------------------------------
   // Administration
   // -------------------------------------------------------------------------
-
-  const adminCtx = {
-    iesKey: verifier.keys,
-    iesIssuer: verifier.issuer,
-    tenantSecret: secret,
-    playerModuleOriginAllowlist: [playerOrigin, ...runtimeConfig.allowedConsumerOrigins],
-    audience: verifier.audience,
-    algorithms: runtimeConfig.identity.algorithms,
-  };
 
   app.get("/api/v1/admin/whoami", async (req, reply) => {
     const principal = await requireAdmin(req, reply, adminCtx, "admin.whoami", "admin_principal");

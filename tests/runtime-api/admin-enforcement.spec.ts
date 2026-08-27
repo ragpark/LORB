@@ -275,7 +275,7 @@ describe("Administration workspace API/DB enforcement", () => {
       payload: { contract_version: "1.0", consumer_id: "enforcement-test", repository_id: repositoryId, object_id: routed.object_id, requested_launch_mode: "embedded-iframe", locale: "en-GB" },
     });
     expect(launch.statusCode).toBe(201);
-    const attempt = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/attempts/${launch.json().attempt_id}` });
+    const attempt = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/attempts/${launch.json().attempt_id}`, headers: { authorization: `Bearer ${tokenA}` } });
     expect(attempt.json().governed_by_launch_policy).toMatchObject({ launch_policy_id: launchPolicyId, launch_policy_version_id: launchPolicyVersionId });
 
     // Unmatched context falls back to the pre-existing default resolver behaviour (no governance reference).
@@ -285,7 +285,7 @@ describe("Administration workspace API/DB enforcement", () => {
       headers: { authorization: `Bearer ${learnerToken}`, "idempotency-key": randomUUID() },
       payload: { contract_version: "1.0", consumer_id: "enforcement-test", repository_id: randomUUID(), object_id: randomUUID(), requested_launch_mode: "embedded-iframe", locale: "en-GB" },
     });
-    const unmatchedAttempt = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/attempts/${unmatchedLaunch.json().attempt_id}` });
+    const unmatchedAttempt = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/attempts/${unmatchedLaunch.json().attempt_id}`, headers: { authorization: `Bearer ${tokenA}` } });
     expect(unmatchedAttempt.json().governed_by_launch_policy).toBeUndefined();
   });
 
@@ -345,7 +345,7 @@ describe("Administration workspace API/DB enforcement", () => {
     expect(packageUrlOf(pinned)).not.toBe(`${urls.player}/module/index.html`);
 
     // The policy still applied and is still recorded — it governs everything except the renderer.
-    const attempt = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/attempts/${pinned.json().attempt_id}` });
+    const attempt = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/attempts/${pinned.json().attempt_id}`, headers: { authorization: `Bearer ${tokenA}` } });
     expect(attempt.json().governed_by_launch_policy).toMatchObject({ launch_policy_id: launchPolicyId });
     expect(attempt.json().package_pinned_by_object).toBe(true);
 
