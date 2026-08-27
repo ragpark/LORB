@@ -3,19 +3,21 @@
  */
 import { randomUUID } from "node:crypto";
 import type { QuizContent, QuizDraft } from "../../../contracts/src/index.js";
-import { buildQuizRegistration, DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE } from "./shared.js";
+import { buildQuizRegistration, buildQuizRevision, DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE } from "./shared.js";
 import type {
-  CatalogueStore, LearningObjectRow, ObjectRegistration, ObjectVersionRow, PackageVersionRow,
-  RegisteredQuiz, Repository,
+  CatalogueStore, LearningObjectRow, ObjectContentRevision, ObjectDeletion, ObjectLifecycleStatus,
+  ObjectMetadataPatch, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredQuiz, Repository,
 } from "./types.js";
 
 export class MemoryCatalogueStore implements CatalogueStore {
   readonly kind = "memory" as const;
   private readonly repositoriesById = new Map<string, Repository>();
   private readonly objects = new Map<string, LearningObjectRow>();
-  private readonly objectVersions = new Map<string, ObjectVersionRow>();
+  private readonly versions = new Map<string, ObjectVersionRow>();
   private readonly packages = new Map<string, PackageVersionRow>();
   private readonly contents = new Map<string, QuizContent>();
+  /** Every content version ever written, keyed `objectId:contentVersion`. Nothing here is overwritten. */
+  private readonly contentHistory = new Map<string, QuizContent>();
 
   constructor(options: { seedExamples?: boolean } = {}) {
     this.reset(options.seedExamples ?? true);
@@ -28,9 +30,10 @@ export class MemoryCatalogueStore implements CatalogueStore {
   reset(seedExamples = true): void {
     this.repositoriesById.clear();
     this.objects.clear();
-    this.objectVersions.clear();
+    this.versions.clear();
     this.packages.clear();
     this.contents.clear();
+    this.contentHistory.clear();
     this.repositoriesById.set(DEFAULT_REPOSITORY.repository_id, {
       ...DEFAULT_REPOSITORY,
       status: "ACTIVE",
@@ -41,7 +44,7 @@ export class MemoryCatalogueStore implements CatalogueStore {
     for (const example of EXAMPLE_OBJECTS) {
       this.objects.set(example.object.object_id, { ...example.object });
       this.packages.set(example.package.package_version_id, { ...example.package });
-      this.objectVersions.set(example.object.active_object_version_id, {
+      this.versions.set(example.object.active_object_version_id, {
         object_version_id: example.object.active_object_version_id,
         object_id: example.object.object_id,
         semver: example.package.semver,
@@ -77,7 +80,14 @@ export class MemoryCatalogueStore implements CatalogueStore {
   }
 
   async objectVersion(objectVersionId: string): Promise<ObjectVersionRow | undefined> {
-    return this.objectVersions.get(objectVersionId.toLowerCase());
+    return this.versions.get(objectVersionId.toLowerCase());
+  }
+
+  async objectVersions(objectId: string): Promise<ObjectVersionRow[]> {
+    return [...this.versions.values()]
+      .filter((row) => row.object_id.toLowerCase() === objectId.toLowerCase())
+      .map((row) => ({ ...row }))
+      .sort((a, b) => String(b.published_at ?? "").localeCompare(String(a.published_at ?? "")));
   }
 
   async packageVersions(filter: { object_id?: string } = {}): Promise<PackageVersionRow[]> {
@@ -95,6 +105,17 @@ export class MemoryCatalogueStore implements CatalogueStore {
     return this.contents.get(objectId.toLowerCase());
   }
 
+  async contentRevision(objectId: string, contentVersion: string): Promise<QuizContent | undefined> {
+    return this.contentHistory.get(`${objectId.toLowerCase()}:${contentVersion}`);
+  }
+
+  async contentForObjectVersion(objectId: string, objectVersionId: string): Promise<QuizContent | undefined> {
+    const version = this.versions.get(objectVersionId.toLowerCase());
+    if (!version || version.object_id.toLowerCase() !== objectId.toLowerCase()) return undefined;
+    const pinned = version.content_version ? await this.contentRevision(objectId, version.content_version) : undefined;
+    return pinned ?? this.content(objectId);
+  }
+
   async registerObject(registration: ObjectRegistration): Promise<LearningObjectRow> {
     const object_id = randomUUID();
     const object_version_id = randomUUID();
@@ -110,7 +131,7 @@ export class MemoryCatalogueStore implements CatalogueStore {
       published_at: created_at,
       module_path: registration.module_path,
     });
-    this.objectVersions.set(object_version_id, {
+    this.versions.set(object_version_id, {
       object_version_id, object_id, semver: registration.semver, package_version_id,
       status: "PUBLISHED", published_at: created_at,
     });
@@ -135,7 +156,7 @@ export class MemoryCatalogueStore implements CatalogueStore {
   async publishObjectVersion(objectId: string, input: { semver: string; module_path: string; sha256: string }): Promise<LearningObjectRow | undefined> {
     const object = this.objects.get(objectId.toLowerCase());
     if (!object) return undefined;
-    const previous = this.objectVersions.get(object.active_object_version_id);
+    const previous = this.versions.get(object.active_object_version_id);
     if (previous) previous.status = "SUPERSEDED";
     const object_version_id = randomUUID();
     const package_version_id = randomUUID();
@@ -144,7 +165,7 @@ export class MemoryCatalogueStore implements CatalogueStore {
       package_version_id, object_id: object.object_id, semver: input.semver, sha256: input.sha256,
       delivery_profile: "native-web-package", status: "PUBLISHED", published_at, module_path: input.module_path,
     });
-    this.objectVersions.set(object_version_id, {
+    this.versions.set(object_version_id, {
       object_version_id, object_id: object.object_id, semver: input.semver, package_version_id,
       status: "PUBLISHED", published_at,
     });
@@ -154,11 +175,70 @@ export class MemoryCatalogueStore implements CatalogueStore {
     return { ...object };
   }
 
-  async retireObject(objectId: string): Promise<LearningObjectRow | undefined> {
+  async updateObject(objectId: string, patch: ObjectMetadataPatch): Promise<LearningObjectRow | undefined> {
     const object = this.objects.get(objectId.toLowerCase());
     if (!object) return undefined;
-    object.status = "RETIRED";
+    for (const key of ["title", "description", "duration", "kind"] as const) {
+      const value = patch[key];
+      if (value !== undefined) object[key] = value;
+    }
     return { ...object };
+  }
+
+  async setObjectStatus(objectId: string, status: ObjectLifecycleStatus): Promise<LearningObjectRow | undefined> {
+    const object = this.objects.get(objectId.toLowerCase());
+    if (!object) return undefined;
+    object.status = status;
+    return { ...object };
+  }
+
+  async retireObject(objectId: string): Promise<LearningObjectRow | undefined> {
+    return this.setObjectStatus(objectId, "RETIRED");
+  }
+
+  /**
+   * The in-process catalogue holds no attempts and no rosters, so it can enforce only the half of
+   * the contract it can see: an object that is still deliverable is refused, and the caller checks
+   * use against the runtime store it does hold.
+   */
+  async deleteObject(objectId: string): Promise<ObjectDeletion> {
+    const id = objectId.toLowerCase();
+    const object = this.objects.get(id);
+    if (!object) return "NOT_FOUND";
+    if (!["SUSPENDED", "RETIRED"].includes(object.status)) return "STATE_INVALID";
+    this.objects.delete(id);
+    this.contents.delete(id);
+    for (const key of [...this.contentHistory.keys()]) if (key.startsWith(`${id}:`)) this.contentHistory.delete(key);
+    for (const [key, row] of [...this.versions]) if (row.object_id.toLowerCase() === id) this.versions.delete(key);
+    // The shared quiz player belongs to no object and outlives every one of them.
+    for (const [key, row] of [...this.packages]) if (row.object_id?.toLowerCase() === id) this.packages.delete(key);
+    return "DELETED";
+  }
+
+  async reviseQuizContent(objectId: string, draft: QuizDraft): Promise<ObjectContentRevision | undefined> {
+    const object = this.objects.get(objectId.toLowerCase());
+    if (!object || object.content_profile !== "quiz-json-v1") return undefined;
+    const previous = this.contents.get(objectId.toLowerCase());
+    const versions = await this.objectVersions(object.object_id);
+    const built = buildQuizRevision(object, draft, previous?.content_version, versions.map((row) => row.semver));
+    const superseded = this.versions.get(object.active_object_version_id);
+    if (superseded) superseded.status = "SUPERSEDED";
+    this.versions.set(built.revision.object_version_id, {
+      object_version_id: built.revision.object_version_id,
+      object_id: object.object_id,
+      semver: built.revision.semver,
+      package_version_id: QUIZ_PLAYER.package_version_id,
+      status: "PUBLISHED",
+      published_at: built.content.created_at,
+      content_version: built.content.content_version,
+    });
+    this.contents.set(object.object_id, built.content);
+    this.contentHistory.set(`${object.object_id}:${built.content.content_version}`, built.content);
+    object.active_object_version_id = built.revision.object_version_id;
+    object.title = built.objectPatch.title;
+    object.description = built.objectPatch.description;
+    object.duration = built.objectPatch.duration;
+    return built.revision;
   }
 
   async registerQuiz(draft: QuizDraft, options: { repository_id?: string; authored_by?: string } = {}): Promise<RegisteredQuiz> {
@@ -166,13 +246,15 @@ export class MemoryCatalogueStore implements CatalogueStore {
     const built = buildQuizRegistration(draft, repositoryId, options.authored_by);
     this.objects.set(built.object.object_id, built.object);
     this.contents.set(built.object.object_id, built.content);
-    this.objectVersions.set(built.object.active_object_version_id, {
+    this.contentHistory.set(`${built.object.object_id}:${built.content.content_version}`, built.content);
+    this.versions.set(built.object.active_object_version_id, {
       object_version_id: built.object.active_object_version_id,
       object_id: built.object.object_id,
       semver: built.objectVersionSemver,
       package_version_id: QUIZ_PLAYER.package_version_id,
       status: "PUBLISHED",
       published_at: built.object.created_at,
+      content_version: built.content.content_version,
     });
     return built.registered;
   }

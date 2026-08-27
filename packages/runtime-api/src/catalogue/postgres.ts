@@ -9,10 +9,10 @@
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { quizContentSchema, type QuizContent, type QuizDraft } from "../../../contracts/src/index.js";
-import { buildQuizRegistration, DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE } from "./shared.js";
+import { buildQuizRegistration, buildQuizRevision, DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE } from "./shared.js";
 import type {
-  CatalogueStore, LearningObjectRow, ObjectRegistration, ObjectVersionRow, PackageVersionRow,
-  RegisteredQuiz, Repository,
+  CatalogueStore, LearningObjectRow, ObjectContentRevision, ObjectLifecycleStatus, ObjectMetadataPatch,
+  ObjectDeletion, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredQuiz, Repository,
 } from "./types.js";
 
 const iso = (value: Date | string | null | undefined): string =>
@@ -97,6 +97,14 @@ export class PostgresCatalogueStore implements CatalogueStore {
     return row ? { ...row, published_at: row.published_at ? iso(row.published_at) : null } : undefined;
   }
 
+  async objectVersions(objectId: string): Promise<ObjectVersionRow[]> {
+    const result = await this.pool.query(
+      "select * from object_version where lower(object_id::text) = $1 order by coalesce(published_at, created_at) desc",
+      [objectId.toLowerCase()],
+    );
+    return result.rows.map((row) => ({ ...row, published_at: row.published_at ? iso(row.published_at) : null }));
+  }
+
   async packageVersions(filter: { object_id?: string } = {}): Promise<PackageVersionRow[]> {
     const result = filter.object_id
       ? await this.pool.query("select * from package_version where lower(object_id::text) = $1 order by published_at asc", [filter.object_id.toLowerCase()])
@@ -114,6 +122,23 @@ export class PostgresCatalogueStore implements CatalogueStore {
     if (!result.rows[0]) return undefined;
     const parsed = quizContentSchema.safeParse(result.rows[0].payload);
     return parsed.success ? parsed.data : undefined;
+  }
+
+  async contentRevision(objectId: string, contentVersion: string): Promise<QuizContent | undefined> {
+    const result = await this.pool.query(
+      "select payload from learning_object_content_version where lower(object_id::text) = $1 and content_version = $2",
+      [objectId.toLowerCase(), contentVersion],
+    );
+    if (!result.rows[0]) return undefined;
+    const parsed = quizContentSchema.safeParse(result.rows[0].payload);
+    return parsed.success ? parsed.data : undefined;
+  }
+
+  async contentForObjectVersion(objectId: string, objectVersionId: string): Promise<QuizContent | undefined> {
+    const version = await this.objectVersion(objectVersionId);
+    if (!version || version.object_id.toLowerCase() !== objectId.toLowerCase()) return undefined;
+    const pinned = version.content_version ? await this.contentRevision(objectId, version.content_version) : undefined;
+    return pinned ?? this.content(objectId);
   }
 
   async registerObject(registration: ObjectRegistration): Promise<LearningObjectRow> {
@@ -190,12 +215,146 @@ export class PostgresCatalogueStore implements CatalogueStore {
     return this.learningObject(existing.object_id);
   }
 
-  async retireObject(objectId: string): Promise<LearningObjectRow | undefined> {
+  /**
+   * Edits the catalogue entry, and only the catalogue entry.
+   *
+   * The column list is fixed here rather than assembled from the caller's keys: an update whose
+   * columns come from a request body is one careless spread away from letting a title edit rewrite
+   * `active_package_version_id`, which is the pointer a launch resolves through.
+   */
+  async updateObject(objectId: string, patch: ObjectMetadataPatch): Promise<LearningObjectRow | undefined> {
     const result = await this.pool.query(
-      "update learning_object set status = 'RETIRED', retired_at = now(), updated_at = now() where lower(object_id::text) = $1 returning *",
-      [objectId.toLowerCase()],
+      `update learning_object set
+         title = coalesce($2, title),
+         description = coalesce($3, description),
+         duration = coalesce($4, duration),
+         kind = coalesce($5, kind),
+         updated_at = now()
+       where lower(object_id::text) = $1 returning *`,
+      [objectId.toLowerCase(), patch.title ?? null, patch.description ?? null, patch.duration ?? null, patch.kind ?? null],
     );
     return result.rows[0] ? toObject(result.rows[0]) : undefined;
+  }
+
+  async setObjectStatus(objectId: string, status: ObjectLifecycleStatus): Promise<LearningObjectRow | undefined> {
+    const result = await this.pool.query(
+      `update learning_object set status = $2,
+         retired_at = case when $2 = 'RETIRED' then now() else null end,
+         updated_at = now()
+       where lower(object_id::text) = $1 returning *`,
+      [objectId.toLowerCase(), status],
+    );
+    return result.rows[0] ? toObject(result.rows[0]) : undefined;
+  }
+
+  async retireObject(objectId: string): Promise<LearningObjectRow | undefined> {
+    return this.setObjectStatus(objectId, "RETIRED");
+  }
+
+  /**
+   * Removes the object and the rows that exist only to describe it.
+   *
+   * Everything that decides whether the deletion may happen is done here rather than by the caller,
+   * under `for update` on the object row and inside the transaction that does the deleting. A check
+   * made before the transaction is a check of the past: migration 007 deliberately dropped the
+   * foreign key from `attempt` to `package_version` so that an attempt survives whatever happens to
+   * the catalogue, which means nothing underneath this stops a launch that lands between the check
+   * and the delete. Refusing an object that is still deliverable closes the same race from the other
+   * end — a launch resolves a PUBLISHED object only, so an object that has already been withdrawn
+   * cannot acquire a new attempt while this runs.
+   *
+   * `class_assignment` is read as well as the runtime `assignment` table. They are different tables
+   * written by different surfaces — a teacher assigning work to a class writes the first, an agent
+   * or internal batch the second — and an object deleted out from under either leaves a roster
+   * pointing at nothing.
+   */
+  async deleteObject(objectId: string): Promise<ObjectDeletion> {
+    const id = objectId.toLowerCase();
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const existing = await client.query(
+        "select object_id, status from learning_object where lower(object_id::text) = $1 for update",
+        [id],
+      );
+      if (!existing.rows[0]) {
+        await client.query("rollback");
+        return "NOT_FOUND";
+      }
+      const realId = existing.rows[0].object_id;
+      if (!["SUSPENDED", "RETIRED"].includes(existing.rows[0].status)) {
+        await client.query("rollback");
+        return "STATE_INVALID";
+      }
+      const inUse = await client.query(
+        `select 1 from attempt where object_id = $1
+         union all select 1 from assignment where object_id = $1
+         union all select 1 from class_assignment where object_id = $1
+         limit 1`,
+        [realId],
+      );
+      if (inUse.rowCount) {
+        await client.query("rollback");
+        return "IN_USE";
+      }
+      await client.query("delete from learning_object_content_version where object_id = $1", [realId]);
+      await client.query("delete from learning_object_content where object_id = $1", [realId]);
+      await client.query("delete from object_version where object_id = $1", [realId]);
+      await client.query("delete from smart_link where object_id = $1", [realId]);
+      await client.query("delete from package_version where object_id = $1", [realId]);
+      await client.query("delete from learning_object where object_id = $1", [realId]);
+      await client.query("commit");
+      return "DELETED";
+    } catch (error) {
+      await client.query("rollback").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async reviseQuizContent(objectId: string, draft: QuizDraft): Promise<ObjectContentRevision | undefined> {
+    const object = await this.learningObject(objectId);
+    if (!object || object.content_profile !== "quiz-json-v1") return undefined;
+    const previous = await this.content(object.object_id);
+    const versions = await this.objectVersions(object.object_id);
+    const built = buildQuizRevision(object, draft, previous?.content_version, versions.map((row) => row.semver));
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      await client.query("update object_version set status = 'SUPERSEDED' where object_id = $1 and status = 'PUBLISHED'", [object.object_id]);
+      await client.query(
+        `insert into object_version (object_version_id, object_id, semver, package_version_id, status, published_at, content_version)
+         values ($1,$2,$3,$4,'PUBLISHED', now(), $5)`,
+        [built.revision.object_version_id, object.object_id, built.revision.semver,
+         QUIZ_PLAYER.package_version_id, built.content.content_version],
+      );
+      await client.query(
+        `insert into learning_object_content_version (object_id, content_profile, content_version, payload)
+         values ($1,'quiz-json-v1',$2,$3) on conflict (object_id, content_version) do nothing`,
+        [object.object_id, built.content.content_version, JSON.stringify(built.content)],
+      );
+      await client.query(
+        `insert into learning_object_content (object_id, content_profile, content_version, payload)
+         values ($1,'quiz-json-v1',$2,$3)
+         on conflict (object_id) do update set content_version = excluded.content_version,
+           payload = excluded.payload, updated_at = now()`,
+        [object.object_id, built.content.content_version, JSON.stringify(built.content)],
+      );
+      await client.query(
+        `update learning_object set active_object_version_id = $2, title = $3, description = $4,
+           duration = $5, updated_at = now() where object_id = $1`,
+        [object.object_id, built.revision.object_version_id, built.objectPatch.title,
+         built.objectPatch.description, built.objectPatch.duration],
+      );
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+    return built.revision;
   }
 
   async registerQuiz(draft: QuizDraft, options: { repository_id?: string; authored_by?: string } = {}): Promise<RegisteredQuiz> {
@@ -215,13 +374,19 @@ export class PostgresCatalogueStore implements CatalogueStore {
          built.object.module_path, built.object.authored_by ?? null, built.object.created_at],
       );
       await client.query(
-        `insert into object_version (object_version_id, object_id, semver, package_version_id, status, published_at)
-         values ($1,$2,$3,$4,'PUBLISHED', now())`,
-        [built.object.active_object_version_id, built.object.object_id, built.objectVersionSemver, QUIZ_PLAYER.package_version_id],
+        `insert into object_version (object_version_id, object_id, semver, package_version_id, status, published_at, content_version)
+         values ($1,$2,$3,$4,'PUBLISHED', now(), $5)`,
+        [built.object.active_object_version_id, built.object.object_id, built.objectVersionSemver,
+         QUIZ_PLAYER.package_version_id, built.content.content_version],
       );
       await client.query(
         `insert into learning_object_content (object_id, content_profile, content_version, payload)
          values ($1,'quiz-json-v1',$2,$3)`,
+        [built.object.object_id, built.content.content_version, JSON.stringify(built.content)],
+      );
+      await client.query(
+        `insert into learning_object_content_version (object_id, content_profile, content_version, payload)
+         values ($1,'quiz-json-v1',$2,$3) on conflict (object_id, content_version) do nothing`,
         [built.object.object_id, built.content.content_version, JSON.stringify(built.content)],
       );
       await client.query("commit");

@@ -223,9 +223,17 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
    * publisher or agent-facing surface returns this body.
    */
   app.get("/api/v1/runtime/learning-objects/:objectId/content", async (req, reply) => {
-    const objectId = (req as { params: { objectId: string } }).params.objectId;
+    const request = req as { params: { objectId: string }; query: { object_version_id?: string } };
+    const objectId = request.params.objectId;
     const object = await catalogue.learningObject(objectId);
-    const content = await catalogue.content(objectId);
+    // The shell passes the object version its descriptor pinned. Serving that version's content
+    // rather than whatever is current is what stops an edit published mid-attempt changing the
+    // questions under a learner who has already answered half of them — and what keeps the evidence
+    // they produce describing content that still exists. A descriptor issued before content versions
+    // were recorded names a version with none, and falls back to the current content.
+    const content = request.query.object_version_id
+      ? await catalogue.contentForObjectVersion(objectId, request.query.object_version_id)
+      : await catalogue.content(objectId);
     if (!object || object.status !== "PUBLISHED" || !content) return sendProblem(reply, "OBJECT_NOT_FOUND", correlation(req));
     return reply.header("cache-control", "no-store").send({ ...content, package_version_id: object.active_package_version_id });
   });

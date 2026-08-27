@@ -42,7 +42,7 @@ function pushDiagnostic(entry: Omit<Diagnostic, 'at'>) {
   diagnosticListeners.forEach((fn) => fn());
 }
 
-export type AdminRequestOptions = { method?: 'GET' | 'POST'; body?: unknown };
+export type AdminRequestOptions = { method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'; body?: unknown };
 
 export async function adminApiRequest<T>(base: string, path: string, options: AdminRequestOptions = {}): Promise<T> {
   const method = options.method ?? 'GET';

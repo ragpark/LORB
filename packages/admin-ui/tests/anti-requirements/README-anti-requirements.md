@@ -41,7 +41,15 @@ alone is a control a different client does not.
   separation-of-duties layers cannot exist at all.
 - **There is no router.** The workspace follows the same single-`App.tsx`, page-state pattern as the
   other two front ends. Consistency across three surfaces was worth more than the routing library.
-- **Publisher content management lives on the API, not in a separate UI.** Registration and
-  versioning go through `POST /api/v1/publisher/learning-objects`; the workspace lists the catalogue
-  and manages smart links. A publisher-facing interface is a reasonable thing to build next and is
-  not built.
+- **Publisher content management now lives in this workspace.** Registration, quiz authoring,
+  metadata editing, version publication, suspension, retirement and deletion all go through the
+  Publisher API from the Learning objects pages; the workspace no longer only lists the catalogue.
+  The controls that behaviour depends on — that a metadata edit cannot move a package, that saving
+  content publishes rather than overwrites, and that every withdrawal is confirmed — are checked in
+  `tests/authoring.spec.ts`, with the authoritative server-side checks in
+  `tests/runtime-api/publisher-authoring.spec.ts` and
+  `tests/runtime-api/publisher-authoring-postgres.spec.ts` at the repository root.
+- **An authored quiz's marking key is served to its editor.** Everywhere else it is served only on
+  the learner-facing content route. `GET /api/v1/publisher/learning-objects/:id/content` is the
+  exception, because an author correcting a mis-keyed question has to see which option is keyed. It
+  requires repository membership, is never cached, and the read is audited.

@@ -347,3 +347,15 @@ tbody tr:focus {
   padding: 10px 14px;
   margin: 0 0 12px;
 }
+
+/* The console reads; editing lives in the Administration workspace. The hand-off says which is
+ * which, so an operator who finds a wrong title here knows where to go and does not go looking for
+ * an edit control that deliberately is not here. */
+.admin-handoff {
+  background: var(--lorb-sidebar-hover);
+  border: 1px solid var(--lorb-sidebar-line);
+  border-radius: var(--lorb-radius-sm);
+  padding: var(--lorb-space-2);
+  margin-bottom: var(--lorb-space-2);
+  font-size: 0.85rem;
+}

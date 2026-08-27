@@ -166,3 +166,100 @@ button.danger {
 .fatal {
   padding: var(--lorb-space-7);
 }
+
+/* Learning object workspace ------------------------------------------------ */
+
+.page-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--lorb-space-4);
+  flex-wrap: wrap;
+}
+
+button.primary-action {
+  background: var(--lorb-accent);
+  color: var(--lorb-on-accent);
+  border: none;
+  padding: 0.5rem 0.9rem;
+  border-radius: var(--lorb-radius-sm);
+}
+
+/* A row title that opens the record. A button, not a link: it changes the page state rather than
+ * navigating, and a keyboard user should hear it as the control it is. */
+button.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--lorb-accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+label.stacked {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+  margin-bottom: var(--lorb-space-4);
+}
+
+.dialog.wide {
+  max-width: 60rem;
+  width: 92vw;
+  max-height: 88vh;
+  overflow: auto;
+}
+
+.quiz-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lorb-space-4);
+}
+
+.question-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lorb-space-2);
+}
+.question-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--lorb-space-2);
+}
+.question-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
+.options {
+  border: 1px solid var(--lorb-line);
+  border-radius: var(--lorb-radius-sm);
+  padding: var(--lorb-space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--lorb-space-2);
+}
+.options legend {
+  font-size: 0.8rem;
+  color: var(--lorb-muted);
+}
+.option-row {
+  display: flex;
+  align-items: center;
+  gap: var(--lorb-space-2);
+}
+.option-row input[type='text'],
+.option-row > input:not([type]) {
+  flex: 1;
+}
+.option-key {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+}

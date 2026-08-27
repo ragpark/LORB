@@ -3,7 +3,9 @@
 The repository-scoped administration surface: repository lifecycle, player and player-version
 registration and activation, launch-policy authoring and activation, approvals, and the audit trail.
 
-It is not a learner, publisher or operations surface.
+It is not a learner or operations surface. It *is* the publisher surface: the Publisher API is
+reachable from here, because a catalogue an administrator can only add to is barely more operable
+than one they cannot add to at all.
 
 ## What it manages
 
@@ -15,7 +17,7 @@ It is not a learner, publisher or operations surface.
 | Launch policies | Create, version, publish and activate the rules that route a renderer |
 | Approvals | Request → approve → execute, with separation of duties |
 | Audit | Every administrative decision, allowed or denied, append-only |
-| Learning objects | The catalogue, and smart-link creation and revocation |
+| Learning objects | Author a quiz or register a packaged module; edit the catalogue entry; publish a new version; suspend, restore, retire, and delete once withdrawn; smart-link creation and revocation |
 
 ## Separation of duties
 
@@ -40,6 +42,32 @@ deletes outright.
 
 The point is that changing what a launch resolves to is always a new version somebody approved, never
 an edit somebody made.
+
+## Editing the catalogue
+
+The workspace draws one line through everything on the Learning objects pages, and it is worth
+stating plainly because it is the line an administrator would otherwise expect to be somewhere else.
+
+**What the catalogue says** — a title, a description, a stated duration, a kind — is edited in place
+and saved. `PATCH /api/v1/publisher/learning-objects/:id` accepts those four fields and no others, so
+an edit here can never move the module path, the package digest or the version chain.
+
+**What is delivered** is versioned, never edited. Saving a quiz's questions publishes a new content
+version bound to a new object version and supersedes the current one; publishing a packaged module's
+new bundle does the same. Attempts already recorded stay bound to the version they were launched
+against, and the superseded content stays readable, so a learner is never reported against questions
+they did not see.
+
+**Withdrawing** has three strengths. Suspend takes an object out of the catalogue and can be undone.
+Retire is the end of the line and cannot. Delete removes the object outright, and is offered only
+once it has been withdrawn — a published object is one a launch can resolve while the deletion runs.
+It is then refused for any object ever launched or assigned: evidence outlives the catalogue. That
+refusal is decided inside the deleting transaction under a lock on the object row, because a check
+made beforehand can be true when it is read and false by the time the rows go.
+
+An authored quiz's right answers are shown to whoever edits it, which is the one place the marking
+key leaves the learner-facing content route. It is served only to an administrator with membership of
+the repository, never cached, and the read is written to the audit trail.
 
 ## Sign-in
 
