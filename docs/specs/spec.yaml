@@ -28,6 +28,7 @@ implementation_status:
   administration_workspace: IMPLEMENTED # incl. catalogue authoring and CRUD over the Publisher API
   operations_console: IMPLEMENTED
   agent_connector: IMPLEMENTED         # OAuth resource server, roster scoped by explicit link
+  learning_record_store: IMPLEMENTED   # xAPI statements resource, immutable, pseudonymous actors only
   persistence: POSTGRES                # system of record for every mutable surface
   identity: DELEGATED_TO_OIDC_PROVIDER
   observability: IMPLEMENTED           # structured logs, Prometheus metrics, health and readiness
@@ -185,6 +186,7 @@ data_and_integration:
     - {name: Publisher,      base: /api/v1/publisher, auth: OIDC bearer + admin role + repository membership, status: IMPLEMENTED}
     - {name: Administration, base: /api/v1/admin,     auth: OIDC bearer + admin role, status: IMPLEMENTED}
     - {name: Internal,       base: /api/v1/internal,  auth: service credential, status: IMPLEMENTED}
+    - {name: xAPI statements, base: /statements,      auth: bearer or basic,    status: IMPLEMENTED, note: packages/lrs}
     - {name: Integrator,     base: /api/v1/integrator, status: NOT_BUILT}
     - {name: Callback,       base: /api/v1/callbacks,  status: NOT_BUILT}
   idempotency:
@@ -300,6 +302,14 @@ operator_prerequisites:
       Which learning record store, on what terms, with what retention. The
       forwarder speaks the xAPI statements resource and will deliver to any of
       them; which one holds a learner's achievement for how long is a contract.
+
+      The platform now ships one (packages/lrs) so a deployment is not obliged to
+      buy a product before it can retain evidence: xAPI 1.0.3 statements, stored
+      in Postgres, immutable by database trigger, deduplicated by statement id,
+      and refusing an actor that identifies a person. Attachments, signed
+      statements and the profile resources are not implemented. Choosing it over
+      a commercial store, and setting a retention period, remain decisions for
+      the operator — the code takes neither.
   - id: content_governance
     decision: >
       Who may publish, and what review a package gets before it is published.

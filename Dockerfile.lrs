@@ -1,0 +1,24 @@
+# The learning record store.
+#
+# Unlike Dockerfile.dev-lrs — which holds statements in memory and says on its own first line that it
+# is never a deployment target — this is the durable one: it applies its migrations at start-up and
+# keeps every accepted statement in Postgres.
+FROM node:20-bookworm-slim AS build
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+WORKDIR /app
+COPY package.json pnpm-workspace.yaml tsconfig.json tsconfig.build.json ./
+RUN pnpm install --no-frozen-lockfile
+COPY packages ./packages
+COPY src ./src
+RUN pnpm exec tsc -p tsconfig.build.json
+
+FROM node:20-bookworm-slim
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+# The migrations are read from disk at start-up, and tsc does not emit .sql.
+COPY packages/lrs/src/migrations ./dist/packages/lrs/src/migrations
+USER node
+EXPOSE 5000
+CMD ["node","dist/packages/lrs/src/server.js"]
