@@ -7,7 +7,7 @@
  */
 import { createHash } from "node:crypto";
 import pg from "pg";
-import type { StatementFacets } from "./statement.js";
+import { sameStatement, type StatementFacets } from "./statement.js";
 
 export type AcceptOutcome = "STORED" | "DUPLICATE" | "CONFLICT";
 
@@ -80,10 +80,19 @@ export class MemoryLrsStore implements LrsStore {
   async close(): Promise<void> {}
 
   async acceptAll(facets: StatementFacets[]): Promise<BatchResult> {
-    // Checked in full before anything is written, so the all-or-nothing promise holds here too.
+    // Checked in full before anything is written, so the all-or-nothing promise holds here too —
+    // and against the batch's own earlier entries as well as against what is stored. Two entries
+    // sharing an id are invisible to a check that only reads the map: neither is in it yet, and the
+    // second would be written, rejected and then reported as success.
+    const pending = new Map<string, StatementFacets>();
     for (const [index, entry] of facets.entries()) {
-      const existing = this.statements.get(entry.statement_id);
-      if (existing && existing.digest !== entry.digest) return { ok: false, conflictAt: index };
+      const stored = this.statements.get(entry.statement_id);
+      const earlier = pending.get(entry.statement_id);
+      const conflicts = stored
+        ? stored.digest !== entry.digest && !sameStatement(entry, stored.payload)
+        : earlier !== undefined && earlier.digest !== entry.digest && !sameStatement(entry, earlier.payload);
+      if (conflicts) return { ok: false, conflictAt: index };
+      pending.set(entry.statement_id, entry);
     }
     const outcomes: AcceptOutcome[] = [];
     for (const entry of facets) outcomes.push(await this.accept(entry));
@@ -92,7 +101,11 @@ export class MemoryLrsStore implements LrsStore {
 
   async accept(facets: StatementFacets): Promise<AcceptOutcome> {
     const existing = this.statements.get(facets.statement_id);
-    if (existing) return existing.digest === facets.digest ? "DUPLICATE" : "CONFLICT";
+    if (existing) {
+      // The digest settles the common case; the structural comparison settles the round trip, where
+      // a client sends back the representation this store handed it.
+      return existing.digest === facets.digest || sameStatement(facets, existing.payload) ? "DUPLICATE" : "CONFLICT";
+    }
     this.sequence += 1;
     this.statements.set(facets.statement_id, {
       statement_id: facets.statement_id,
@@ -306,8 +319,12 @@ async function acceptWithin(client: pg.PoolClient, facets: StatementFacets): Pro
   );
 
   if (inserted.rowCount === 0) {
-    const existing = await client.query("select payload_digest from statement where statement_id = $1", [facets.statement_id]);
-    return existing.rows[0]?.payload_digest === facets.digest ? "DUPLICATE" : "CONFLICT";
+    const existing = await client.query("select payload_digest, payload from statement where statement_id = $1", [facets.statement_id]);
+    const row = existing.rows[0];
+    if (!row) return "CONFLICT";
+    // The digest is the fast path. The payload comparison is the correct one, and is read only on
+    // this branch — a statement that is already here — so it costs nothing on the common write.
+    return row.payload_digest === facets.digest || sameStatement(facets, row.payload) ? "DUPLICATE" : "CONFLICT";
   }
 
   if (facets.voids) {

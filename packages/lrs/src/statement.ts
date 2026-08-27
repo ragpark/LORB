@@ -61,6 +61,8 @@ const EXTENSION = {
 
 export interface StatementFacets {
   statement_id: string;
+  /** True when the `timestamp` below is this store's, because the sender supplied none. */
+  timestamp_assigned: boolean;
   actor_pseudonym: string | null;
   verb_id: string;
   object_id: string | null;
@@ -104,6 +106,43 @@ export function statementDigest(statement: LrsStatement): string {
   };
   const { id: _id, stored: _stored, ...rest } = statement as LrsStatement & { stored?: unknown };
   return createHash("sha256").update(JSON.stringify(canonical(rest))).digest("hex");
+}
+
+/** Sorted-key JSON, so two encodings of the same value compare equal. */
+function canonicalJson(value: unknown): string {
+  const canonical = (item: unknown): unknown => {
+    if (Array.isArray(item)) return item.map(canonical);
+    if (item && typeof item === "object") {
+      return Object.fromEntries(
+        Object.entries(item as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, value_]) => [key, canonical(value_)]),
+      );
+    }
+    return item;
+  };
+  return JSON.stringify(canonical(value));
+}
+
+/**
+ * Whether an arriving statement is the one already stored under that id.
+ *
+ * The digest answers this for the common case and is compared first. It cannot answer it for one
+ * case, which is the round trip: a statement sent without a `timestamp` is stored with one this
+ * store assigned, so a client that reads that statement back and sends the *authoritative
+ * representation* returns something that never arrived in that form. Comparing digests calls that a
+ * conflict, which is wrong — it is the same statement, echoed.
+ *
+ * So the fields this store assigns are excluded from the comparison rather than from the digest:
+ * `id`, which is the key; `stored`, which is the store's; and `timestamp` where the arriving
+ * statement asserts none, because a sender that omits it is not claiming a different one.
+ */
+export function sameStatement(facets: StatementFacets, storedPayload: unknown): boolean {
+  const strip = (value: unknown, alsoTimestamp: boolean): unknown => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    const { id: _id, stored: _stored, timestamp, ...rest } = value as Record<string, unknown>;
+    return alsoTimestamp ? rest : { ...rest, timestamp };
+  };
+  const ignoreTimestamp = facets.timestamp_assigned;
+  return canonicalJson(strip(facets.payload, ignoreTimestamp)) === canonicalJson(strip(storedPayload, ignoreTimestamp));
 }
 
 /** True when the actor names a person rather than a pseudonym. */
@@ -152,6 +191,7 @@ export function prepareStatement(
 
   const statement_id = (options.addressedTo ?? statement.id ?? randomUUID()).toLowerCase();
   const now = (options.now ?? (() => new Date()))();
+  const timestamp_assigned = statement.timestamp === undefined;
   const timestamp = statement.timestamp ?? now.toISOString();
   const context = (statement.context ?? {}) as { registration?: unknown; extensions?: Record<string, unknown> };
   const extensions = context.extensions ?? {};
@@ -173,6 +213,7 @@ export function prepareStatement(
     prepared: {
       facets: {
         statement_id,
+        timestamp_assigned,
         actor_pseudonym: asString(statement.actor.account?.name),
         verb_id: statement.verb.id,
         object_id: asString(object.id),

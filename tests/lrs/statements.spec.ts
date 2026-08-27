@@ -243,6 +243,54 @@ describe("learning record store", () => {
     expect(await store.count()).toBe(1);
   });
 
+  it("accepts the representation it handed back as the statement it already holds", async () => {
+    const { app, store, auth } = await setup();
+    const id = randomUUID();
+    const body = statement();
+    delete (body as { timestamp?: unknown }).timestamp;
+    expect((await app.inject({ method: "PUT", url: `/statements?statementId=${id}`, headers: auth, payload: body })).statusCode).toBe(204);
+
+    // Read it back and send it straight in again. What comes out carries the timestamp and `stored`
+    // this store assigned, so it never arrived in that form — and it is still the same statement.
+    const representation = (await app.inject({ method: "GET", url: `/statements?statementId=${id}`, headers: auth })).json();
+    const replay = await app.inject({ method: "PUT", url: `/statements?statementId=${id}`, headers: auth, payload: representation });
+    expect(replay.statusCode).toBe(204);
+    expect(await store.count()).toBe(1);
+
+    // The original timestamp-less request is still a duplicate too: both round trips have to work.
+    expect((await app.inject({ method: "PUT", url: `/statements?statementId=${id}`, headers: auth, payload: body })).statusCode).toBe(204);
+    expect(await store.count()).toBe(1);
+
+    // And a genuinely different statement under that id is still refused.
+    const different = { ...representation, result: { completion: false } };
+    expect((await app.inject({ method: "PUT", url: `/statements?statementId=${id}`, headers: auth, payload: different })).statusCode).toBe(409);
+  });
+
+  it("refuses a batch that conflicts with itself, not only with what is stored", async () => {
+    const { app, store, auth } = await setup();
+    const id = randomUUID();
+    const before = await store.count();
+    // Both entries name the same id and disagree. Neither is stored when the batch is checked, so a
+    // check that only reads the store would write the first and report success for both.
+    const response = await app.inject({
+      method: "POST", url: "/statements", headers: auth,
+      payload: [statement({ id, result: { completion: true } }), statement({ id, result: { completion: false } })],
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().detail).toContain("statement 1");
+    expect(await store.count()).toBe(before);
+
+    // The same id twice with the same content is a duplicate, not a conflict. One body, sent twice:
+    // two calls to the fixture would differ by their random registration and be a real conflict.
+    const twice = statement({ id });
+    const agreeing = await app.inject({
+      method: "POST", url: "/statements", headers: auth,
+      payload: [twice, twice],
+    });
+    expect(agreeing.statusCode).toBe(200);
+    expect(await store.count()).toBe(before + 1);
+  });
+
   it("stores nothing from a batch that conflicts part way through", async () => {
     const { app, store, auth } = await setup();
     const taken = randomUUID();
