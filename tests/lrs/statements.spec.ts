@@ -266,6 +266,26 @@ describe("learning record store", () => {
     expect((await app.inject({ method: "PUT", url: `/statements?statementId=${id}`, headers: auth, payload: different })).statusCode).toBe(409);
   });
 
+  it("does not accept a statement asserting no time as one that asserts a time", async () => {
+    const { app, store, auth } = await setup();
+    const id = randomUUID();
+    // Stored with a timestamp the *client* supplied.
+    expect((await app.inject({
+      method: "PUT", url: `/statements?statementId=${id}`, headers: auth,
+      payload: statement({ timestamp: "2026-08-01T09:00:00.000Z" }),
+    })).statusCode).toBe(204);
+
+    // The same content asserting no time is a different assertion, not a duplicate of that one.
+    const timeless = statement({ timestamp: "2026-08-01T09:00:00.000Z" });
+    delete (timeless as { timestamp?: unknown }).timestamp;
+    const response = await app.inject({ method: "PUT", url: `/statements?statementId=${id}`, headers: auth, payload: timeless });
+    expect(response.statusCode).toBe(409);
+    expect(await store.count()).toBe(1);
+    // And the stored one is untouched.
+    const read = await app.inject({ method: "GET", url: `/statements?statementId=${id}`, headers: auth });
+    expect(read.json().timestamp).toBe("2026-08-01T09:00:00.000Z");
+  });
+
   it("refuses a batch that conflicts with itself, not only with what is stored", async () => {
     const { app, store, auth } = await setup();
     const id = randomUUID();

@@ -61,8 +61,6 @@ const EXTENSION = {
 
 export interface StatementFacets {
   statement_id: string;
-  /** True when the `timestamp` below is this store's, because the sender supplied none. */
-  timestamp_assigned: boolean;
   actor_pseudonym: string | null;
   verb_id: string;
   object_id: string | null;
@@ -125,24 +123,30 @@ function canonicalJson(value: unknown): string {
 /**
  * Whether an arriving statement is the one already stored under that id.
  *
- * The digest answers this for the common case and is compared first. It cannot answer it for one
- * case, which is the round trip: a statement sent without a `timestamp` is stored with one this
- * store assigned, so a client that reads that statement back and sends the *authoritative
- * representation* returns something that never arrived in that form. Comparing digests calls that a
- * conflict, which is wrong — it is the same statement, echoed.
+ * Two comparisons, and between them they cover the two ways the same statement can arrive.
  *
- * So the fields this store assigns are excluded from the comparison rather than from the digest:
- * `id`, which is the key; `stored`, which is the store's; and `timestamp` where the arriving
- * statement asserts none, because a sender that omits it is not claiming a different one.
+ * The digest is over the statement *as sent*, so a plain retry — the same bytes again — matches it
+ * whether or not the sender supplied a `timestamp`. That is the case the forwarder produces.
+ *
+ * The other is the round trip: a statement sent without a `timestamp` is stored with one this store
+ * assigned, so a client that reads it back and offers the authoritative representation is sending
+ * something that never arrived in that form. Its digest cannot match. This comparison catches it,
+ * by ignoring exactly the two fields this store owns — `id`, which is the key it is filed under, and
+ * `stored`, which is the store's own clock.
+ *
+ * `timestamp` is deliberately *not* ignored. An earlier version excluded it whenever the arriving
+ * statement omitted one, which reads as generous and is wrong: a statement that asserts a time and
+ * one that asserts none are different assertions, and treating the second as a duplicate of the
+ * first accepts a different statement under a taken id instead of refusing it. Nothing needs the
+ * exclusion — the digest already covers the retry it was reaching for.
  */
 export function sameStatement(facets: StatementFacets, storedPayload: unknown): boolean {
-  const strip = (value: unknown, alsoTimestamp: boolean): unknown => {
+  const strip = (value: unknown): unknown => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-    const { id: _id, stored: _stored, timestamp, ...rest } = value as Record<string, unknown>;
-    return alsoTimestamp ? rest : { ...rest, timestamp };
+    const { id: _id, stored: _stored, ...rest } = value as Record<string, unknown>;
+    return rest;
   };
-  const ignoreTimestamp = facets.timestamp_assigned;
-  return canonicalJson(strip(facets.payload, ignoreTimestamp)) === canonicalJson(strip(storedPayload, ignoreTimestamp));
+  return canonicalJson(strip(facets.payload)) === canonicalJson(strip(storedPayload));
 }
 
 /** True when the actor names a person rather than a pseudonym. */
@@ -191,7 +195,6 @@ export function prepareStatement(
 
   const statement_id = (options.addressedTo ?? statement.id ?? randomUUID()).toLowerCase();
   const now = (options.now ?? (() => new Date()))();
-  const timestamp_assigned = statement.timestamp === undefined;
   const timestamp = statement.timestamp ?? now.toISOString();
   const context = (statement.context ?? {}) as { registration?: unknown; extensions?: Record<string, unknown> };
   const extensions = context.extensions ?? {};
@@ -213,7 +216,6 @@ export function prepareStatement(
     prepared: {
       facets: {
         statement_id,
-        timestamp_assigned,
         actor_pseudonym: asString(statement.actor.account?.name),
         verb_id: statement.verb.id,
         object_id: asString(object.id),
