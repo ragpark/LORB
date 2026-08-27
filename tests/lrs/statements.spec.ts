@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import { buildLrs, testConfig } from "../../packages/lrs/src/app.js";
 import { MemoryLrsStore } from "../../packages/lrs/src/store.js";
 import { identifiesAPerson, statementDigest } from "../../packages/lrs/src/statement.js";
+import { agentFilter } from "../../packages/lrs/src/app.js";
 
 const TOKEN = "a-test-bearer-token-of-sufficient-length";
 
@@ -230,11 +231,100 @@ describe("learning record store", () => {
     expect(about.json().version).toContain("1.0.3");
   });
 
+  it("is idempotent for a statement that carries no timestamp of its own", async () => {
+    const { app, store, auth } = await setup();
+    const id = randomUUID();
+    // No timestamp: the store fills one in from its own clock. Digesting the filled-in value would
+    // give the same request a new identity every time it arrived, so a retry would be a conflict.
+    const body = { ...statement(), timestamp: undefined };
+    delete (body as { timestamp?: unknown }).timestamp;
+    expect((await app.inject({ method: "PUT", url: `/statements?statementId=${id}`, headers: auth, payload: body })).statusCode).toBe(204);
+    expect((await app.inject({ method: "PUT", url: `/statements?statementId=${id}`, headers: auth, payload: body })).statusCode).toBe(204);
+    expect(await store.count()).toBe(1);
+  });
+
+  it("stores nothing from a batch that conflicts part way through", async () => {
+    const { app, store, auth } = await setup();
+    const taken = randomUUID();
+    await app.inject({ method: "PUT", url: `/statements?statementId=${taken}`, headers: auth, payload: statement() });
+    const before = await store.count();
+
+    // The first entry has no id of its own, so if it were written the caller would never learn the
+    // id it was written under — and a retry of the batch would store it a second time.
+    const response = await app.inject({
+      method: "POST", url: "/statements", headers: auth,
+      payload: [statement(), { ...statement({ id: taken }), result: { completion: false } }],
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().detail).toContain("statement 1");
+    expect(await store.count()).toBe(before);
+  });
+
+  it("serves `stored` from its own clock, whatever the sender said", async () => {
+    const { app, auth } = await setup();
+    const id = randomUUID();
+    await app.inject({
+      method: "PUT", url: `/statements?statementId=${id}`, headers: auth,
+      payload: statement({ stored: "1999-01-01T00:00:00.000Z" }),
+    });
+    const read = await app.inject({ method: "GET", url: `/statements?statementId=${id}`, headers: auth });
+    expect(read.json().stored).toBeDefined();
+    expect(read.json().stored).not.toBe("1999-01-01T00:00:00.000Z");
+
+    // And a statement that arrived without one is not returned without provenance.
+    const bare = randomUUID();
+    await app.inject({ method: "PUT", url: `/statements?statementId=${bare}`, headers: auth, payload: statement() });
+    const listed = await app.inject({ method: "GET", url: `/statements?statementId=${bare}`, headers: auth });
+    expect(listed.json().stored).toBeDefined();
+  });
+
+  it("filters on an xAPI Agent as well as on the platform's shorthand", async () => {
+    const { app, auth } = await setup();
+    const learner = "9".repeat(64);
+    await app.inject({
+      method: "PUT", url: `/statements?statementId=${randomUUID()}`, headers: auth,
+      payload: statement({ actor: { objectType: "Agent", account: { homePage: "https://lorb.example/pseudonym", name: learner } } }),
+    });
+
+    const asAgent = encodeURIComponent(JSON.stringify({ objectType: "Agent", account: { homePage: "https://lorb.example/pseudonym", name: learner } }));
+    const standard = await app.inject({ method: "GET", url: `/statements?agent=${asAgent}`, headers: auth });
+    expect(standard.json().statements).toHaveLength(1);
+    const shorthand = await app.inject({ method: "GET", url: `/statements?agent=${learner}`, headers: auth });
+    expect(shorthand.json().statements).toHaveLength(1);
+
+    // An Agent this store could never hold a statement for matches nothing, not everything.
+    const byMbox = encodeURIComponent(JSON.stringify({ mbox: "mailto:learner@example.test" }));
+    expect((await app.inject({ method: "GET", url: `/statements?agent=${byMbox}`, headers: auth })).json().statements).toHaveLength(0);
+    expect((await app.inject({ method: "GET", url: "/statements?agent=%7Bnot-json", headers: auth })).statusCode).toBe(400);
+  });
+
+  it("reads an agent filter out of either shape", () => {
+    expect(agentFilter(undefined)).toBeUndefined();
+    expect(agentFilter("abc")).toBe("abc");
+    expect(agentFilter(JSON.stringify({ account: { homePage: "h", name: "abc" } }))).toBe("abc");
+    expect(agentFilter(JSON.stringify({ mbox: "mailto:a@b.test" }))).toBe("UNMATCHABLE");
+    expect(agentFilter("{oops")).toBe("UNPARSEABLE");
+    expect(agentFilter(JSON.stringify({ objectType: "Agent" }))).toBe("UNPARSEABLE");
+  });
+
   it("digests a statement independently of key order and of the store's own clock", async () => {
     const first = statementDigest({ actor: { account: { homePage: "h", name: "n" } }, verb: { id: "v" }, object: { id: "o" }, timestamp: "2026-08-27T09:00:00.000Z" } as never);
     const reordered = statementDigest({ timestamp: "2026-08-27T09:00:00.000Z", object: { id: "o" }, verb: { id: "v" }, actor: { account: { name: "n", homePage: "h" } } } as never);
     expect(reordered).toBe(first);
     const stored = statementDigest({ actor: { account: { homePage: "h", name: "n" } }, verb: { id: "v" }, object: { id: "o" }, timestamp: "2026-08-27T09:00:00.000Z", stored: "2026-08-27T10:00:00.000Z" } as never);
     expect(stored).toBe(first);
+  });
+
+  it("does not confuse a `stored` key inside somebody's telemetry with its own", async () => {
+    const { app, auth } = await setup();
+    const id = randomUUID();
+    const telemetry = (value: string) => statement({
+      result: { extensions: { "https://example.test/xapi/sensor": { stored: value } } },
+    });
+    expect((await app.inject({ method: "PUT", url: `/statements?statementId=${id}`, headers: auth, payload: telemetry("first") })).statusCode).toBe(204);
+    // Two genuinely different statements. Stripping every key named `stored` would digest them the
+    // same and report the second as a duplicate, silently keeping the first.
+    const second = await app.inject({ method: "PUT", url: `/statements?statementId=${id}`, headers: auth, payload: telemetry("second") });
+    expect(second.statusCode).toBe(409);
   });
 });

@@ -76,11 +76,19 @@ export interface StatementFacets {
 }
 
 /**
- * A stable digest of the statement as stored.
+ * A stable digest of the statement *as the client sent it*.
  *
- * `stored` and the id are excluded: the id is the key, and `stored` is assigned by this store, so
- * including either would make an identical redelivery look like a conflicting one. Keys are sorted
- * so that two encodings of the same statement agree.
+ * Two exclusions, both at the top level only. The id is the key the digest is compared under, and
+ * `stored` belongs to this store rather than to the sender. Nothing else is removed: a `stored` key
+ * nested inside `result.extensions` is somebody's telemetry, and stripping it would make two
+ * genuinely different statements digest the same — reported as a duplicate, with the first silently
+ * kept.
+ *
+ * It digests what arrived rather than what is stored, which is what makes a redelivery idempotent:
+ * this store fills in an absent `timestamp` from its own clock, and digesting the filled-in value
+ * would give the same request a new identity every time it was sent.
+ *
+ * Keys are sorted throughout so that two encodings of the same statement agree.
  */
 export function statementDigest(statement: LrsStatement): string {
   const canonical = (value: unknown): unknown => {
@@ -88,14 +96,13 @@ export function statementDigest(statement: LrsStatement): string {
     if (value && typeof value === "object") {
       return Object.fromEntries(
         Object.entries(value as Record<string, unknown>)
-          .filter(([key]) => key !== "stored")
           .sort(([a], [b]) => a.localeCompare(b))
           .map(([key, item]) => [key, canonical(item)]),
       );
     }
     return value;
   };
-  const { id: _id, ...rest } = statement;
+  const { id: _id, stored: _stored, ...rest } = statement as LrsStatement & { stored?: unknown };
   return createHash("sha256").update(JSON.stringify(canonical(rest))).digest("hex");
 }
 
@@ -150,7 +157,16 @@ export function prepareStatement(
   const extensions = context.extensions ?? {};
   const object = statement.object as { id?: unknown; objectType?: unknown };
   const voids = statement.verb.id === VOIDED_VERB && object.objectType === "StatementRef" ? asString(object.id) : null;
-  const payload: LrsStatement = { ...statement, id: statement_id, timestamp };
+
+  // The digest is taken before this store's defaults are applied, so that redelivering the same
+  // request is recognised as the same statement however many times it arrives.
+  const digest = statementDigest(statement);
+
+  // `stored` is the store's own record of when it took the statement, and xAPI reserves it for the
+  // store to assign. A value the client sent is dropped here and the authoritative one is put back
+  // on the way out, so provenance cannot be forged by a sender or lost by one that omits it.
+  const { stored: _clientStored, ...withoutClientStored } = statement as LrsStatement & { stored?: unknown };
+  const payload: LrsStatement = { ...withoutClientStored, id: statement_id, timestamp };
 
   return {
     ok: true,
@@ -168,7 +184,7 @@ export function prepareStatement(
         timestamp,
         voids: voids ? voids.toLowerCase() : null,
         payload,
-        digest: statementDigest(payload),
+        digest,
       },
     },
   };

@@ -45,12 +45,21 @@ export interface StatementPage {
   next?: { seq: string };
 }
 
+/**
+ * The result of a batch. Either every statement in it was written, or none was: a batch that is
+ * half-stored and then rejected leaves the sender unable to tell which half landed, and — for
+ * statements it did not supply ids for — with no way to reach the ones that did.
+ */
+export type BatchResult = { ok: true; outcomes: AcceptOutcome[] } | { ok: false; conflictAt: number };
+
 export interface LrsStore {
   readonly kind: "postgres" | "memory";
   ping(): Promise<void>;
   close(): Promise<void>;
   /** Writes one statement, applying xAPI's dedupe-by-id rule. */
   accept(facets: StatementFacets): Promise<AcceptOutcome>;
+  /** Writes a batch atomically: a conflict anywhere in it stores none of it. */
+  acceptAll(facets: StatementFacets[]): Promise<BatchResult>;
   get(statementId: string): Promise<StoredStatement | undefined>;
   query(query: StatementQuery): Promise<StatementPage>;
   count(): Promise<number>;
@@ -69,6 +78,17 @@ export class MemoryLrsStore implements LrsStore {
 
   async ping(): Promise<void> {}
   async close(): Promise<void> {}
+
+  async acceptAll(facets: StatementFacets[]): Promise<BatchResult> {
+    // Checked in full before anything is written, so the all-or-nothing promise holds here too.
+    for (const [index, entry] of facets.entries()) {
+      const existing = this.statements.get(entry.statement_id);
+      if (existing && existing.digest !== entry.digest) return { ok: false, conflictAt: index };
+    }
+    const outcomes: AcceptOutcome[] = [];
+    for (const entry of facets) outcomes.push(await this.accept(entry));
+    return { ok: true, outcomes };
+  }
 
   async accept(facets: StatementFacets): Promise<AcceptOutcome> {
     const existing = this.statements.get(facets.statement_id);
@@ -94,7 +114,7 @@ export class MemoryLrsStore implements LrsStore {
 
   async get(statementId: string): Promise<StoredStatement | undefined> {
     const row = this.statements.get(statementId.toLowerCase());
-    return row ? { statement_id: row.statement_id, seq: row.seq, stored_at: row.stored_at, timestamp: row.timestamp, voided: row.voided, payload: row.payload } : undefined;
+    return row ? withStored(row) : undefined;
   }
 
   async query(query: StatementQuery): Promise<StatementPage> {
@@ -117,7 +137,7 @@ export class MemoryLrsStore implements LrsStore {
     const page = rows.slice(0, query.limit);
     const last = page[page.length - 1];
     return {
-      statements: page.map((row) => ({ statement_id: row.statement_id, seq: row.seq, stored_at: row.stored_at, timestamp: row.timestamp, voided: row.voided, payload: row.payload })),
+      statements: page.map(withStored),
       next: rows.length > query.limit && last ? { seq: last.seq } : undefined,
     };
   }
@@ -154,43 +174,37 @@ export class PostgresLrsStore implements LrsStore {
     const client = await this.pool.connect();
     try {
       await client.query("begin");
-      const inserted = await client.query(
-        `insert into statement (statement_id, timestamp, actor_pseudonym, verb_id, object_id, registration,
-           repository_id, attempt_id, package_version_id, correlation_id, payload_digest, payload,
-           voided, voided_by, voided_at)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
-           exists (select 1 from statement_void where voided_statement_id = $1),
-           (select voiding_statement_id from statement_void where voided_statement_id = $1 limit 1),
-           case when exists (select 1 from statement_void where voided_statement_id = $1) then now() end)
-         on conflict (statement_id) do nothing
-         returning statement_id`,
-        [
-          facets.statement_id, facets.timestamp, facets.actor_pseudonym, facets.verb_id, facets.object_id,
-          matchesUuid(facets.registration), matchesUuid(facets.repository_id), matchesUuid(facets.attempt_id),
-          matchesUuid(facets.package_version_id), facets.correlation_id, facets.digest, JSON.stringify(facets.payload),
-        ],
-      );
+      const outcome = await acceptWithin(client, facets);
+      await client.query("commit");
+      return outcome;
+    } catch (error) {
+      await client.query("rollback").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
 
-      if (inserted.rowCount === 0) {
-        const existing = await client.query("select payload_digest from statement where statement_id = $1", [facets.statement_id]);
-        await client.query("commit");
-        return existing.rows[0]?.payload_digest === facets.digest ? "DUPLICATE" : "CONFLICT";
-      }
-
-      if (facets.voids) {
-        await client.query(
-          "insert into statement_void (voiding_statement_id, voided_statement_id) values ($1,$2) on conflict do nothing",
-          [facets.statement_id, facets.voids],
-        );
-        // Applied where the target is already here; where it is not, the insert above applies it when
-        // the target arrives. Delivery order is not guaranteed, so both directions have to work.
-        await client.query(
-          "update statement set voided = true, voided_at = now(), voided_by = $2 where statement_id = $1 and voided = false",
-          [facets.voids, facets.statement_id],
-        );
+  /**
+   * A batch in one transaction. A conflict anywhere rolls the whole thing back, so the ids answered
+   * to the caller are exactly the statements that are now stored — and a retry of a rejected batch
+   * cannot leave a first attempt's generated ids stranded and unreachable.
+   */
+  async acceptAll(facets: StatementFacets[]): Promise<BatchResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const outcomes: AcceptOutcome[] = [];
+      for (const [index, entry] of facets.entries()) {
+        const outcome = await acceptWithin(client, entry);
+        if (outcome === "CONFLICT") {
+          await client.query("rollback");
+          return { ok: false, conflictAt: index };
+        }
+        outcomes.push(outcome);
       }
       await client.query("commit");
-      return "STORED";
+      return { ok: true, outcomes };
     } catch (error) {
       await client.query("rollback").catch(() => undefined);
       throw error;
@@ -205,7 +219,7 @@ export class PostgresLrsStore implements LrsStore {
       [statementId.toLowerCase()],
     );
     const row = result.rows[0];
-    return row ? { ...row, seq: String(row.seq), stored_at: iso(row.stored_at), timestamp: iso(row.timestamp) } : undefined;
+    return row ? withStored({ ...row, seq: String(row.seq), stored_at: iso(row.stored_at), timestamp: iso(row.timestamp) }) : undefined;
   }
 
   async query(query: StatementQuery): Promise<StatementPage> {
@@ -236,7 +250,9 @@ export class PostgresLrsStore implements LrsStore {
        order by seq ${direction} limit $${values.length}`,
       values,
     );
-    const rows = result.rows.map((row) => ({ ...row, seq: String(row.seq), stored_at: iso(row.stored_at), timestamp: iso(row.timestamp) }));
+    const rows = result.rows
+      .map((row) => ({ ...row, seq: String(row.seq), stored_at: iso(row.stored_at), timestamp: iso(row.timestamp) }))
+      .map(withStored);
     const page = rows.slice(0, query.limit);
     const last = page[page.length - 1];
     return {
@@ -248,6 +264,65 @@ export class PostgresLrsStore implements LrsStore {
   async count(): Promise<number> {
     return Number((await this.pool.query("select count(*)::int as count from statement")).rows[0].count);
   }
+}
+
+/**
+ * Puts this store's own `stored` on the way out.
+ *
+ * xAPI reserves `stored` for the learning record store to assign, and the column is the authority.
+ * Serving it from the row means a statement that arrived without one is not returned without
+ * provenance, and one that arrived carrying somebody's guess does not keep it.
+ */
+function withStored(row: StoredStatement): StoredStatement {
+  const payload = row.payload && typeof row.payload === "object" && !Array.isArray(row.payload)
+    ? { ...(row.payload as Record<string, unknown>), stored: row.stored_at }
+    : row.payload;
+  return { statement_id: row.statement_id, seq: row.seq, stored_at: row.stored_at, timestamp: row.timestamp, voided: row.voided, payload };
+}
+
+/**
+ * Writes one statement on a caller's transaction, so a batch can share one.
+ *
+ * The insert is the concurrency control: two replicas delivered the same statement at the same
+ * moment both reach `on conflict do nothing`, and exactly one of them inserted. The loser reads the
+ * row and compares digests, which is the answer it would have got a millisecond earlier.
+ */
+async function acceptWithin(client: pg.PoolClient, facets: StatementFacets): Promise<AcceptOutcome> {
+  const inserted = await client.query(
+    `insert into statement (statement_id, timestamp, actor_pseudonym, verb_id, object_id, registration,
+       repository_id, attempt_id, package_version_id, correlation_id, payload_digest, payload,
+       voided, voided_by, voided_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+       exists (select 1 from statement_void where voided_statement_id = $1),
+       (select voiding_statement_id from statement_void where voided_statement_id = $1 limit 1),
+       case when exists (select 1 from statement_void where voided_statement_id = $1) then now() end)
+     on conflict (statement_id) do nothing
+     returning statement_id`,
+    [
+      facets.statement_id, facets.timestamp, facets.actor_pseudonym, facets.verb_id, facets.object_id,
+      matchesUuid(facets.registration), matchesUuid(facets.repository_id), matchesUuid(facets.attempt_id),
+      matchesUuid(facets.package_version_id), facets.correlation_id, facets.digest, JSON.stringify(facets.payload),
+    ],
+  );
+
+  if (inserted.rowCount === 0) {
+    const existing = await client.query("select payload_digest from statement where statement_id = $1", [facets.statement_id]);
+    return existing.rows[0]?.payload_digest === facets.digest ? "DUPLICATE" : "CONFLICT";
+  }
+
+  if (facets.voids) {
+    await client.query(
+      "insert into statement_void (voiding_statement_id, voided_statement_id) values ($1,$2) on conflict do nothing",
+      [facets.statement_id, facets.voids],
+    );
+    // Applied where the target is already here; where it is not, the insert above applies it when the
+    // target arrives. Delivery order is not guaranteed, so both directions have to work.
+    await client.query(
+      "update statement set voided = true, voided_at = now(), voided_by = $2 where statement_id = $1 and voided = false",
+      [facets.voids, facets.statement_id],
+    );
+  }
+  return "STORED";
 }
 
 /** A short, opaque continuation token. Its contents are this store's business, not the caller's. */

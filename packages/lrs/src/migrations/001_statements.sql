@@ -54,13 +54,24 @@ create table if not exists statement_void (
 );
 create index if not exists statement_void_target_idx on statement_void(voided_statement_id);
 
+-- Everything is frozen except the three voiding columns.
+--
+-- Written as an allow-list rather than a list of protected columns on purpose: naming the ones that
+-- may not change leaves every column added later mutable by default, and it is the *facets* — the
+-- actor, the verb, the object, the sequence a query pages by — that decide which statements a reader
+-- is shown. A payload nobody can edit is worth little if the row's answer to "whose statement is
+-- this?" can be edited instead.
 create or replace function statement_is_immutable() returns trigger as $$
+declare
+  candidate statement%rowtype;
 begin
-  if new.statement_id is distinct from old.statement_id
-     or new.payload_digest is distinct from old.payload_digest
-     or new.payload::text is distinct from old.payload::text
-     or new.timestamp is distinct from old.timestamp
-     or new.stored_at is distinct from old.stored_at then
+  -- Take the proposed row, put the voiding columns back to what they were, and see whether anything
+  -- is left over. If something is, the update changed more than a void and is refused.
+  candidate := new;
+  candidate.voided := old.voided;
+  candidate.voided_at := old.voided_at;
+  candidate.voided_by := old.voided_by;
+  if row(candidate.*) is distinct from row(old.*) then
     raise exception 'STATEMENT_IMMUTABLE';
   end if;
   return new;
