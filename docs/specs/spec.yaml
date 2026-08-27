@@ -313,7 +313,12 @@ operator_prerequisites:
       launch resolves to is versioned. A content edit writes a new immutable
       content version and supersedes the object version bound to the old one, so
       evidence recorded against superseded questions still names content that
-      exists. Deletion is refused for any object with an attempt or an assignment
-      against it; those are retired. Held by
+      exists. Deletion requires the object to have been withdrawn first — a
+      published object is one a launch can resolve while the deletion runs — and
+      is then refused for any object with an attempt, an assignment or a class
+      assignment against it; those are retired. That refusal is decided inside
+      the deleting transaction under a lock on the object row, because migration
+      007 deliberately dropped the foreign key from attempt to package_version
+      and nothing underneath the delete would otherwise stop it. Held by
       tests/runtime-api/publisher-authoring.spec.ts and
       tests/runtime-api/publisher-authoring-postgres.spec.ts.

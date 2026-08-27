@@ -5,8 +5,8 @@ import { randomUUID } from "node:crypto";
 import type { QuizContent, QuizDraft } from "../../../contracts/src/index.js";
 import { buildQuizRegistration, buildQuizRevision, DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE } from "./shared.js";
 import type {
-  CatalogueStore, LearningObjectRow, ObjectContentRevision, ObjectLifecycleStatus, ObjectMetadataPatch,
-  ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredQuiz, Repository,
+  CatalogueStore, LearningObjectRow, ObjectContentRevision, ObjectDeletion, ObjectLifecycleStatus,
+  ObjectMetadataPatch, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredQuiz, Repository,
 } from "./types.js";
 
 export class MemoryCatalogueStore implements CatalogueStore {
@@ -196,15 +196,23 @@ export class MemoryCatalogueStore implements CatalogueStore {
     return this.setObjectStatus(objectId, "RETIRED");
   }
 
-  async deleteObject(objectId: string): Promise<boolean> {
+  /**
+   * The in-process catalogue holds no attempts and no rosters, so it can enforce only the half of
+   * the contract it can see: an object that is still deliverable is refused, and the caller checks
+   * use against the runtime store it does hold.
+   */
+  async deleteObject(objectId: string): Promise<ObjectDeletion> {
     const id = objectId.toLowerCase();
-    if (!this.objects.delete(id)) return false;
+    const object = this.objects.get(id);
+    if (!object) return "NOT_FOUND";
+    if (!["SUSPENDED", "RETIRED"].includes(object.status)) return "STATE_INVALID";
+    this.objects.delete(id);
     this.contents.delete(id);
     for (const key of [...this.contentHistory.keys()]) if (key.startsWith(`${id}:`)) this.contentHistory.delete(key);
     for (const [key, row] of [...this.versions]) if (row.object_id.toLowerCase() === id) this.versions.delete(key);
     // The shared quiz player belongs to no object and outlives every one of them.
     for (const [key, row] of [...this.packages]) if (row.object_id?.toLowerCase() === id) this.packages.delete(key);
-    return true;
+    return "DELETED";
   }
 
   async reviseQuizContent(objectId: string, draft: QuizDraft): Promise<ObjectContentRevision | undefined> {

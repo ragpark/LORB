@@ -245,11 +245,20 @@ describe("Publisher authoring and CRUD", () => {
     expect((await call("PATCH", `/api/v1/publisher/learning-objects/${objectId}`, { title: "Too late" })).statusCode).toBe(409);
   });
 
-  it("deletes an object that was never delivered, and refuses to delete one that was", async () => {
+  it("deletes a withdrawn object that was never delivered, and refuses to delete one that was", async () => {
     const { call, store, catalogue, repositoryId } = await setup();
 
     const disposable = await call("POST", "/api/v1/publisher/learning-objects", packagedObject(repositoryId));
     const disposableId = disposable.json().object_id as string;
+
+    // A published object is one a launch can still resolve, so it is withdrawn first rather than
+    // deleted out from under a launch that is already in flight.
+    const tooSoon = await call("DELETE", `/api/v1/publisher/learning-objects/${disposableId}`);
+    expect(tooSoon.statusCode).toBe(409);
+    expect(tooSoon.json().code).toBe("LEARNING_OBJECT_DELIVERABLE");
+    expect(await catalogue.learningObject(disposableId)).toBeDefined();
+
+    expect((await call("POST", `/api/v1/publisher/learning-objects/${disposableId}/suspend`)).statusCode).toBe(200);
     const deleted = await call("DELETE", `/api/v1/publisher/learning-objects/${disposableId}`);
     expect(deleted.statusCode).toBe(200);
     expect(deleted.json().deleted).toBe(true);
@@ -267,13 +276,14 @@ describe("Publisher authoring and CRUD", () => {
       pseudonym: "f".repeat(64), consumer_id: "test", status: "COMPLETED", revision: 1,
       correlation_id: randomUUID(), created_at: new Date().toISOString(), source: "consumer",
     });
+    expect((await call("POST", `/api/v1/publisher/learning-objects/${launchedId}/retire`)).statusCode).toBe(200);
     const refused = await call("DELETE", `/api/v1/publisher/learning-objects/${launchedId}`);
     expect(refused.statusCode).toBe(409);
     expect(refused.json().code).toBe("LEARNING_OBJECT_IN_USE");
     expect(await catalogue.learningObject(launchedId)).toBeDefined();
   });
 
-  it("refuses to delete an object a class has been assigned", async () => {
+  it("refuses to delete an object that has been assigned", async () => {
     const { call, store, repositoryId } = await setup();
     const created = await call("POST", "/api/v1/publisher/learning-objects", packagedObject(repositoryId));
     const objectId = created.json().object_id as string;
@@ -281,6 +291,7 @@ describe("Publisher authoring and CRUD", () => {
       assignment_id: randomUUID(), object_id: objectId, created_at: new Date().toISOString(),
       source: "class", pseudonyms: ["e".repeat(64)],
     });
+    expect((await call("POST", `/api/v1/publisher/learning-objects/${objectId}/suspend`)).statusCode).toBe(200);
     const refused = await call("DELETE", `/api/v1/publisher/learning-objects/${objectId}`);
     expect(refused.statusCode).toBe(409);
     expect(refused.json().code).toBe("LEARNING_OBJECT_IN_USE");

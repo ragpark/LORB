@@ -10,9 +10,27 @@
  */
 import { adminApiRequest, AdminApiError, type AdminRequestOptions } from './api-client.js';
 
-export const ADMIN_API_BASE = import.meta.env.VITE_ADMIN_API_BASE ?? 'http://localhost:3000/api/v1/admin';
-export const PUBLISHER_API_BASE =
-  import.meta.env.VITE_PUBLISHER_API_BASE ?? ADMIN_API_BASE.replace(/\/admin\/*$/, '/publisher');
+/**
+ * Reads a build-time setting, treating an empty value as unset.
+ *
+ * An image that declares `ENV VITE_PUBLISHER_API_BASE=${VITE_PUBLISHER_API_BASE}` for a build
+ * argument nobody passed hands Vite an empty string, not an absent variable — and `??` falls back
+ * only on the absent one. The publisher base is optional by design, so without this the documented
+ * default deployment compiles a bundle whose publisher requests go to a path on the workspace's own
+ * origin instead of the API, and the catalogue pages fail on every request.
+ */
+const setting = (value: string | undefined): string | undefined => (value && value.trim() !== '' ? value : undefined);
+
+/**
+ * The publisher surface beside a given administration surface. A base that does not end in `/admin`
+ * cannot be derived from and must be configured explicitly.
+ */
+export function publisherBaseFor(adminBase: string): string {
+  return adminBase.replace(/\/admin\/*$/, '/publisher');
+}
+
+export const ADMIN_API_BASE = setting(import.meta.env.VITE_ADMIN_API_BASE) ?? 'http://localhost:3000/api/v1/admin';
+export const PUBLISHER_API_BASE = setting(import.meta.env.VITE_PUBLISHER_API_BASE) ?? publisherBaseFor(ADMIN_API_BASE);
 
 export function admin<T>(path: string, options?: AdminRequestOptions): Promise<T> {
   return adminApiRequest<T>(ADMIN_API_BASE, path, options);

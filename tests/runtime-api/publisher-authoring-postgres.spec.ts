@@ -180,10 +180,16 @@ describeIfDatabase("Publisher authoring against Postgres", () => {
     expect(versions.rows.map((row) => row.content_version).sort()).toEqual(["1", "2"]);
   });
 
-  it("deletes an unlaunched object and everything that only described it", async () => {
+  it("deletes a withdrawn, unlaunched object and everything that only described it", async () => {
     const object = await registerObject("Registered by mistake");
     const link = await call("POST", `/api/v1/admin/learning-objects/${object.object_id}/smart-link`);
     expect(link.statusCode).toBe(201);
+
+    // Withdrawn first: a published object is one a launch can resolve while the deletion runs.
+    const tooSoon = await call("DELETE", `/api/v1/publisher/learning-objects/${object.object_id}`);
+    expect(tooSoon.statusCode).toBe(409);
+    expect(tooSoon.json().code).toBe("LEARNING_OBJECT_DELIVERABLE");
+    expect((await call("POST", `/api/v1/publisher/learning-objects/${object.object_id}/suspend`)).statusCode).toBe(200);
 
     const deleted = await call("DELETE", `/api/v1/publisher/learning-objects/${object.object_id}`);
     expect(deleted.statusCode).toBe(200);
@@ -209,15 +215,64 @@ describeIfDatabase("Publisher authoring against Postgres", () => {
       correlation_id: randomUUID(), created_at: new Date().toISOString(), source: "consumer",
     });
 
-    const refused = await call("DELETE", `/api/v1/publisher/learning-objects/${object.object_id}`);
-    expect(refused.statusCode).toBe(409);
-    expect(refused.json().code).toBe("LEARNING_OBJECT_IN_USE");
-    expect(await catalogue.learningObject(object.object_id)).toBeDefined();
-
     // Retirement is what that object gets instead, and it is not refused.
     const retired = await call("POST", `/api/v1/publisher/learning-objects/${object.object_id}/retire`);
     expect(retired.statusCode).toBe(200);
     expect(retired.json().status).toBe("RETIRED");
     expect((await pool.query("select retired_at from learning_object where object_id = $1", [object.object_id])).rows[0].retired_at).not.toBeNull();
+
+    const refused = await call("DELETE", `/api/v1/publisher/learning-objects/${object.object_id}`);
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json().code).toBe("LEARNING_OBJECT_IN_USE");
+    expect(await catalogue.learningObject(object.object_id)).toBeDefined();
+  });
+
+  /**
+   * A class assignment lives in `class_assignment`, written by the administration surface — not in
+   * the runtime `assignment` table an agent or an internal batch writes. Reading only the second let
+   * an object a class was working through be deleted out from under its roster.
+   */
+  it("refuses to delete an object a class has been assigned", async () => {
+    const object = await registerObject("Assigned to a class");
+    const created = await call("POST", "/api/v1/admin/classes", { name: `9B ${randomUUID().slice(0, 6)}` });
+    expect(created.statusCode).toBe(201);
+    const classId = created.json().class_id as string;
+    await pool.query(
+      "insert into class_assignment (assignment_id, class_id, object_id, assigned_by_pseudonym, idempotency_key, learner_count) values ($1,$2,$3,$4,$5,$6)",
+      [randomUUID(), classId, object.object_id, "b".repeat(64), randomUUID(), 1],
+    );
+
+    expect((await call("POST", `/api/v1/publisher/learning-objects/${object.object_id}/suspend`)).statusCode).toBe(200);
+    const refused = await call("DELETE", `/api/v1/publisher/learning-objects/${object.object_id}`);
+    expect(refused.statusCode).toBe(409);
+    expect(refused.json().code).toBe("LEARNING_OBJECT_IN_USE");
+    expect((await pool.query("select 1 from learning_object where object_id = $1", [object.object_id])).rowCount).toBe(1);
+  });
+
+  /**
+   * The refusal that matters is the one made inside the deleting transaction. A check made before it
+   * is a check of the past: migration 007 dropped the foreign key from `attempt` to
+   * `package_version` so an attempt survives whatever happens to the catalogue, so nothing
+   * underneath the delete would stop it.
+   */
+  it("refuses inside the transaction when use appears after the caller's own check", async () => {
+    const object = await registerObject("Raced by a launch");
+    expect((await call("POST", `/api/v1/publisher/learning-objects/${object.object_id}/suspend`)).statusCode).toBe(200);
+    await runtime.store.createAttempt({
+      attempt_id: randomUUID(), repository_id: repositoryId, object_id: object.object_id,
+      object_version_id: object.active_object_version_id, package_version_id: object.active_package_version_id,
+      pseudonym: "c".repeat(64), consumer_id: "authoring-suite", status: "STARTED", revision: 1,
+      correlation_id: randomUUID(), created_at: new Date().toISOString(), source: "consumer",
+    });
+
+    // Straight at the store, so the route's own pre-check is not the thing being tested.
+    expect(await catalogue.deleteObject(object.object_id)).toBe("IN_USE");
+    expect((await pool.query("select 1 from learning_object where object_id = $1", [object.object_id])).rowCount).toBe(1);
+  });
+
+  it("refuses at the store to delete an object that is still deliverable", async () => {
+    const object = await registerObject("Still published");
+    expect(await catalogue.deleteObject(object.object_id)).toBe("STATE_INVALID");
+    expect((await pool.query("select 1 from learning_object where object_id = $1", [object.object_id])).rowCount).toBe(1);
   });
 });

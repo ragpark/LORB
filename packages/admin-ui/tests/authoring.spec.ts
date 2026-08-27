@@ -11,6 +11,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { emptyQuiz, MAX_QUESTIONS, OPTION_IDS, quizFormFrom, quizPayload, quizProblem, type QuizForm } from '../src/lib/quiz-draft.js';
+import { publisherBaseFor } from '../src/lib/catalogue-api.js';
 
 const workspace = readFileSync(new URL('../src/learning-objects.tsx', import.meta.url).pathname, 'utf8');
 const catalogueApi = readFileSync(new URL('../src/lib/catalogue-api.ts', import.meta.url).pathname, 'utf8');
@@ -126,8 +127,24 @@ describe('editing and withdrawing a learning object', () => {
     expect(workspace).toContain('<AlertDialog.Cancel asChild>');
   });
 
+  // A published object is one a launch can resolve while the deletion runs, so the API refuses it.
+  // Offering the control anyway would put the refusal after the confirmation rather than before it.
+  it('offers deletion only once the object has been withdrawn', () => {
+    expect(workspace).toContain("{status !== 'PUBLISHED' && (");
+  });
+
   it('derives the publisher surface from the configured administration surface', () => {
-    expect(catalogueApi).toContain("ADMIN_API_BASE.replace(/\\/admin\\/*$/, '/publisher')");
+    expect(publisherBaseFor('https://runtime.lorb.example/api/v1/admin')).toBe('https://runtime.lorb.example/api/v1/publisher');
+    expect(publisherBaseFor('http://localhost:3000/api/v1/admin/')).toBe('http://localhost:3000/api/v1/publisher');
     expect(catalogueApi).toContain('VITE_PUBLISHER_API_BASE');
+  });
+
+  // An image declares ENV for every build argument it accepts, so one that was not passed reaches
+  // the bundle as an empty string rather than as an absent variable. `??` does not fall back on it,
+  // and the workspace would post every publisher request to its own origin.
+  it('treats an unset build argument that arrives as an empty string as unset', () => {
+    expect(catalogueApi).toContain("value.trim() !== ''");
+    expect(catalogueApi).toContain('setting(import.meta.env.VITE_PUBLISHER_API_BASE)');
+    expect(catalogueApi).toContain('setting(import.meta.env.VITE_ADMIN_API_BASE)');
   });
 });

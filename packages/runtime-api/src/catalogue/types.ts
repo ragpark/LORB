@@ -89,6 +89,15 @@ export interface ObjectMetadataPatch {
   kind?: string;
 }
 
+/**
+ * What a deletion did, or why it did nothing.
+ *
+ * A boolean was not enough once the refusals became the interesting part: `IN_USE` and
+ * `STATE_INVALID` are the two the caller has to tell apart, and the check that produces them has to
+ * happen inside the same transaction as the delete to mean anything.
+ */
+export type ObjectDeletion = "DELETED" | "NOT_FOUND" | "IN_USE" | "STATE_INVALID";
+
 /** The lifecycle states an administrator may move a registered object between. */
 export type ObjectLifecycleStatus = "PUBLISHED" | "SUSPENDED" | "RETIRED";
 
@@ -155,11 +164,15 @@ export interface CatalogueStore {
   setObjectStatus(objectId: string, status: ObjectLifecycleStatus): Promise<LearningObjectRow | undefined>;
   retireObject(objectId: string): Promise<LearningObjectRow | undefined>;
   /**
-   * Removes an object and everything that only exists to describe it. The caller is responsible for
-   * establishing that nothing was ever delivered against it — evidence outlives the catalogue, and
-   * an object with attempts is retired, never deleted.
+   * Removes an object and everything that only exists to describe it.
+   *
+   * Refuses an object that is still deliverable, and — where the backend can see them — one with an
+   * attempt or an assignment against it. Both checks happen under a lock on the object row, in the
+   * same transaction as the delete: a check made beforehand can be true when it is read and false by
+   * the time the rows go, which is precisely the case that leaves a learner's record pointing at
+   * nothing. Evidence outlives the catalogue, and an object that was delivered is retired.
    */
-  deleteObject(objectId: string): Promise<boolean>;
+  deleteObject(objectId: string): Promise<ObjectDeletion>;
 
   /**
    * Replaces an authored quiz's content with a new immutable content version, bound to a new object

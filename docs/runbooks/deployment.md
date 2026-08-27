@@ -160,7 +160,7 @@ membership of the object's repository:
 | `PUT …/learning-objects/{id}/content` | Publishes new questions as a new content version; the superseded one stays readable |
 | `POST …/learning-objects/{id}/suspend` \| `/restore` | Takes an object out of the catalogue, and puts it back |
 | `POST …/learning-objects/{id}/retire` | Ends it. Does not reverse |
-| `DELETE …/learning-objects/{id}` | Removes it — refused for any object ever launched or assigned |
+| `DELETE …/learning-objects/{id}` | Removes it — only once suspended or retired, and refused for any object ever launched or assigned |
 
 Suspension, retirement and deletion also revoke the object's smart link: a withdrawn object must not
 stay reachable through a link that needs no sign-in.

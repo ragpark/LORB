@@ -128,6 +128,26 @@ export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherCont
       requireRepositoryMembership(adminDbPool(), repositoryId, principal, minimum));
   };
 
+  /**
+   * Whether anything points at this object.
+   *
+   * Three tables, because there are three ways an object gets used and they were built by different
+   * surfaces: `attempt` for anything ever launched, `assignment` for an agent or internal batch, and
+   * `class_assignment` for a teacher assigning work to a class. The last lives in the administration
+   * database rather than the runtime store, and reading only the first two would have let an object
+   * a class is working through be deleted out from under its roster.
+   */
+  const inUse = async (objectId: string): Promise<boolean> => {
+    const [attempts, assignments] = await Promise.all([
+      ctx.store.listAttempts({ object_id: objectId, limit: 1 }),
+      ctx.store.assignmentsForObject(objectId),
+    ]);
+    if (attempts.length > 0 || assignments.length > 0) return true;
+    if (ctx.catalogue.kind !== "postgres") return false;
+    const classes = await adminDbPool().query("select 1 from class_assignment where object_id = $1 limit 1", [objectId]);
+    return (classes.rowCount ?? 0) > 0;
+  };
+
   /** Audit is written on its own transaction: a failure to record must not undo a published edit. */
   const audit = (entry: AuditInput) =>
     withAdminTransaction((client) => writeAudit(client, entry)).catch(() => undefined);
@@ -461,12 +481,18 @@ export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherCont
   }
 
   /**
-   * Removes an object that was never delivered.
+   * Removes an object that was withdrawn and never delivered.
    *
-   * The check is not a courtesy. An attempt names an object version and a package version, an xAPI
-   * statement names the attempt, and a class result is produced by reading those back — so deleting
-   * an object that has been launched turns a learner's record into a dangling reference. Retirement
-   * exists for that case and is what the refusal points at.
+   * Two refusals, and neither is a courtesy. An attempt names an object version and a package
+   * version, an xAPI statement names the attempt, and a class result is produced by reading those
+   * back — so deleting an object that has been launched or assigned turns a learner's record into a
+   * dangling reference. Retirement exists for that case and is what the refusal points at.
+   *
+   * And an object still in the catalogue is an object a launch can resolve *while this runs*, so
+   * deletion is offered only once it has been suspended or retired. The check that decides both is
+   * made again inside the deleting transaction, under a lock on the object row: the check below
+   * produces the error a person reads, and the one in the transaction is the one that is true at the
+   * moment the rows go.
    */
   app.delete("/api/v1/publisher/learning-objects/:objectId", async (req, reply) => {
     const principal = await requireAdmin(req, reply, ctx.adminCtx, "learning_object.delete", "learning_object");
@@ -480,22 +506,25 @@ export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherCont
       const existing = await openObject(req, reply, principal, correlation, "learning_object.delete", "repository_owner");
       if (!existing) return;
 
-      const [attempts, assignments] = await Promise.all([
-        ctx.store.listAttempts({ object_id: existing.object_id, limit: 1 }),
-        ctx.store.assignmentsForObject(existing.object_id),
-      ]);
-      if (attempts.length > 0 || assignments.length > 0) {
+      const refuse = async (code: string) => {
         await audit({
           actorPseudonym: principal.pseudonym, actorRole: principal.role,
           actionType: "learning_object.delete", targetType: "learning_object", targetId: existing.object_id,
-          outcome: "DENIED", reason: "LEARNING_OBJECT_IN_USE", correlationId: correlation,
+          outcome: "DENIED", reason: code, correlationId: correlation,
         });
-        return sendAdminError(reply, "LEARNING_OBJECT_IN_USE", correlation);
-      }
+        return sendAdminError(reply, code, correlation);
+      };
+
+      if (existing.status !== "SUSPENDED" && existing.status !== "RETIRED") return refuse("LEARNING_OBJECT_DELIVERABLE");
+      if (await inUse(existing.object_id)) return refuse("LEARNING_OBJECT_IN_USE");
 
       await ctx.store.revokeSmartLink(existing.object_id, principal.pseudonym).catch(() => undefined);
-      const deleted = await ctx.catalogue.deleteObject(existing.object_id);
-      if (!deleted) return sendAdminError(reply, "LEARNING_OBJECT_NOT_FOUND", correlation);
+      const outcome = await ctx.catalogue.deleteObject(existing.object_id);
+      if (outcome === "NOT_FOUND") return sendAdminError(reply, "LEARNING_OBJECT_NOT_FOUND", correlation);
+      if (outcome === "STATE_INVALID") return refuse("LEARNING_OBJECT_DELIVERABLE");
+      // Something was launched or assigned between the check above and the transaction below. The
+      // object is intact and the refusal is the same one the caller would have got a moment earlier.
+      if (outcome === "IN_USE") return refuse("LEARNING_OBJECT_IN_USE");
       await audit({
         actorPseudonym: principal.pseudonym, actorRole: principal.role,
         actionType: "learning_object.delete", targetType: "learning_object", targetId: existing.object_id,

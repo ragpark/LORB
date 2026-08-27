@@ -12,7 +12,7 @@ import { quizContentSchema, type QuizContent, type QuizDraft } from "../../../co
 import { buildQuizRegistration, buildQuizRevision, DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE } from "./shared.js";
 import type {
   CatalogueStore, LearningObjectRow, ObjectContentRevision, ObjectLifecycleStatus, ObjectMetadataPatch,
-  ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredQuiz, Repository,
+  ObjectDeletion, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredQuiz, Repository,
 } from "./types.js";
 
 const iso = (value: Date | string | null | undefined): string =>
@@ -254,22 +254,49 @@ export class PostgresCatalogueStore implements CatalogueStore {
   /**
    * Removes the object and the rows that exist only to describe it.
    *
-   * `package_version` is deleted explicitly because it predates the cascade the later tables were
-   * given; the attempt table references it, so a delete of an object that was ever launched fails
-   * here on the foreign key rather than silently orphaning evidence. The caller refuses that case
-   * before reaching this point, and this constraint is the second line of that defence.
+   * Everything that decides whether the deletion may happen is done here rather than by the caller,
+   * under `for update` on the object row and inside the transaction that does the deleting. A check
+   * made before the transaction is a check of the past: migration 007 deliberately dropped the
+   * foreign key from `attempt` to `package_version` so that an attempt survives whatever happens to
+   * the catalogue, which means nothing underneath this stops a launch that lands between the check
+   * and the delete. Refusing an object that is still deliverable closes the same race from the other
+   * end — a launch resolves a PUBLISHED object only, so an object that has already been withdrawn
+   * cannot acquire a new attempt while this runs.
+   *
+   * `class_assignment` is read as well as the runtime `assignment` table. They are different tables
+   * written by different surfaces — a teacher assigning work to a class writes the first, an agent
+   * or internal batch the second — and an object deleted out from under either leaves a roster
+   * pointing at nothing.
    */
-  async deleteObject(objectId: string): Promise<boolean> {
+  async deleteObject(objectId: string): Promise<ObjectDeletion> {
     const id = objectId.toLowerCase();
     const client = await this.pool.connect();
     try {
       await client.query("begin");
-      const existing = await client.query("select object_id from learning_object where lower(object_id::text) = $1 for update", [id]);
+      const existing = await client.query(
+        "select object_id, status from learning_object where lower(object_id::text) = $1 for update",
+        [id],
+      );
       if (!existing.rows[0]) {
         await client.query("rollback");
-        return false;
+        return "NOT_FOUND";
       }
       const realId = existing.rows[0].object_id;
+      if (!["SUSPENDED", "RETIRED"].includes(existing.rows[0].status)) {
+        await client.query("rollback");
+        return "STATE_INVALID";
+      }
+      const inUse = await client.query(
+        `select 1 from attempt where object_id = $1
+         union all select 1 from assignment where object_id = $1
+         union all select 1 from class_assignment where object_id = $1
+         limit 1`,
+        [realId],
+      );
+      if (inUse.rowCount) {
+        await client.query("rollback");
+        return "IN_USE";
+      }
       await client.query("delete from learning_object_content_version where object_id = $1", [realId]);
       await client.query("delete from learning_object_content where object_id = $1", [realId]);
       await client.query("delete from object_version where object_id = $1", [realId]);
@@ -277,7 +304,7 @@ export class PostgresCatalogueStore implements CatalogueStore {
       await client.query("delete from package_version where object_id = $1", [realId]);
       await client.query("delete from learning_object where object_id = $1", [realId]);
       await client.query("commit");
-      return true;
+      return "DELETED";
     } catch (error) {
       await client.query("rollback").catch(() => undefined);
       throw error;

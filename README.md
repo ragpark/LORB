@@ -37,8 +37,9 @@ what the catalogue *says* and what is *delivered*: a title, description, stated 
 edited in place, while anything a launch resolves to is versioned. Publishing a new version — a
 package or a quiz's questions — inserts a new immutable version and supersedes the previous one;
 nothing is modified in place, so an attempt still describes what was actually delivered. Withdrawal
-goes suspend (reversible), retire (not), delete (refused outright for anything ever launched or
-assigned: evidence outlives the catalogue).
+goes suspend (reversible), retire (not), delete — and deletion is offered only once an object has
+been withdrawn, then refused outright for anything ever launched or assigned: evidence outlives the
+catalogue.
 
 ## Identity and pseudonymity
 

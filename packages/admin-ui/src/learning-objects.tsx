@@ -712,7 +712,7 @@ export function LearningObjectDetail({ objectId, onClosed }: { objectId: string;
           <ConfirmedAction
             label="Suspend"
             title="Suspend this learning object?"
-            description="It stops being launchable and any smart link for it is revoked. Its versions and evidence are untouched, and it can be restored."
+            description="It stops being launchable and any smart link for it is revoked. Its versions and evidence are untouched, and it can be restored — or, if it was never launched or assigned, deleted."
             onConfirm={() => lifecycle('suspend')}
           />
         )}
@@ -733,17 +733,22 @@ export function LearningObjectDetail({ objectId, onClosed }: { objectId: string;
             onConfirm={() => lifecycle('retire')}
           />
         )}
-        <ConfirmedAction
-          label="Delete"
-          danger
-          title="Delete this learning object?"
-          description="Deletion removes the object and its versions from the catalogue entirely. It is refused if the object has ever been launched or assigned — evidence outlives the catalogue, and those objects are retired instead."
-          onConfirm={async () => {
-            await publisher(`learning-objects/${objectId}`, { method: 'DELETE' });
-            void queryClient.invalidateQueries({ queryKey: ['learning-objects'] });
-            onClosed();
-          }}
-        />
+        {/* Deletion is offered only once the object is withdrawn. A published object is one a launch
+            can resolve while the deletion runs, and the API refuses it for that reason; showing the
+            control anyway would make suspending look like an extra step rather than the first one. */}
+        {status !== 'PUBLISHED' && (
+          <ConfirmedAction
+            label="Delete"
+            danger
+            title="Delete this learning object?"
+            description="Deletion removes the object and its versions from the catalogue entirely. It is refused if the object has ever been launched or assigned — evidence outlives the catalogue, and those objects stay retired instead."
+            onConfirm={async () => {
+              await publisher(`learning-objects/${objectId}`, { method: 'DELETE' });
+              void queryClient.invalidateQueries({ queryKey: ['learning-objects'] });
+              onClosed();
+            }}
+          />
+        )}
       </div>
       {status === 'PUBLISHED' && <LearningObjectSmartLink objectId={objectId} />}
       <Tabs.Root defaultValue="details">

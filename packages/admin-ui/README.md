@@ -17,7 +17,7 @@ than one they cannot add to at all.
 | Launch policies | Create, version, publish and activate the rules that route a renderer |
 | Approvals | Request → approve → execute, with separation of duties |
 | Audit | Every administrative decision, allowed or denied, append-only |
-| Learning objects | Author a quiz or register a packaged module; edit the catalogue entry; publish a new version; suspend, restore, retire or delete; smart-link creation and revocation |
+| Learning objects | Author a quiz or register a packaged module; edit the catalogue entry; publish a new version; suspend, restore, retire, and delete once withdrawn; smart-link creation and revocation |
 
 ## Separation of duties
 
@@ -59,9 +59,11 @@ against, and the superseded content stays readable, so a learner is never report
 they did not see.
 
 **Withdrawing** has three strengths. Suspend takes an object out of the catalogue and can be undone.
-Retire is the end of the line and cannot. Delete removes the object outright and is refused — by the
-API, and by a foreign key underneath it — for any object that has ever been launched or assigned:
-evidence outlives the catalogue.
+Retire is the end of the line and cannot. Delete removes the object outright, and is offered only
+once it has been withdrawn — a published object is one a launch can resolve while the deletion runs.
+It is then refused for any object ever launched or assigned: evidence outlives the catalogue. That
+refusal is decided inside the deleting transaction under a lock on the object row, because a check
+made beforehand can be true when it is read and false by the time the rows go.
 
 An authored quiz's right answers are shown to whoever edits it, which is the one place the marking
 key leaves the learner-facing content route. It is served only to an administrator with membership of
