@@ -92,6 +92,13 @@ RUN rm /etc/nginx/conf.d/default.conf \
         '        return 200 "{\"status\":\"ok\"}";' \
         '    }' \
         '' \
+        '    # The entry document must never be cached: a browser that keeps yesterday'"'"'s' \
+        '    # index.html keeps yesterday'"'"'s bundle, and with it yesterday'"'"'s configuration.' \
+        '    # The hashed assets it references stay cacheable forever.' \
+        '    location = /index.html {' \
+        '        add_header Cache-Control "no-store";' \
+        '    }' \
+        '' \
         '    location / {' \
         '        try_files $uri $uri/ /index.html;' \
         '    }' \
