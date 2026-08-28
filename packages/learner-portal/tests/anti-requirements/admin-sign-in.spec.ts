@@ -21,7 +21,7 @@ const base:Omit<Config,'oidc'|'environment'>={
  identityIssuer:'https://provider.example',
  allowedShellOrigins:new Set(['https://player.example']),
 };
-const withProvider:Config={...base,environment:'PRODUCTION',oidc:{issuer:'https://provider.example',clientId:'portal',redirectUri:'https://portal.example',audience:'lorb-runtime'}};
+const withProvider:Config={...base,environment:'PRODUCTION',oidc:{issuer:'https://provider.example',clientId:'portal',redirectUri:'https://portal.example',audience:'lorb-runtime',scope:''}};
 const development:Config={...base,environment:'DEVELOPMENT'};
 const deployedWithoutProvider:Config={...base,environment:'STAGING'};
 
@@ -54,6 +54,10 @@ describe('teacher sign-in',()=>{
   expect(url.searchParams.get('response_type')).toBe('code');
   expect(url.searchParams.get('code_challenge_method')).toBe('S256');
   expect(url.searchParams.get('audience')).toBe('lorb-runtime');
+  // A blank scope is what a deployed build gets when the VITE_OIDC_SCOPE build arg is unset — the
+  // Dockerfile materialises it as an empty string — and a request with scope= is plain OAuth2,
+  // which the provider refuses. The blank must fall back to the OIDC default.
+  expect(url.searchParams.get('scope')).toBe('openid profile email offline_access');
  });
 
  it('uses the development login only where there is no provider',async()=>{

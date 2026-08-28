@@ -137,7 +137,10 @@ export class OidcClient {
     url.searchParams.set("response_type", "code");
     url.searchParams.set("client_id", this.config.clientId);
     url.searchParams.set("redirect_uri", this.config.redirectUri);
-    url.searchParams.set("scope", this.config.scope ?? "openid profile email offline_access");
+    // A blank scope falls back exactly like an absent one: the Dockerfiles materialise an unset
+    // VITE_OIDC_SCOPE build arg as an empty string, and `scope=` turns the request into plain
+    // OAuth2, which Auth0 refuses for a resource server the client holds no explicit grant on.
+    url.searchParams.set("scope", this.config.scope?.trim() || "openid profile email offline_access");
     url.searchParams.set("state", state);
     url.searchParams.set("code_challenge", await challengeFor(verifier));
     url.searchParams.set("code_challenge_method", "S256");
