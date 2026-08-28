@@ -265,7 +265,18 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
       ? await catalogue.contentForObjectVersion(objectId, request.query.object_version_id)
       : await catalogue.content(objectId);
     if (!object || object.status !== "PUBLISHED" || !content) return sendProblem(reply, "OBJECT_NOT_FOUND", correlation(req));
-    return reply.header("cache-control", "no-store").send({ ...content, package_version_id: object.active_package_version_id });
+    // The launch context rides with the content, pinned to the same version the descriptor named:
+    // the module holds no bearer token and this is the one authenticated-enough fetch it makes, so
+    // the theme and settings a publisher versioned arrive exactly where they are interpreted.
+    const versionRow = await catalogue.objectVersion(request.query.object_version_id ?? object.active_object_version_id);
+    const launchContext = versionRow && versionRow.object_id.toLowerCase() === object.object_id.toLowerCase()
+      ? versionRow.launch_context ?? undefined
+      : undefined;
+    return reply.header("cache-control", "no-store").send({
+      ...content,
+      package_version_id: object.active_package_version_id,
+      ...(launchContext ? { launch_context: launchContext } : {}),
+    });
   });
 
   app.get("/api/v1/runtime/package-versions", async (req, reply) => {

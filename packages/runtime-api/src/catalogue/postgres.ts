@@ -8,10 +8,10 @@
  */
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { quizContentSchema, type QuizContent, type QuizDraft } from "../../../contracts/src/index.js";
-import { buildQuizRegistration, buildQuizRevision, DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE } from "./shared.js";
+import { quizContentSchema, type LaunchContext, type QuizContent, type QuizDraft } from "../../../contracts/src/index.js";
+import { buildQuizRegistration, buildQuizRevision, DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, nextMinorSemver, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE } from "./shared.js";
 import type {
-  CatalogueStore, LearningObjectRow, ObjectContentRevision, ObjectLifecycleStatus, ObjectMetadataPatch,
+  CatalogueStore, LaunchContextRevision, LearningObjectRow, ObjectContentRevision, ObjectLifecycleStatus, ObjectMetadataPatch,
   ObjectDeletion, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredQuiz, Repository,
 } from "./types.js";
 
@@ -181,6 +181,7 @@ export class PostgresCatalogueStore implements CatalogueStore {
   async publishObjectVersion(objectId: string, input: { semver: string; module_path: string; sha256: string }): Promise<LearningObjectRow | undefined> {
     const existing = await this.learningObject(objectId);
     if (!existing) return undefined;
+    const superseded = await this.objectVersion(existing.active_object_version_id);
     const object_version_id = randomUUID();
     const package_version_id = randomUUID();
     const package_id = randomUUID();
@@ -196,9 +197,10 @@ export class PostgresCatalogueStore implements CatalogueStore {
         [package_version_id, package_id, existing.object_id, input.semver, input.sha256, input.module_path],
       );
       await client.query(
-        `insert into object_version (object_version_id, object_id, semver, package_version_id, status, published_at)
-         values ($1,$2,$3,$4,'PUBLISHED', now())`,
-        [object_version_id, existing.object_id, input.semver, package_version_id],
+        `insert into object_version (object_version_id, object_id, semver, package_version_id, status, published_at, launch_context)
+         values ($1,$2,$3,$4,'PUBLISHED', now(), $5)`,
+        [object_version_id, existing.object_id, input.semver, package_version_id,
+         superseded?.launch_context ? JSON.stringify(superseded.launch_context) : null],
       );
       await client.query(
         `update learning_object set active_object_version_id = $2, active_package_version_id = $3,
@@ -318,16 +320,18 @@ export class PostgresCatalogueStore implements CatalogueStore {
     if (!object || object.content_profile !== "quiz-json-v1") return undefined;
     const previous = await this.content(object.object_id);
     const versions = await this.objectVersions(object.object_id);
+    const supersededContext = versions.find((row) => row.object_version_id === object.active_object_version_id)?.launch_context ?? null;
     const built = buildQuizRevision(object, draft, previous?.content_version, versions.map((row) => row.semver));
     const client = await this.pool.connect();
     try {
       await client.query("begin");
       await client.query("update object_version set status = 'SUPERSEDED' where object_id = $1 and status = 'PUBLISHED'", [object.object_id]);
       await client.query(
-        `insert into object_version (object_version_id, object_id, semver, package_version_id, status, published_at, content_version)
-         values ($1,$2,$3,$4,'PUBLISHED', now(), $5)`,
+        `insert into object_version (object_version_id, object_id, semver, package_version_id, status, published_at, content_version, launch_context)
+         values ($1,$2,$3,$4,'PUBLISHED', now(), $5, $6)`,
         [built.revision.object_version_id, object.object_id, built.revision.semver,
-         QUIZ_PLAYER.package_version_id, built.content.content_version],
+         QUIZ_PLAYER.package_version_id, built.content.content_version,
+         supersededContext ? JSON.stringify(supersededContext) : null],
       );
       await client.query(
         `insert into learning_object_content_version (object_id, content_profile, content_version, payload)
@@ -355,6 +359,37 @@ export class PostgresCatalogueStore implements CatalogueStore {
       client.release();
     }
     return built.revision;
+  }
+
+  async setLaunchContext(objectId: string, context: LaunchContext | null): Promise<LaunchContextRevision | undefined> {
+    const object = await this.learningObject(objectId);
+    if (!object) return undefined;
+    const active = await this.objectVersion(object.active_object_version_id);
+    if (!active) return undefined;
+    const object_version_id = randomUUID();
+    const semver = nextMinorSemver((await this.objectVersions(object.object_id)).map((row) => row.semver));
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      await client.query("update object_version set status = 'SUPERSEDED' where object_id = $1 and status = 'PUBLISHED'", [object.object_id]);
+      await client.query(
+        `insert into object_version (object_version_id, object_id, semver, package_version_id, status, published_at, content_version, launch_context)
+         values ($1,$2,$3,$4,'PUBLISHED', now(), $5, $6)`,
+        [object_version_id, object.object_id, semver, active.package_version_id,
+         active.content_version ?? null, context ? JSON.stringify(context) : null],
+      );
+      await client.query(
+        "update learning_object set active_object_version_id = $2, updated_at = now() where object_id = $1",
+        [object.object_id, object_version_id],
+      );
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+    return { object_id: object.object_id, object_version_id, semver, launch_context: context };
   }
 
   async registerQuiz(draft: QuizDraft, options: { repository_id?: string; authored_by?: string } = {}): Promise<RegisteredQuiz> {

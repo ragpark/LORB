@@ -26,7 +26,7 @@
  */
 import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { quizDraftSchema } from "../../../../contracts/src/index.js";
+import { launchContextSchema, quizDraftSchema } from "../../../../contracts/src/index.js";
 import type { CatalogueStore, LearningObjectRow } from "../../catalogue/index.js";
 import type { RuntimeStore } from "../../store/index.js";
 import { requestFingerprint, withIdempotencyClaim } from "../../services/idempotency.js";
@@ -80,6 +80,14 @@ const metadataSchema = z.object({
 
 const quizAuthoringSchema = z.object({ repository_id: z.string().uuid().optional() })
   .catchall(z.unknown());
+
+/**
+ * Setting a launch context, or clearing it with null. The context itself is validated by the shared
+ * contract: a theme is a token the module resolves against assets it already ships — never a URL,
+ * because the module runs sandboxed under a CSP that a stylesheet address would either violate or
+ * widen — and settings are small named scalars, not a place for secrets.
+ */
+const launchContextBodySchema = z.object({ launch_context: launchContextSchema.nullable() }).strict();
 
 export interface PublisherContext {
   catalogue: CatalogueStore;
@@ -387,6 +395,44 @@ export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherCont
         // The questions themselves are not audited: the audit trail is read by more people than the
         // marking key should be, and the content version names exactly what changed.
         resultingState: { active_object_version_id: revision.object_version_id, content_version: revision.content_version, question_count: revision.question_count },
+        outcome: "ALLOWED", correlationId: correlation,
+      });
+      const response = { ...revision, correlation_id: correlation };
+      await complete(200, response);
+      return send(reply, 200, response);
+    });
+  });
+
+  /**
+   * Sets or clears the object's launch context: publisher-authored configuration the object carries
+   * into its own launch (a theme token, small named settings), invisible to the learner. It reaches
+   * a descriptor-pinned surface, so it follows the publishing rule rather than the metadata rule —
+   * every change is a new object version, and an attempt launched before the change keeps the
+   * context it was issued with.
+   */
+  app.put("/api/v1/publisher/learning-objects/:objectId/launch-context", async (req, reply) => {
+    const principal = await requireAdmin(req, reply, ctx.adminCtx, "learning_object.launch_context", "learning_object");
+    if (!principal) return;
+    const correlation = correlationOf(req);
+    const idempotencyKey = requireIdempotencyKey(req, reply);
+    if (!idempotencyKey) return;
+    const objectId = objectIdOf(req);
+    const body = (req as { body: unknown }).body;
+
+    return idempotently(reply, correlation, `publisher-launch-context:${objectId}`, idempotencyKey, body, async (complete) => {
+      const parsed = launchContextBodySchema.safeParse(body);
+      if (!parsed.success) return sendAdminError(reply, "ADMIN_REQUEST_INVALID", correlation);
+      const existing = await openObject(req, reply, principal, correlation, "learning_object.launch_context", "repository_operator");
+      if (!existing) return;
+      if (existing.status === "RETIRED") return sendAdminError(reply, "LEARNING_OBJECT_STATE_INVALID", correlation);
+
+      const revision = await ctx.catalogue.setLaunchContext(existing.object_id, parsed.data.launch_context);
+      if (!revision) return sendAdminError(reply, "LEARNING_OBJECT_NOT_FOUND", correlation);
+      await audit({
+        actorPseudonym: principal.pseudonym, actorRole: principal.role,
+        actionType: "learning_object.launch_context", targetType: "learning_object", targetId: existing.object_id,
+        priorState: { active_object_version_id: existing.active_object_version_id },
+        resultingState: { active_object_version_id: revision.object_version_id, launch_context: revision.launch_context },
         outcome: "ALLOWED", correlationId: correlation,
       });
       const response = { ...revision, correlation_id: correlation };

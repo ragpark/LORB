@@ -9,7 +9,7 @@
  * The catalogue is now a store with the same two backends as the runtime state, and object versions
  * are real rows: a descriptor binds to the version that was actually published.
  */
-import type { QuizContent, QuizDraft } from "../../../contracts/src/index.js";
+import type { LaunchContext, QuizContent, QuizDraft } from "../../../contracts/src/index.js";
 
 export interface Repository {
   repository_id: string;
@@ -63,6 +63,13 @@ export interface ObjectVersionRow {
    * was issued against even after the quiz has been edited. Null for code-bearing objects.
    */
   content_version?: string | null;
+  /**
+   * Publisher-authored launch configuration this object version carries into its own launch — a
+   * theme token, small named settings. Versioned with the object for the same reason content is: a
+   * descriptor pins the version, so a context edit published mid-attempt cannot restyle or
+   * reconfigure the experience under a learner who is already inside it.
+   */
+  launch_context?: LaunchContext | null;
 }
 
 export interface RegisteredQuiz {
@@ -100,6 +107,14 @@ export type ObjectDeletion = "DELETED" | "NOT_FOUND" | "IN_USE" | "STATE_INVALID
 
 /** The lifecycle states an administrator may move a registered object between. */
 export type ObjectLifecycleStatus = "PUBLISHED" | "SUSPENDED" | "RETIRED";
+
+/** What setting a launch context produced: a new object version carrying it. */
+export interface LaunchContextRevision {
+  object_id: string;
+  object_version_id: string;
+  semver: string;
+  launch_context: LaunchContext | null;
+}
 
 /** What replacing a quiz's content produced: a new content version bound to a new object version. */
 export interface ObjectContentRevision {
@@ -180,6 +195,14 @@ export interface CatalogueStore {
    * still describes what the learner actually saw.
    */
   reviseQuizContent(objectId: string, draft: QuizDraft): Promise<ObjectContentRevision | undefined>;
+
+  /**
+   * Sets or clears the launch context by publishing a new object version that carries it, with the
+   * current package and content bindings copied across unchanged. Follows the same rule as every
+   * other edit that reaches a descriptor: never in place. Versions published by other paths carry
+   * the active version's context forward, so a content edit does not silently drop the theme.
+   */
+  setLaunchContext(objectId: string, context: LaunchContext | null): Promise<LaunchContextRevision | undefined>;
 
   /** Registers agent-authored quiz content against the shared, already-reviewed quiz player. */
   registerQuiz(draft: QuizDraft, options?: { repository_id?: string; authored_by?: string }): Promise<RegisteredQuiz>;

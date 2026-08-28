@@ -61,3 +61,22 @@ export const quizContentSchema = quizDraftSchema.extend({
 export type QuizQuestionDraft = z.infer<typeof quizQuestionDraftSchema>;
 export type QuizDraft = z.infer<typeof quizDraftSchema>;
 export type QuizContent = z.infer<typeof quizContentSchema>;
+
+// ---------------------------------------------------------------------------
+// Launch context (publisher-authored, versioned with the object)
+//
+// Configuration a published object carries into its own launch: which theme
+// the module should present, and small named settings the module interprets.
+// It is data about the experience, never the learner's business and never a
+// place for secrets or resource URLs — the module runs sandboxed under a
+// strict CSP, so a theme is a *token* the module resolves against assets it
+// already ships, and anything credentialed stays server-side.
+// ---------------------------------------------------------------------------
+const launchThemeToken = z.string().regex(/^[a-z][a-z\d-]{0,31}$/, "a theme is a lowercase token, not a URL");
+const launchSettingValue = z.union([z.string().max(256), z.number().finite(), z.boolean()]);
+export const launchContextSchema = z.object({
+  theme: launchThemeToken.optional(),
+  settings: z.record(z.string().regex(/^[a-z][a-z\d_]{0,63}$/), launchSettingValue).optional(),
+}).strict()
+  .refine((value) => Object.keys(value.settings ?? {}).length <= 16, { message: "at most 16 settings" });
+export type LaunchContext = z.infer<typeof launchContextSchema>;
