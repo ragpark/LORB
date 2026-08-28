@@ -1,7 +1,7 @@
 // Administration RBAC and repository-scoped ABAC.
 import { jwtVerify } from "jose";
 import { computePseudonym } from "./pseudonym-service.js";
-import { allowedAdminRoles } from "./identity.js";
+import { allowedAdminRoles, logTokenRefusal } from "./identity.js";
 
 export class AdminAuthError extends Error {
   constructor(readonly code: string) {
@@ -53,7 +53,8 @@ export async function authenticateAdmin(
       algorithms: options.algorithms ?? ["ES256", "RS256"],
       clockTolerance: 30,
     })).payload;
-  } catch {
+  } catch (error) {
+    logTokenRefusal("admin", error);
     throw new AdminAuthError("AUTHENTICATION_EXPIRED");
   }
   const sub = payload.sub as string | undefined;
