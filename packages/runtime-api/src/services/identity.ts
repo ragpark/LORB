@@ -13,6 +13,20 @@
  */
 import { createRemoteJWKSet, jwtVerify, type JWTPayload, type KeyLike } from "jose";
 import type { IdentityProviderConfig } from "../config/index.js";
+import { logger } from "./observability.js";
+
+/**
+ * Why a token was refused, said out loud — the caller's error stays AUTHENTICATION_EXPIRED, but an
+ * operator debugging a 401 needs the distinction between a wrong audience, a wrong issuer, an
+ * expired token and an unreachable JWKS, and the token itself must never appear in a log.
+ */
+export function logTokenRefusal(surface: string, error: unknown): void {
+  const jose = error as { code?: string; claim?: string; reason?: string; message?: string };
+  logger().warn(
+    { surface, error_code: jose.code ?? "unknown", claim: jose.claim, reason: jose.reason, detail: jose.message },
+    "access token refused",
+  );
+}
 
 export class IdentityError extends Error {
   constructor(readonly code: "AUTHENTICATION_EXPIRED" | "ACCESS_DENIED") {
@@ -90,7 +104,8 @@ export function createTokenVerifier(identity: IdentityProviderConfig, injectedKe
           // second and a learner losing a launch to 900ms of drift is not an acceptable failure.
           clockTolerance: 30,
         })).payload;
-      } catch {
+      } catch (error) {
+        logTokenRefusal("runtime", error);
         throw new IdentityError("AUTHENTICATION_EXPIRED");
       }
       if (typeof payload.sub !== "string" || payload.sub.length === 0) throw new IdentityError("AUTHENTICATION_EXPIRED");

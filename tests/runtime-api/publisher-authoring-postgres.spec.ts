@@ -108,6 +108,48 @@ describeIfDatabase("Publisher authoring against Postgres", () => {
     expect((await catalogue.learningObject(object.object_id))?.title).toBe("Membership-scoped");
   });
 
+  it("persists a launch context as a new object version and pins superseded versions to theirs", async () => {
+    const quiz = await authorQuiz("Themed quiz");
+    const originalVersion = quiz.object_version_id as string;
+
+    const set = await call("PUT", `/api/v1/publisher/learning-objects/${quiz.object_id}/launch-context`, {
+      launch_context: { theme: "midnight", settings: { hints_enabled: true } },
+    });
+    expect(set.statusCode).toBe(200);
+    const revision = set.json();
+    expect(revision.object_version_id).not.toBe(originalVersion);
+
+    // The column round-trips through jsonb, and the version chain says what each version carried.
+    const rows = await pool.query(
+      "select object_version_id, status, launch_context from object_version where object_id = $1 order by published_at",
+      [quiz.object_id],
+    );
+    const original = rows.rows.find((row) => row.object_version_id === originalVersion);
+    const current = rows.rows.find((row) => row.object_version_id === revision.object_version_id);
+    expect(original?.status).toBe("SUPERSEDED");
+    expect(original?.launch_context).toBeNull();
+    expect(current?.status).toBe("PUBLISHED");
+    expect(current?.launch_context).toEqual({ theme: "midnight", settings: { hints_enabled: true } });
+
+    // A content edit publishes yet another version and carries the context forward.
+    const edited = await call("PUT", `/api/v1/publisher/learning-objects/${quiz.object_id}/content`, {
+      title: "Themed quiz, revised",
+      questions: [{ stem: "Which is equivalent to 2/4?", options: [{ id: "a", text: "1/2" }, { id: "b", text: "1/3" }], correct_option_id: "a" }],
+    });
+    expect(edited.statusCode).toBe(200);
+    const carried = await pool.query(
+      "select launch_context from object_version where object_version_id = $1",
+      [edited.json().object_version_id],
+    );
+    expect(carried.rows[0]?.launch_context).toEqual({ theme: "midnight", settings: { hints_enabled: true } });
+
+    // The learner-facing content route serves the current context, and the pinned version its own.
+    const content = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/learning-objects/${quiz.object_id}/content` });
+    expect(content.json().launch_context).toEqual({ theme: "midnight", settings: { hints_enabled: true } });
+    const pinned = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/learning-objects/${quiz.object_id}/content?object_version_id=${originalVersion}` });
+    expect(pinned.json().launch_context).toBeUndefined();
+  });
+
   it("edits the catalogue entry without disturbing the row a launch resolves through", async () => {
     const object = await registerObject("Before the edit");
     const edited = await call("PATCH", `/api/v1/publisher/learning-objects/${object.object_id}`, {

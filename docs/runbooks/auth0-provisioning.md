@@ -222,18 +222,29 @@ front ends will request. Then, on that API:
 - Settings → Token Expiration — 24 hours (86400) is the default and is fine; the portal renews early.
 - RBAC → **Enable RBAC** and **Add Permissions in the Access Token** if you intend to use scopes
   later. Neither is required for the role check below, which reads a claim rather than a scope.
-- In a tenant that serves third-party clients (Part A), the SPA applications can end up treated as
-  third-party too, and an application with no grant on this API is refused at the authorize step.
-  The fix is to mark the three SPA applications first-party via the Management API —
-  `PATCH /api/v2/clients/{client_id}` with `{"is_first_party": true}` for each — after creating
-  them in B3. Do **not** clear it by setting this API's *Default Permissions for Third-Party
-  Applications*: A5 leaves dynamic client registration open to anyone, so that API-wide default
-  would authorise an arbitrary attacker-registered client for `lorb-runtime`, and a teacher who
-  completed such a client's flow would hand it a token B2 has stamped with the admin role. The
-  connector's own API keeps its A3 grant; this one must not get one.
+- **Authorise the three SPA applications for this API — both halves are required.** This tenant
+  refuses an authorize request for `lorb-runtime` from an application that is not first-party *or*
+  that holds no client grant on the API, and the error is the same either way, so do both, after
+  creating the applications in B3. Via the Management API (API Explorer token), per client ID:
+
+  1. `PATCH /api/v2/clients/{client_id}` with `{"is_first_party": true}`
+  2. `POST /api/v2/client-grants` with
+     `{"client_id": "{client_id}", "audience": "lorb-runtime", "scope": []}`
+     — or the Authorize toggle for the application on the API's *Applications* tab, which stores
+     the same grant.
+
+  Each grant names one known client of ours. Do **not** reach for this API's *Default Permissions
+  for Third-Party Applications* instead: A5 leaves dynamic client registration open to anyone, so
+  that API-wide default would authorise an arbitrary attacker-registered client for
+  `lorb-runtime`, and a teacher who completed such a client's flow would hand it a token B2 has
+  stamped with the admin role. The connector's own API keeps its A3 grant; this one must not get
+  one.
 
 *Symptom if skipped:* `invalid_request: Client "…" is not authorized to access resource server
-"lorb-runtime"` in the redirect back to the front end.
+"lorb-runtime"` in the redirect back to the front end. The same error also appears when the
+authorize request carries an empty `scope` — check the failing entry in the tenant log: front-end
+builds must send a real OIDC scope (`VITE_OIDC_SCOPE`, or the client's built-in default of
+`openid profile email offline_access`).
 
 ### B2. Emit the role claim
 
@@ -335,6 +346,7 @@ VITE_OIDC_ISSUER=https://dev-8hzrbclkyzw1l512.us.auth0.com/
 VITE_OIDC_CLIENT_ID=<the Learner Portal application's client id>
 VITE_OIDC_REDIRECT_URI=https://lorb-production-consumer.up.railway.app
 VITE_OIDC_AUDIENCE=lorb-runtime
+VITE_OIDC_SCOPE=openid profile email offline_access
 VITE_RUNTIME_API_BASE=https://lorb-production-api.up.railway.app/api/v1/runtime
 VITE_ADMIN_API_BASE=https://lorb-production-api.up.railway.app/api/v1/admin
 VITE_JWKS_URL=https://lorb-production-api.up.railway.app/api/v1/runtime/jwks

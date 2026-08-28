@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { QuizContent } from "../../contracts/src/index.js";
+import type { LaunchContext, QuizContent } from "../../contracts/src/index.js";
 import { markQuiz, quizStatementChain, type ShellContext, type XapiStatement } from "./statements.js";
 
 /**
@@ -76,10 +76,27 @@ function connectToShell(onContext: (context: ShellContext, port: MessagePort) =>
 
 type Phase = "waiting" | "loading" | "answering" | "review" | "submitted" | "error";
 
+/** The content payload as the runtime delivers it: the quiz, plus any publisher-authored launch context. */
+type DeliveredContent = QuizContent & { launch_context?: LaunchContext };
+
+/**
+ * The themes this package ships. A launch context names one by token — never by URL, because this
+ * document runs sandboxed under a CSP that an external stylesheet would either violate or widen —
+ * and a token this package does not recognise falls back to the default look rather than failing
+ * the launch: presentation is not worth refusing a learner their questions over.
+ */
+interface Palette { page: string; ink: string; muted: string; card: string; border: string; accent: string; accentInk: string; error: string }
+const PALETTES: Record<string, Palette> = {
+  "default": { page: "#ffffff", ink: "#1f2933", muted: "#52606d", card: "#ffffff", border: "#d9dee3", accent: "#3b5b92", accentInk: "#ffffff", error: "#b91c1c" },
+  "midnight": { page: "#101725", ink: "#e5eaf1", muted: "#9aa7b8", card: "#1a2333", border: "#2c3a52", accent: "#7aa2e8", accentInk: "#101725", error: "#f2a1a1" },
+  "high-contrast": { page: "#ffffff", ink: "#000000", muted: "#1a1a1a", card: "#ffffff", border: "#000000", accent: "#000000", accentInk: "#ffffff", error: "#a00000" },
+};
+const paletteFor = (theme: string | undefined): Palette => PALETTES[theme ?? "default"] ?? PALETTES["default"]!;
+
 export function App() {
   const [context, setContext] = useState<ShellContext>();
   const [port, setPort] = useState<MessagePort>();
-  const [content, setContent] = useState<QuizContent>();
+  const [content, setContent] = useState<DeliveredContent>();
   const [answers, setAnswers] = useState<Array<string | undefined>>([]);
   const [index, setIndex] = useState(0);
   const [phase, setPhase] = useState<Phase>("waiting");
@@ -99,7 +116,7 @@ export function App() {
     setPhase("loading");
     void fetch(context.content_url, { headers: { accept: "application/json" } })
       .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`Content request failed (${response.status})`))))
-      .then((body: QuizContent) => {
+      .then((body: DeliveredContent) => {
         if (cancelled) return;
         setContent(body);
         setAnswers(new Array(body.questions.length).fill(undefined));
@@ -138,6 +155,8 @@ export function App() {
   }, [context, content, answers, port]);
 
   const question = content?.questions[index];
+  const styles = useMemo(() => buildStyles(paletteFor(content?.launch_context?.theme)), [content?.launch_context?.theme]);
+  useEffect(() => { document.body.style.background = paletteFor(content?.launch_context?.theme).page; }, [content?.launch_context?.theme]);
 
   return (
     <main style={styles.main}>
@@ -229,20 +248,22 @@ export function App() {
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  main: { maxWidth: 640, margin: "0 auto", padding: "1.5rem", font: "16px/1.5 system-ui,sans-serif", color: "#1f2933" },
-  h1: { fontSize: "1.15rem", margin: "0 0 .25rem" },
-  lede: { color: "#52606d", fontSize: ".9rem", margin: "0 0 1.25rem" },
-  notice: { color: "#52606d", fontSize: ".9rem" },
-  card: { border: "1px solid #d9dee3", borderRadius: ".75rem", padding: "1.25rem", background: "#fff" },
-  stepLabel: { margin: "0 0 .5rem", fontSize: ".8rem", fontWeight: 600, color: "#7b8794", textTransform: "uppercase", letterSpacing: ".04em" },
-  fieldset: { border: 0, margin: 0, padding: 0 },
-  legend: { fontWeight: 600, marginBottom: ".75rem", padding: 0 },
-  option: { display: "flex", gap: ".6rem", alignItems: "flex-start", padding: ".45rem 0" },
-  actions: { display: "flex", gap: ".75rem", marginTop: "1rem" },
-  button: { padding: ".6rem 1.1rem", borderRadius: ".5rem", border: 0, background: "#3b5b92", color: "#fff", font: "inherit", fontWeight: 600, cursor: "pointer" },
-  secondary: { padding: ".6rem 1.1rem", borderRadius: ".5rem", border: "1px solid #cbd2d9", background: "#fff", font: "inherit", cursor: "pointer" },
-  reviewList: { listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: ".75rem" },
-  score: { fontWeight: 600 },
-  error: { color: "#b91c1c" },
-};
+function buildStyles(palette: Palette): Record<string, React.CSSProperties> {
+  return {
+    main: { maxWidth: 640, margin: "0 auto", padding: "1.5rem", font: "16px/1.5 system-ui,sans-serif", color: palette.ink },
+    h1: { fontSize: "1.15rem", margin: "0 0 .25rem" },
+    lede: { color: palette.muted, fontSize: ".9rem", margin: "0 0 1.25rem" },
+    notice: { color: palette.muted, fontSize: ".9rem" },
+    card: { border: `1px solid ${palette.border}`, borderRadius: ".75rem", padding: "1.25rem", background: palette.card },
+    stepLabel: { margin: "0 0 .5rem", fontSize: ".8rem", fontWeight: 600, color: palette.muted, textTransform: "uppercase", letterSpacing: ".04em" },
+    fieldset: { border: 0, margin: 0, padding: 0 },
+    legend: { fontWeight: 600, marginBottom: ".75rem", padding: 0 },
+    option: { display: "flex", gap: ".6rem", alignItems: "flex-start", padding: ".45rem 0" },
+    actions: { display: "flex", gap: ".75rem", marginTop: "1rem" },
+    button: { padding: ".6rem 1.1rem", borderRadius: ".5rem", border: 0, background: palette.accent, color: palette.accentInk, font: "inherit", fontWeight: 600, cursor: "pointer" },
+    secondary: { padding: ".6rem 1.1rem", borderRadius: ".5rem", border: `1px solid ${palette.border}`, background: palette.card, color: palette.ink, font: "inherit", cursor: "pointer" },
+    reviewList: { listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: ".75rem" },
+    score: { fontWeight: 600 },
+    error: { color: palette.error },
+  };
+}

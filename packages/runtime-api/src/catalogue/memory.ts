@@ -2,10 +2,10 @@
  * In-process catalogue, for the test suites and for `pnpm dev` without a database.
  */
 import { randomUUID } from "node:crypto";
-import type { QuizContent, QuizDraft } from "../../../contracts/src/index.js";
-import { buildQuizRegistration, buildQuizRevision, DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE } from "./shared.js";
+import type { LaunchContext, QuizContent, QuizDraft } from "../../../contracts/src/index.js";
+import { buildQuizRegistration, buildQuizRevision, DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, nextMinorSemver, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE } from "./shared.js";
 import type {
-  CatalogueStore, LearningObjectRow, ObjectContentRevision, ObjectDeletion, ObjectLifecycleStatus,
+  CatalogueStore, LaunchContextRevision, LearningObjectRow, ObjectContentRevision, ObjectDeletion, ObjectLifecycleStatus,
   ObjectMetadataPatch, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredQuiz, Repository,
 } from "./types.js";
 
@@ -168,6 +168,7 @@ export class MemoryCatalogueStore implements CatalogueStore {
     this.versions.set(object_version_id, {
       object_version_id, object_id: object.object_id, semver: input.semver, package_version_id,
       status: "PUBLISHED", published_at,
+      launch_context: previous?.launch_context ?? null,
     });
     object.active_object_version_id = object_version_id;
     object.active_package_version_id = package_version_id;
@@ -231,6 +232,7 @@ export class MemoryCatalogueStore implements CatalogueStore {
       status: "PUBLISHED",
       published_at: built.content.created_at,
       content_version: built.content.content_version,
+      launch_context: superseded?.launch_context ?? null,
     });
     this.contents.set(object.object_id, built.content);
     this.contentHistory.set(`${object.object_id}:${built.content.content_version}`, built.content);
@@ -239,6 +241,28 @@ export class MemoryCatalogueStore implements CatalogueStore {
     object.description = built.objectPatch.description;
     object.duration = built.objectPatch.duration;
     return built.revision;
+  }
+
+  async setLaunchContext(objectId: string, context: LaunchContext | null): Promise<LaunchContextRevision | undefined> {
+    const object = this.objects.get(objectId.toLowerCase());
+    if (!object) return undefined;
+    const active = this.versions.get(object.active_object_version_id);
+    if (!active) return undefined;
+    const object_version_id = randomUUID();
+    const semver = nextMinorSemver((await this.objectVersions(object.object_id)).map((row) => row.semver));
+    active.status = "SUPERSEDED";
+    this.versions.set(object_version_id, {
+      object_version_id,
+      object_id: object.object_id,
+      semver,
+      package_version_id: active.package_version_id,
+      status: "PUBLISHED",
+      published_at: new Date().toISOString(),
+      content_version: active.content_version ?? null,
+      launch_context: context,
+    });
+    object.active_object_version_id = object_version_id;
+    return { object_id: object.object_id, object_version_id, semver, launch_context: context };
   }
 
   async registerQuiz(draft: QuizDraft, options: { repository_id?: string; authored_by?: string } = {}): Promise<RegisteredQuiz> {

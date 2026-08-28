@@ -678,6 +678,57 @@ function PublishVersionForm({ objectId, onPublished }: { objectId: string; onPub
   );
 }
 
+/**
+ * Publisher-authored launch context: which theme the experience presents, chosen from the tokens the
+ * player ships. Saving publishes a new object version — the context reaches a descriptor-pinned
+ * surface, so it follows the same rule as content: an attempt already in flight keeps the context it
+ * was launched with, and the change applies from the next launch.
+ */
+const LAUNCH_THEMES = [
+  { token: '', label: 'Default' },
+  { token: 'midnight', label: 'Midnight (dark)' },
+  { token: 'high-contrast', label: 'High contrast' },
+];
+
+function LaunchContextTab({ object, onSaved }: { object: Row & { versions?: Row[] }; onSaved: () => void }) {
+  const active = (object.versions ?? []).find((version) => version.object_version_id === object.active_object_version_id);
+  const current = (active?.launch_context as { theme?: string } | null | undefined)?.theme ?? '';
+  const [theme, setTheme] = useState(current);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const submit = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await publisher(`learning-objects/${String(object.object_id)}/launch-context`, {
+        method: 'PUT',
+        body: { launch_context: theme ? { theme } : null },
+      });
+      onSaved();
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <form className="form" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+      <label>
+        Theme
+        <select value={theme} onChange={(e) => setTheme(e.target.value)}>
+          {LAUNCH_THEMES.map((option) => <option key={option.token} value={option.token}>{option.label}</option>)}
+        </select>
+      </label>
+      <p className="governance-note">
+        The theme is presented by the player itself; learners are not asked and are not told. Saving publishes a new
+        version, so launches already in progress keep the look they started with.
+      </p>
+      <button type="submit" disabled={saving || theme === current}>{saving ? 'Saving…' : 'Save launch context'}</button>
+      {error && <p role="alert" className="error-text">{error}</p>}
+    </form>
+  );
+}
+
 export function LearningObjectDetail({ objectId, onClosed }: { objectId: string; onClosed: () => void }) {
   const queryClient = useQueryClient();
   const object = useQuery({
@@ -755,6 +806,7 @@ export function LearningObjectDetail({ objectId, onClosed }: { objectId: string;
         <Tabs.List aria-label="Learning object detail">
           <Tabs.Trigger value="details">Details</Tabs.Trigger>
           {editableContent && <Tabs.Trigger value="content">Content</Tabs.Trigger>}
+          <Tabs.Trigger value="launch-context">Launch context</Tabs.Trigger>
           <Tabs.Trigger value="versions">Versions</Tabs.Trigger>
           <Tabs.Trigger value="audit">Audit</Tabs.Trigger>
         </Tabs.List>
@@ -766,6 +818,9 @@ export function LearningObjectDetail({ objectId, onClosed }: { objectId: string;
             <ContentTab object={row} onSaved={refresh} />
           </Tabs.Content>
         )}
+        <Tabs.Content value="launch-context">
+          <LaunchContextTab object={row} onSaved={refresh} />
+        </Tabs.Content>
         <Tabs.Content value="versions">
           <ul className="list">
             {(row.versions ?? []).map((version) => (
