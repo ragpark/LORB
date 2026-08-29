@@ -61,6 +61,17 @@ async function handleModuleMessage(data:unknown){
  try{
   if(message.type==="state.put"){const result=await request(descriptor.state_endpoint,"PUT",{revision,state_payload:message.payload.state??{}}) as {revision:number};revision=result.revision}
   else if(message.type==="evidence.emit"){await request(descriptor.evidence_endpoint,"POST",message.payload.statement)}
+  // The module asks; the shell — which holds the descriptor — calls the relay and answers on the
+  // port. A failed turn is answered as a failed turn, never escalated to experience.error: losing
+  // one reply must not read as the activity breaking.
+  else if(message.type==="relay.request"){
+   const relayUrl=`${descriptor.iss.replace(/\/$/,"")}/api/v1/relay/coach/messages`;
+   let payload:Record<string,unknown>;
+   try{const result=await request(relayUrl,"POST",message.payload) as {endpoint:string;reply:string};payload={endpoint:result.endpoint,reply:result.reply}}
+   catch{payload={error:"RELAY_FAILED"}}
+   modulePort?.postMessage({...envelope("relay.reply",payload),reply_to:message.message_id});
+   return;
+  }
   else if(message.type==="experience.complete"){await request(descriptor.state_endpoint.replace(/\/state$/,"/complete"),"POST");emit("experience.complete",{})}
   else if(message.type==="experience.exit"){emit("experience.exit",message.payload)}
   else if(message.type==="experience.error"){emit("experience.error",message.payload)}

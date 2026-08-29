@@ -265,7 +265,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     const content = request.query.object_version_id
       ? await catalogue.contentForObjectVersion(objectId, request.query.object_version_id)
       : await catalogue.content(objectId);
-    if (!object || object.status !== "PUBLISHED" || !content) return sendProblem(reply, "OBJECT_NOT_FOUND", correlation(req));
+    if (!object || object.status !== "PUBLISHED") return sendProblem(reply, "OBJECT_NOT_FOUND", correlation(req));
     // The launch context rides with the content, pinned to the same version the descriptor named:
     // the module holds no bearer token and this is the one authenticated-enough fetch it makes, so
     // the theme and settings a publisher versioned arrive exactly where they are interpreted.
@@ -273,8 +273,11 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     const launchContext = versionRow && versionRow.object_id.toLowerCase() === object.object_id.toLowerCase()
       ? versionRow.launch_context ?? undefined
       : undefined;
+    // A code-bearing object has no authored payload, but its launch context still has to reach the
+    // module — this is the only fetch it makes. Only an object with neither stays a 404.
+    if (!content && !launchContext) return sendProblem(reply, "OBJECT_NOT_FOUND", correlation(req));
     return reply.header("cache-control", "no-store").send({
-      ...content,
+      ...(content ?? {}),
       package_version_id: object.active_package_version_id,
       ...(launchContext ? { launch_context: launchContext } : {}),
     });

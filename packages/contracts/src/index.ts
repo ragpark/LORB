@@ -27,7 +27,10 @@ const resultSchema = z.object({
   score: z.object({scaled:z.number().min(-1).max(1)}).strict().optional(),
 }).strict();
 export const xapiStatementSchema=z.object({id:uuid,actor:z.object({objectType:z.literal("Agent"),account:z.object({homePage:z.literal("https://lorb.example/pseudonym"),name:z.string().regex(/^[a-f\d]{64}$/)})}),verb:verbSchema,object:z.object({id:z.string().url(),objectType:z.literal("Activity")}),result:resultSchema.optional(),context:z.object({extensions:z.object({"https://lorb.example/xapi/repository_id":uuid,"https://lorb.example/xapi/attempt_id":uuid,"https://lorb.example/xapi/package_version_id":uuid,"https://lorb.example/xapi/correlation_id":uuid,"https://lorb.example/xapi/completion_authority":z.literal("PACKAGE")})}),timestamp:z.string().datetime()}).strict();
-export const messageTypes=["module.hello","shell.context","module.ready","state.put","evidence.emit","experience.complete","experience.exit","experience.error"] as const;
+// relay.request/relay.reply: a module asks the shell to make one descriptor-authenticated call to
+// the experience relay and answer on the port. The module never holds the descriptor; the shell
+// never interprets the conversation. Protocol surface widened for the AI coach — see PR notes.
+export const messageTypes=["module.hello","shell.context","module.ready","state.put","evidence.emit","relay.request","relay.reply","experience.complete","experience.exit","experience.error"] as const;
 export const postMessageSchema=z.object({protocol:z.literal("lorb-player"),version:z.literal("1.0"),type:z.enum(messageTypes),message_id:uuid,correlation_id:uuid,reply_to:uuid.nullable(),sent_at:z.string().datetime(),payload:z.record(z.unknown())}).strict();
 
 // ---------------------------------------------------------------------------

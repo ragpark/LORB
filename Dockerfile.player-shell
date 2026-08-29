@@ -12,6 +12,7 @@ COPY packages/example-module ./packages/example-module
 COPY packages/example-react-xapi-experience ./packages/example-react-xapi-experience
 COPY packages/example-coaching-chatbot ./packages/example-coaching-chatbot
 COPY packages/quiz-player ./packages/quiz-player
+COPY packages/coach-player ./packages/coach-player
 COPY tsconfig.json ./
 # Explicit, because Vite hands NODE_ENV straight to React and React treats anything that is not
 # "production" as a development build — development-only behaviour shipped to learners, in a
@@ -28,4 +29,5 @@ COPY --from=build /app/packages/example-module/src /usr/share/nginx/html/module
 COPY --from=build /app/packages/example-react-xapi-experience/dist /usr/share/nginx/html/modules/reflective-practice-studio
 COPY --from=build /app/packages/example-coaching-chatbot/src /usr/share/nginx/html/modules/career-coach-chat
 COPY --from=build /app/packages/quiz-player/dist /usr/share/nginx/html/modules/quiz-player
+COPY --from=build /app/packages/coach-player/src /usr/share/nginx/html/modules/coach-player
 EXPOSE 8080
