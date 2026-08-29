@@ -55,6 +55,18 @@ export class MemoryCatalogueStore implements CatalogueStore {
     }
   }
 
+  /**
+   * Test seam: a deployed repository is created through the admin surface
+   * (routes/admin/repositories.ts); suites that need a second course add it here.
+   */
+  async addRepository(repository: { repository_id: string; slug: string; display_name: string }): Promise<void> {
+    this.repositoriesById.set(repository.repository_id.toLowerCase(), {
+      ...repository,
+      status: "ACTIVE",
+      created_at: new Date().toISOString(),
+    });
+  }
+
   async repositories(): Promise<Repository[]> {
     return [...this.repositoriesById.values()];
   }
