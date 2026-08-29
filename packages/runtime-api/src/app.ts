@@ -34,6 +34,7 @@ import { registerAdminLaunchPolicyRoutes } from "./routes/admin/launch-policies.
 import { registerAdminApprovalRoutes } from "./routes/admin/approvals.js";
 import { registerAdminAuditRoutes } from "./routes/admin/audit.js";
 import { registerAdminClassRoutes } from "./routes/admin/classes.js";
+import { registerAdminMarketplaceRoutes } from "./routes/admin/marketplace.js";
 import { registerPublisherRoutes } from "./routes/publisher/objects.js";
 import { correlationOf, requireAdmin, requireIdempotencyKey, sendAdminError } from "./routes/admin/shared.js";
 import { checkServiceCredential, sendInternalError } from "./routes/internal/service-auth.js";
@@ -761,6 +762,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
   registerAdminApprovalRoutes(app, adminCtx);
   registerAdminAuditRoutes(app, adminCtx);
   registerAdminClassRoutes(app, adminCtx, { catalogue, store });
+  registerAdminMarketplaceRoutes(app, adminCtx, { catalogue });
 
   return {
     app,

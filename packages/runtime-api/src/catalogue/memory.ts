@@ -85,10 +85,11 @@ export class MemoryCatalogueStore implements CatalogueStore {
     return this.repositoriesById.get(DEFAULT_REPOSITORY.repository_id) ?? [...this.repositoriesById.values()][0];
   }
 
-  async learningObjects(filter: { repository_id?: string; status?: LearningObjectRow["status"] } = {}): Promise<LearningObjectRow[]> {
+  async learningObjects(filter: { repository_id?: string; status?: LearningObjectRow["status"]; marketplace_listed?: boolean } = {}): Promise<LearningObjectRow[]> {
     return [...this.objects.values()]
       .filter((row) => !filter.repository_id || row.repository_id.toLowerCase() === filter.repository_id.toLowerCase())
       .filter((row) => !filter.status || row.status === filter.status)
+      .filter((row) => filter.marketplace_listed === undefined || !!row.marketplace_listed === filter.marketplace_listed)
       .map((row) => ({ ...row }));
   }
 
@@ -213,6 +214,13 @@ export class MemoryCatalogueStore implements CatalogueStore {
 
   async retireObject(objectId: string): Promise<LearningObjectRow | undefined> {
     return this.setObjectStatus(objectId, "RETIRED");
+  }
+
+  async setMarketplaceListed(objectId: string, listed: boolean): Promise<LearningObjectRow | undefined> {
+    const object = this.objects.get(objectId.toLowerCase());
+    if (!object) return undefined;
+    object.marketplace_listed = listed;
+    return { ...object };
   }
 
   /**

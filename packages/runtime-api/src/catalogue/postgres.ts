@@ -49,6 +49,7 @@ function toObject(row: Record<string, any>): LearningObjectRow {
     module_path: row.module_path,
     ...(row.content_profile ? { content_profile: row.content_profile } : {}),
     ...(row.authored_by ? { authored_by: row.authored_by } : {}),
+    marketplace_listed: !!row.marketplace_listed,
   };
 }
 
@@ -93,11 +94,12 @@ export class PostgresCatalogueStore implements CatalogueStore {
     return result.rows[0] ? { ...result.rows[0], created_at: iso(result.rows[0].created_at) } : undefined;
   }
 
-  async learningObjects(filter: { repository_id?: string; status?: LearningObjectRow["status"] } = {}): Promise<LearningObjectRow[]> {
+  async learningObjects(filter: { repository_id?: string; status?: LearningObjectRow["status"]; marketplace_listed?: boolean } = {}): Promise<LearningObjectRow[]> {
     const values: unknown[] = [];
     const clauses: string[] = ["active_package_version_id is not null"];
     if (filter.repository_id) { values.push(filter.repository_id.toLowerCase()); clauses.push(`lower(repository_id::text) = $${values.length}`); }
     if (filter.status) { values.push(filter.status); clauses.push(`status = $${values.length}`); }
+    if (filter.marketplace_listed !== undefined) { values.push(filter.marketplace_listed); clauses.push(`marketplace_listed = $${values.length}`); }
     const result = await this.pool.query(`select * from learning_object where ${clauses.join(" and ")} order by created_at asc`, values);
     return result.rows.map(toObject);
   }
@@ -265,6 +267,14 @@ export class PostgresCatalogueStore implements CatalogueStore {
 
   async retireObject(objectId: string): Promise<LearningObjectRow | undefined> {
     return this.setObjectStatus(objectId, "RETIRED");
+  }
+
+  async setMarketplaceListed(objectId: string, listed: boolean): Promise<LearningObjectRow | undefined> {
+    const result = await this.pool.query(
+      "update learning_object set marketplace_listed = $2, updated_at = now() where lower(object_id::text) = $1 returning *",
+      [objectId.toLowerCase(), listed],
+    );
+    return result.rows[0] ? toObject(result.rows[0]) : undefined;
   }
 
   /**

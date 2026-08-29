@@ -44,6 +44,10 @@ export interface LearningObjectRow {
   content_profile?: "quiz-json-v1" | "video-json-v1" | "document-json-v1" | "audio-json-v1";
   /** Provenance, so an operator can see which objects an agent authored. */
   authored_by?: string;
+  /** Whether this repository has opted this object in to cross-repository marketplace discovery.
+   *  Absent (or false) means the object is reachable only within its own repository, same as every
+   *  object registered before the marketplace existed. */
+  marketplace_listed?: boolean;
 }
 
 export interface PackageVersionRow {
@@ -171,7 +175,7 @@ export interface CatalogueStore {
   /** The repository a caller gets when none is named. Undefined once more than one exists. */
   defaultRepository(): Promise<Repository | undefined>;
 
-  learningObjects(filter?: { repository_id?: string; status?: LearningObjectRow["status"] }): Promise<LearningObjectRow[]>;
+  learningObjects(filter?: { repository_id?: string; status?: LearningObjectRow["status"]; marketplace_listed?: boolean }): Promise<LearningObjectRow[]>;
   learningObject(objectId: string): Promise<LearningObjectRow | undefined>;
   objectVersion(objectVersionId: string): Promise<ObjectVersionRow | undefined>;
   /** Every version of one object, newest first. The version chain an operator audits an edit against. */
@@ -198,6 +202,9 @@ export interface CatalogueStore {
   updateObject(objectId: string, patch: ObjectMetadataPatch): Promise<LearningObjectRow | undefined>;
   /** Moves a registered object between the lifecycle states an administrator controls. */
   setObjectStatus(objectId: string, status: ObjectLifecycleStatus): Promise<LearningObjectRow | undefined>;
+  /** Opts an object in or out of cross-repository marketplace discovery. Changes nothing else about
+   *  it — not its version chain, not its content, not which repository owns it. */
+  setMarketplaceListed(objectId: string, listed: boolean): Promise<LearningObjectRow | undefined>;
   retireObject(objectId: string): Promise<LearningObjectRow | undefined>;
   /**
    * Removes an object and everything that only exists to describe it.

@@ -80,6 +80,8 @@ const metadataSchema = z.object({
   kind: kind.optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "an edit must change something");
 
+const marketplaceListingSchema = z.object({ listed: z.boolean() }).strict();
+
 /** repository_id plus whatever the specific draft schema (quiz, video, document, audio) validates next. */
 const authoringEnvelopeSchema = z.object({ repository_id: z.string().uuid().optional() })
   .catchall(z.unknown());
@@ -499,6 +501,43 @@ export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherCont
         actionType: "learning_object.update", targetType: "learning_object", targetId: updated.object_id,
         priorState: { title: existing.title, description: existing.description, duration: existing.duration, kind: existing.kind },
         resultingState: { title: updated.title, description: updated.description, duration: updated.duration, kind: updated.kind },
+        outcome: "ALLOWED", correlationId: correlation,
+      });
+      const response = { ...updated, correlation_id: correlation };
+      await complete(200, response);
+      return send(reply, 200, response);
+    });
+  });
+
+  /**
+   * Toggles whether this object is discoverable on the cross-repository marketplace
+   * (GET /api/v1/admin/marketplace). Listing changes nothing about the object itself — not its
+   * version chain, not its content, not which repository owns it — only whether an administrator
+   * outside this repository can find and bookmark it.
+   */
+  app.put("/api/v1/publisher/learning-objects/:objectId/marketplace-listing", async (req, reply) => {
+    const principal = await requireAdmin(req, reply, ctx.adminCtx, "learning_object.marketplace_listing", "learning_object");
+    if (!principal) return;
+    const correlation = correlationOf(req);
+    const idempotencyKey = requireIdempotencyKey(req, reply);
+    if (!idempotencyKey) return;
+    const objectId = objectIdOf(req);
+    const body = (req as { body: unknown }).body;
+
+    return idempotently(reply, correlation, `publisher-marketplace-listing:${objectId}`, idempotencyKey, body, async (complete) => {
+      const parsed = marketplaceListingSchema.safeParse(body);
+      if (!parsed.success) return sendAdminError(reply, "ADMIN_REQUEST_INVALID", correlation);
+      const existing = await openObject(req, reply, principal, correlation, "learning_object.marketplace_listing", "repository_operator");
+      if (!existing) return;
+      if (existing.status === "RETIRED") return sendAdminError(reply, "LEARNING_OBJECT_STATE_INVALID", correlation);
+
+      const updated = await ctx.catalogue.setMarketplaceListed(existing.object_id, parsed.data.listed);
+      if (!updated) return sendAdminError(reply, "LEARNING_OBJECT_NOT_FOUND", correlation);
+      await audit({
+        actorPseudonym: principal.pseudonym, actorRole: principal.role,
+        actionType: "learning_object.marketplace_listing", targetType: "learning_object", targetId: updated.object_id,
+        priorState: { marketplace_listed: existing.marketplace_listed ?? false },
+        resultingState: { marketplace_listed: parsed.data.listed },
         outcome: "ALLOWED", correlationId: correlation,
       });
       const response = { ...updated, correlation_id: correlation };

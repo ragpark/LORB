@@ -247,6 +247,22 @@ file and converts it through step 6b's document-converter service in one action;
 surface expects `pages` (image URLs) already assembled, since an agent has usually produced or
 fetched those itself.
 
+**Marketplace listing** (migration 012) lets a repository opt an already-published object in to
+cross-repository discovery — `PUT …/learning-objects/{id}/marketplace-listing` with `{"listed":
+true}`, repository_operator membership, same idempotency and audit shape as every other publisher
+edit. Nothing about the object changes: not its version chain, not its content, not which repository
+owns it — only whether it appears on `GET /api/v1/admin/marketplace` for administrators outside that
+repository to find.
+
+An administrator "adds" a listed object to their own teaching workspace by bookmarking it —
+`POST /api/v1/admin/marketplace/imports {"object_id": "…"}` — which records the bookmark in
+`marketplace_import`, keyed to the caller's own pseudonym. This copies nothing: `class_assignment`
+(step above, `POST …/classes/{classId}/assignments`) already resolves any published `object_id`
+regardless of which repository it belongs to, so the bookmark exists purely so
+`GET /api/v1/admin/marketplace/imports` can tell the teacher-facing UI which objects outside the
+caller's own repositories should show up as assignable. `DELETE …/marketplace/imports/{objectId}`
+removes the bookmark without touching the object or anything already assigned from it.
+
 ## Deploying a new version
 
 1. Apply migrations first: `pnpm db:setup:production`. Migrations here are additive — new tables and
