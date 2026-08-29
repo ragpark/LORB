@@ -56,6 +56,8 @@ const ADMIN_ERROR_STATUS: Record<string, number> = {
   AGENT_LINK_INVALID: 400,
   AGENT_LINK_TAKEN: 409,
   AGENT_LINK_NOT_FOUND: 404,
+  DOCUMENT_CONVERTER_NOT_CONFIGURED: 503,
+  DOCUMENT_CONVERSION_FAILED: 502,
 };
 
 const ADMIN_ERROR_TITLE: Record<string, string> = {
@@ -83,6 +85,8 @@ const ADMIN_ERROR_TITLE: Record<string, string> = {
   LEARNER_NOT_FOUND: "That learner is not in this class",
   AGENT_LINK_TAKEN: "That assistant is already linked to another account",
   AGENT_LINK_NOT_FOUND: "That assistant is not linked to your account",
+  DOCUMENT_CONVERTER_NOT_CONFIGURED: "This deployment has no document converter configured, so a PowerPoint or Word file cannot be converted here",
+  DOCUMENT_CONVERSION_FAILED: "The document could not be converted — check that the file is a valid PowerPoint or Word file and try again",
 };
 
 export function adminProblem(code: string, correlation_id: string, status = ADMIN_ERROR_STATUS[code] ?? 400) {

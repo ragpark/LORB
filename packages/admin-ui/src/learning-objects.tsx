@@ -290,6 +290,255 @@ function NewPackagedObjectForm({ repositories, onCreated }: { repositories: Row[
   );
 }
 
+/** Shared by the three media forms below: a repository picker plus title/description, the fields
+ * every kind's draft has in common. */
+function MediaBasics({ repositoryId, onRepositoryId, title, onTitle, description, onDescription, repositories }: {
+  repositoryId: string; onRepositoryId: (value: string) => void;
+  title: string; onTitle: (value: string) => void;
+  description: string; onDescription: (value: string) => void;
+  repositories: Row[];
+}) {
+  return (
+    <>
+      <label className="stacked">
+        Repository
+        <select value={repositoryId} onChange={(e) => onRepositoryId(e.target.value)}>
+          <option value="">Default repository</option>
+          {repositories.map((row) => (
+            <option key={String(row.repository_id)} value={String(row.repository_id)}>{String(row.display_name)}</option>
+          ))}
+        </select>
+      </label>
+      <label className="stacked">
+        Title
+        <input value={title} onChange={(e) => onTitle(e.target.value)} maxLength={200} required />
+      </label>
+      <label className="stacked">
+        Description
+        <textarea value={description} onChange={(e) => onDescription(e.target.value)} maxLength={600} rows={2} />
+      </label>
+    </>
+  );
+}
+
+function NewVideoForm({ repositories, onCreated }: { repositories: Row[]; onCreated: (objectId: string) => void }) {
+  const [repositoryId, setRepositoryId] = useState('');
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [sourceKind, setSourceKind] = useState<'file' | 'youtube'>('youtube');
+  const [videoId, setVideoId] = useState('');
+  const [url, setUrl] = useState('');
+  const [mimeType, setMimeType] = useState<'video/mp4' | 'video/webm'>('video/mp4');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    setError('');
+    setSaving(true);
+    try {
+      const created = await publisher<{ object_id: string }>('learning-objects/videos', {
+        method: 'POST',
+        body: {
+          ...(repositoryId ? { repository_id: repositoryId } : {}),
+          title,
+          ...(description ? { description } : {}),
+          source: sourceKind === 'youtube' ? { kind: 'youtube', video_id: videoId } : { kind: 'file', url, mime_type: mimeType },
+        },
+      });
+      setTitle(''); setDescription(''); setVideoId(''); setUrl('');
+      onCreated(created.object_id);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+      <p className="governance-note">
+        A YouTube video embeds by id, never by an arbitrary URL — the player builds the embed address itself, so this can never smuggle a foreign origin into
+        the sandboxed launch. A file source must already be hosted somewhere the learner's browser can reach.
+      </p>
+      <MediaBasics
+        repositoryId={repositoryId} onRepositoryId={setRepositoryId}
+        title={title} onTitle={setTitle} description={description} onDescription={setDescription}
+        repositories={repositories}
+      />
+      <label className="stacked">
+        Source
+        <select value={sourceKind} onChange={(e) => setSourceKind(e.target.value as 'file' | 'youtube')}>
+          <option value="youtube">YouTube</option>
+          <option value="file">Hosted file</option>
+        </select>
+      </label>
+      {sourceKind === 'youtube' ? (
+        <label className="stacked">
+          YouTube video ID
+          <input value={videoId} onChange={(e) => setVideoId(e.target.value)} placeholder="dQw4w9WgXcQ" pattern="[A-Za-z0-9_-]{6,20}" required />
+        </label>
+      ) : (
+        <div className="form">
+          <label>
+            File URL
+            <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} required />
+          </label>
+          <label>
+            Format
+            <select value={mimeType} onChange={(e) => setMimeType(e.target.value as 'video/mp4' | 'video/webm')}>
+              <option value="video/mp4">MP4</option>
+              <option value="video/webm">WebM</option>
+            </select>
+          </label>
+        </div>
+      )}
+      {error && <p role="alert" className="error-text">{error}</p>}
+      <div className="dialog-actions">
+        <button type="submit" disabled={saving}>{saving ? 'Registering…' : 'Register video'}</button>
+      </div>
+    </form>
+  );
+}
+
+function NewAudioForm({ repositories, onCreated }: { repositories: Row[]; onCreated: (objectId: string) => void }) {
+  const [repositoryId, setRepositoryId] = useState('');
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [url, setUrl] = useState('');
+  const [mimeType, setMimeType] = useState<'audio/mpeg' | 'audio/mp4' | 'audio/ogg' | 'audio/wav'>('audio/mpeg');
+  const [transcriptUrl, setTranscriptUrl] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    setError('');
+    setSaving(true);
+    try {
+      const created = await publisher<{ object_id: string }>('learning-objects/audio', {
+        method: 'POST',
+        body: {
+          ...(repositoryId ? { repository_id: repositoryId } : {}),
+          title,
+          ...(description ? { description } : {}),
+          source: { url, mime_type: mimeType },
+          ...(transcriptUrl ? { transcript_url: transcriptUrl } : {}),
+        },
+      });
+      setTitle(''); setDescription(''); setUrl(''); setTranscriptUrl('');
+      onCreated(created.object_id);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+      <p className="governance-note">
+        The audio file must already be hosted somewhere the learner's browser can reach — this form registers a pointer to it, not the file itself.
+      </p>
+      <MediaBasics
+        repositoryId={repositoryId} onRepositoryId={setRepositoryId}
+        title={title} onTitle={setTitle} description={description} onDescription={setDescription}
+        repositories={repositories}
+      />
+      <div className="form">
+        <label>
+          File URL
+          <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} required />
+        </label>
+        <label>
+          Format
+          <select value={mimeType} onChange={(e) => setMimeType(e.target.value as typeof mimeType)}>
+            <option value="audio/mpeg">MP3</option>
+            <option value="audio/mp4">MP4</option>
+            <option value="audio/ogg">OGG</option>
+            <option value="audio/wav">WAV</option>
+          </select>
+        </label>
+      </div>
+      <label className="stacked">
+        Transcript URL (optional)
+        <input type="url" value={transcriptUrl} onChange={(e) => setTranscriptUrl(e.target.value)} />
+      </label>
+      {error && <p role="alert" className="error-text">{error}</p>}
+      <div className="dialog-actions">
+        <button type="submit" disabled={saving}>{saving ? 'Registering…' : 'Register audio'}</button>
+      </div>
+    </form>
+  );
+}
+
+/** File → base64, without the data: URL prefix the request schema doesn't want. */
+async function fileToBase64(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]!);
+  return btoa(binary);
+}
+
+const DOCUMENT_FORMAT_BY_EXTENSION: Record<string, 'pptx' | 'ppt' | 'docx' | 'doc'> = {
+  pptx: 'pptx', ppt: 'ppt', docx: 'docx', doc: 'doc',
+};
+
+function NewDocumentForm({ repositories, onCreated }: { repositories: Row[]; onCreated: (objectId: string) => void }) {
+  const [repositoryId, setRepositoryId] = useState('');
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [file, setFile] = useState<File>();
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const extension = file?.name.split('.').pop()?.toLowerCase() ?? '';
+  const sourceFormat = DOCUMENT_FORMAT_BY_EXTENSION[extension];
+  const submit = async () => {
+    if (!file) return setError('Choose a PowerPoint or Word file first.');
+    if (!sourceFormat) return setError('That file type is not supported — use .pptx, .ppt, .docx, or .doc.');
+    setError('');
+    setSaving(true);
+    try {
+      const content_base64 = await fileToBase64(file);
+      const created = await publisher<{ object_id: string }>('learning-objects/documents/upload', {
+        method: 'POST',
+        body: {
+          ...(repositoryId ? { repository_id: repositoryId } : {}),
+          title, ...(description ? { description } : {}),
+          source_format: sourceFormat, filename: file.name, content_base64,
+        },
+      });
+      setTitle(''); setDescription(''); setFile(undefined);
+      onCreated(created.object_id);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+      <p className="governance-note">
+        The file is converted to one image per page and never sent to a learner as-is: the player renders images, never a native Office or PDF viewer, inside
+        its sandboxed iframe. Large decks with complex animation or embedded video may render slightly differently than in PowerPoint or Word itself.
+        The converted pages live on the conversion service's own storage, not this platform's — keep your original file until you've confirmed the activity
+        opens correctly.
+      </p>
+      <MediaBasics
+        repositoryId={repositoryId} onRepositoryId={setRepositoryId}
+        title={title} onTitle={setTitle} description={description} onDescription={setDescription}
+        repositories={repositories}
+      />
+      <label className="stacked">
+        File
+        <input
+          type="file" accept=".pptx,.ppt,.docx,.doc"
+          onChange={(e) => setFile(e.target.files?.[0])} required
+        />
+      </label>
+      {error && <p role="alert" className="error-text">{error}</p>}
+      <div className="dialog-actions">
+        <button type="submit" disabled={saving}>{saving ? 'Converting and registering…' : 'Convert and register'}</button>
+      </div>
+    </form>
+  );
+}
+
 function NewLearningObjectDialog({ repositories, onCreated }: { repositories: Row[]; onCreated: (objectId: string) => void }) {
   const [open, setOpen] = useState(false);
   const created = (objectId: string) => {
@@ -305,14 +554,26 @@ function NewLearningObjectDialog({ repositories, onCreated }: { repositories: Ro
         <Dialog.Overlay className="overlay" />
         <Dialog.Content className="dialog wide">
           <Dialog.Title>New learning object</Dialog.Title>
-          <Dialog.Description>Author a quiz here, or register a packaged module that has already been built and hashed.</Dialog.Description>
+          <Dialog.Description>Author a quiz, add a video, document, or audio activity, or register a packaged module that has already been built and hashed.</Dialog.Description>
           <Tabs.Root defaultValue="quiz">
             <Tabs.List aria-label="What to create">
               <Tabs.Trigger value="quiz">Author a quiz</Tabs.Trigger>
+              <Tabs.Trigger value="video">Add a video</Tabs.Trigger>
+              <Tabs.Trigger value="document">Add a document</Tabs.Trigger>
+              <Tabs.Trigger value="audio">Add audio</Tabs.Trigger>
               <Tabs.Trigger value="package">Register a packaged module</Tabs.Trigger>
             </Tabs.List>
             <Tabs.Content value="quiz">
               <NewQuizForm repositories={repositories} onCreated={created} />
+            </Tabs.Content>
+            <Tabs.Content value="video">
+              <NewVideoForm repositories={repositories} onCreated={created} />
+            </Tabs.Content>
+            <Tabs.Content value="document">
+              <NewDocumentForm repositories={repositories} onCreated={created} />
+            </Tabs.Content>
+            <Tabs.Content value="audio">
+              <NewAudioForm repositories={repositories} onCreated={created} />
             </Tabs.Content>
             <Tabs.Content value="package">
               <NewPackagedObjectForm repositories={repositories} onCreated={created} />

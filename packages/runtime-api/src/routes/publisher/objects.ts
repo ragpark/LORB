@@ -26,8 +26,10 @@
  */
 import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { launchContextSchema, quizDraftSchema } from "../../../../contracts/src/index.js";
-import type { CatalogueStore, LearningObjectRow } from "../../catalogue/index.js";
+import {
+  audioDraftSchema, documentDraftSchema, launchContextSchema, quizDraftSchema, videoDraftSchema,
+} from "../../../../contracts/src/index.js";
+import type { CatalogueStore, LearningObjectRow, MediaKind } from "../../catalogue/index.js";
 import type { RuntimeStore } from "../../store/index.js";
 import { requestFingerprint, withIdempotencyClaim } from "../../services/idempotency.js";
 import { requireRepositoryMembership, type RepositoryRole } from "../../services/admin-authz.js";
@@ -78,8 +80,19 @@ const metadataSchema = z.object({
   kind: kind.optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "an edit must change something");
 
-const quizAuthoringSchema = z.object({ repository_id: z.string().uuid().optional() })
+/** repository_id plus whatever the specific draft schema (quiz, video, document, audio) validates next. */
+const authoringEnvelopeSchema = z.object({ repository_id: z.string().uuid().optional() })
   .catchall(z.unknown());
+
+const documentUploadSchema = z.object({
+  repository_id: z.string().uuid().optional(),
+  title: z.string().min(1).max(200),
+  description: z.string().max(600).optional(),
+  source_format: z.enum(["pptx", "ppt", "docx", "doc"]),
+  filename: z.string().min(1).max(255),
+  content_base64: z.string().min(1),
+  keep_pdf: z.boolean().optional(),
+}).strict();
 
 /**
  * Setting a launch context, or clearing it with null. The context itself is validated by the shared
@@ -94,6 +107,12 @@ export interface PublisherContext {
   /** Idempotency records live here; the publisher shares the runtime's, scoped per surface. */
   store: RuntimeStore;
   adminCtx: AdminRouteContext;
+  /**
+   * Base origin of the document-converter service (packages/document-converter), used only by
+   * `.../learning-objects/documents/upload`. Absent in a deployment that hasn't stood that service
+   * up — the upload route refuses cleanly rather than the whole publisher surface failing to start.
+   */
+  documentConverterUrl?: string;
 }
 
 export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherContext): void {
@@ -297,7 +316,7 @@ export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherCont
     const body = (req as { body: unknown }).body;
 
     return idempotently(reply, correlation, "publisher-author-quiz", idempotencyKey, body, async (complete) => {
-      const envelope = quizAuthoringSchema.safeParse(body);
+      const envelope = authoringEnvelopeSchema.safeParse(body);
       if (!envelope.success) return sendAdminError(reply, "ADMIN_REQUEST_INVALID", correlation);
       const { repository_id: requestedRepository, ...rest } = envelope.data;
       const draft = quizDraftSchema.safeParse(rest);
@@ -318,6 +337,132 @@ export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherCont
         actorPseudonym: principal.pseudonym, actorRole: principal.role,
         actionType: "learning_object.author_quiz", targetType: "learning_object", targetId: registered.object_id,
         resultingState: { question_count: registered.question_count, content_version: registered.content_version },
+        outcome: "ALLOWED", correlationId: correlation,
+      });
+      const response = { ...registered, repository_id: repository.repository_id, correlation_id: correlation };
+      await complete(201, response);
+      return send(reply, 201, response);
+    });
+  });
+
+  /**
+   * Registering a video, document, or audio object: structured JSON content bound to that kind's
+   * fixed, already-reviewed shared player — the same authoring shape and trust model as the quiz
+   * route above, and the person-reachable counterpart to the internal service surface the agent
+   * connector uses (routes/internal/media.ts). No bundle is uploaded here either.
+   *
+   * A document's `pages` must already be image URLs — this route does not convert a PowerPoint or
+   * Word file itself; `.../documents/upload` below does that first and then registers the result.
+   */
+  const MEDIA_DRAFT_SCHEMAS = { video: videoDraftSchema, document: documentDraftSchema, audio: audioDraftSchema } as const;
+  const MEDIA_ROUTE_PATHS: Record<MediaKind, string> = {
+    video: "/api/v1/publisher/learning-objects/videos",
+    document: "/api/v1/publisher/learning-objects/documents",
+    audio: "/api/v1/publisher/learning-objects/audio",
+  };
+  const registerMediaObject = async (
+    kind: MediaKind, req: FastifyRequest, reply: FastifyReply, draftBody: unknown,
+  ): Promise<void> => {
+    const principal = await requireAdmin(req, reply, ctx.adminCtx, `learning_object.author_${kind}`, "learning_object");
+    if (!principal) return;
+    const correlation = correlationOf(req);
+    const idempotencyKey = requireIdempotencyKey(req, reply);
+    if (!idempotencyKey) return;
+
+    await idempotently(reply, correlation, `publisher-author-${kind}`, idempotencyKey, draftBody, async (complete) => {
+      const envelope = authoringEnvelopeSchema.safeParse(draftBody);
+      if (!envelope.success) return sendAdminError(reply, "ADMIN_REQUEST_INVALID", correlation);
+      const { repository_id: requestedRepository, ...rest } = envelope.data;
+      const draft = MEDIA_DRAFT_SCHEMAS[kind].safeParse(rest);
+      if (!draft.success) return sendAdminError(reply, "ADMIN_REQUEST_INVALID", correlation);
+
+      const repository = requestedRepository
+        ? await ctx.catalogue.repository(requestedRepository)
+        : await ctx.catalogue.defaultRepository();
+      if (!repository) return sendAdminError(reply, "REPOSITORY_NOT_FOUND", correlation);
+      if (repository.status !== "ACTIVE") return sendAdminError(reply, "REPOSITORY_STATE_INVALID", correlation);
+      if (!await authorised(req, reply, principal, `learning_object.author_${kind}`, repository.repository_id, undefined, "repository_operator")) return;
+
+      const registered = await ctx.catalogue.registerMedia(kind, draft.data, {
+        repository_id: repository.repository_id,
+        authored_by: principal.pseudonym,
+      });
+      await audit({
+        actorPseudonym: principal.pseudonym, actorRole: principal.role,
+        actionType: `learning_object.author_${kind}`, targetType: "learning_object", targetId: registered.object_id,
+        resultingState: { content_version: registered.content_version },
+        outcome: "ALLOWED", correlationId: correlation,
+      });
+      const response = { ...registered, repository_id: repository.repository_id, correlation_id: correlation };
+      await complete(201, response);
+      return send(reply, 201, response);
+    });
+  };
+  for (const kind of Object.keys(MEDIA_DRAFT_SCHEMAS) as MediaKind[]) {
+    app.post(MEDIA_ROUTE_PATHS[kind], async (req, reply) => {
+      const body = (req as { body: unknown }).body;
+      return registerMediaObject(kind, req, reply, body);
+    });
+  }
+
+  /**
+   * Uploads a PowerPoint or Word file, converts it to page images via the document-converter
+   * service, and registers the result as a document object in one call — the path a person actually
+   * wants, versus assembling `pages` by hand against `.../documents` above.
+   */
+  // The base64 envelope of an uploaded file is ~1.4x its raw bytes (same factor document-converter's
+  // own MAX_UPLOAD_BYTES check uses); the Runtime API's global BODY_LIMIT_BYTES (128KB, sized for
+  // ordinary JSON requests) would reject an ordinary PowerPoint or Word file well under a megabyte,
+  // long before this handler ever ran. This route alone gets a limit sized for what it actually is.
+  const DOCUMENT_UPLOAD_BODY_LIMIT_BYTES = Math.ceil(50 * 1024 * 1024 * 1.4);
+  app.post("/api/v1/publisher/learning-objects/documents/upload", { bodyLimit: DOCUMENT_UPLOAD_BODY_LIMIT_BYTES }, async (req, reply) => {
+    const principal = await requireAdmin(req, reply, ctx.adminCtx, "learning_object.author_document", "learning_object");
+    if (!principal) return;
+    const correlation = correlationOf(req);
+    const idempotencyKey = requireIdempotencyKey(req, reply);
+    if (!idempotencyKey) return;
+    const body = (req as { body: unknown }).body;
+
+    return idempotently(reply, correlation, "publisher-upload-document", idempotencyKey, body, async (complete) => {
+      const parsed = documentUploadSchema.safeParse(body);
+      if (!parsed.success) return sendAdminError(reply, "ADMIN_REQUEST_INVALID", correlation);
+      if (!ctx.documentConverterUrl) return sendAdminError(reply, "DOCUMENT_CONVERTER_NOT_CONFIGURED", correlation);
+
+      // Resolve and authorise before spending anything on conversion: an administrator who lacks
+      // repository_operator membership, or names a repository that doesn't exist, must not be able
+      // to make this route run LibreOffice/Poppler on their upload anyway — that's real CPU, memory
+      // and disk on the converter, spent before the refusal they were always going to get.
+      const { repository_id: requestedRepository, ...upload } = parsed.data;
+      const repository = requestedRepository
+        ? await ctx.catalogue.repository(requestedRepository)
+        : await ctx.catalogue.defaultRepository();
+      if (!repository) return sendAdminError(reply, "REPOSITORY_NOT_FOUND", correlation);
+      if (repository.status !== "ACTIVE") return sendAdminError(reply, "REPOSITORY_STATE_INVALID", correlation);
+      if (!await authorised(req, reply, principal, "learning_object.author_document", repository.repository_id, undefined, "repository_operator")) return;
+
+      let draft: unknown;
+      try {
+        const converted = await fetch(`${ctx.documentConverterUrl.replace(/\/$/, "")}/convert`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(upload),
+        });
+        if (!converted.ok) return sendAdminError(reply, "DOCUMENT_CONVERSION_FAILED", correlation);
+        draft = (await converted.json() as { draft: unknown }).draft;
+      } catch {
+        return sendAdminError(reply, "DOCUMENT_CONVERSION_FAILED", correlation);
+      }
+      const parsedDraft = documentDraftSchema.safeParse(draft);
+      if (!parsedDraft.success) return sendAdminError(reply, "DOCUMENT_CONVERSION_FAILED", correlation);
+
+      const registered = await ctx.catalogue.registerMedia("document", parsedDraft.data, {
+        repository_id: repository.repository_id,
+        authored_by: principal.pseudonym,
+      });
+      await audit({
+        actorPseudonym: principal.pseudonym, actorRole: principal.role,
+        actionType: "learning_object.author_document", targetType: "learning_object", targetId: registered.object_id,
+        resultingState: { content_version: registered.content_version },
         outcome: "ALLOWED", correlationId: correlation,
       });
       const response = { ...registered, repository_id: repository.repository_id, correlation_id: correlation };

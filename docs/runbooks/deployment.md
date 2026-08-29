@@ -182,9 +182,22 @@ DOCUMENT_CONVERTER_PUBLIC_URL=…    # this service's own public origin; default
 DOCUMENT_CONVERTER_DATA_DIR=…      # defaults to /app/data — attach a volume, or every restart loses every conversion's output
 ```
 
-Its output is deliberately temporary storage (its own local disk), never a durability guarantee —
-a caller registering a document should fetch the page image URLs once, right after conversion, and
-re-host them before calling `POST /api/v1/internal/runtime/documents`.
+Deploy it as **exactly one replica**. Its output is deliberately temporary storage (its own local
+disk), never a durability guarantee: a caller registering a document manually should fetch the page
+image URLs once, right after conversion, and re-host them before calling
+`POST /api/v1/internal/runtime/documents`; the Admin UI's own upload button (below) does not
+re-host, so a second replica's separate disk would serve 404s for pages the first one converted.
+
+For the Administration workspace's own upload button (`.../learning-objects/documents/upload`) to
+work, also point the **Runtime API** at this service — a separate setting from the two above, which
+are the converter's own:
+
+```
+DOCUMENT_CONVERTER_URL=…    # the Runtime API's setting: this service's base origin, https in production
+```
+
+Without it, the workspace's document tab refuses cleanly (`DOCUMENT_CONVERTER_NOT_CONFIGURED`)
+rather than the whole publisher surface failing to start.
 
 ### 7. Register content
 
@@ -224,10 +237,15 @@ Suspension, retirement and deletion also revoke the object's smart link: a withd
 stay reachable through a link that needs no sign-in.
 
 Video, document (PowerPoint/Word-as-slides) and audio content register the same way quizzes do:
-structured JSON against a fixed shared player, never a bundle — but through the internal service
-surface (`POST …/internal/runtime/videos` \| `/documents` \| `/audio`, the pre-shared service
-credential from step 5, not an admin token), the same one the agent connector uses for quizzes. There
-is no Administration workspace screen for these three yet.
+structured JSON against a fixed shared player, never a bundle. Two surfaces reach the same
+`registerMedia` call: the Administration workspace's "New learning object" dialog (video, document,
+and audio tabs alongside quiz and packaged module — an administrator, repository membership, the
+same trust model as authoring a quiz there), and the internal service surface
+(`POST …/internal/runtime/videos` \| `/documents` \| `/audio`, the pre-shared service credential
+from step 5, not an admin token) the agent connector uses. The workspace's document tab uploads a
+file and converts it through step 6b's document-converter service in one action; the internal
+surface expects `pages` (image URLs) already assembled, since an agent has usually produced or
+fetched those itself.
 
 ## Deploying a new version
 
