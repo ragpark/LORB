@@ -3,23 +3,27 @@
 /* Learner Portal palette — deliberately generic, not a LORB house style: this surface simulates a
  * third-party consuming platform, not LORB itself (see README-design-system.md). It shares the
  * structural foundation above (spacing, radii, focus ring, card/drawer shapes) but keeps its own
- * warm, brand-neutral colours and its own simple flowing layout rather than the console shell. */
+ * muted purple colours and a simple flowing layout rather than the console shell. */
 :root {
-  --lorb-ink: #27231f;
-  --lorb-paper: #f5f3ef;
+  --lorb-ink: #2b2735;
+  --lorb-ink-soft: #6a6478;
+  --lorb-paper: #f6f4f9;
   --lorb-surface: #fff;
-  --lorb-line: #ded7c9;
-  --lorb-accent: #6b4817;
+  --lorb-line: #e2ddec;
+  --lorb-accent: #6d5f92;
+  --lorb-accent-deep: #514573;
+  --lorb-accent-wash: #eeeaf6;
   --lorb-on-accent: #fff;
-  --lorb-overlay: rgb(20 15 5 / 55%);
+  --lorb-overlay: rgb(32 26 46 / 55%);
 
   color: var(--lorb-ink);
   background: var(--lorb-paper);
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 a {
   font: inherit;
+  color: var(--lorb-accent-deep);
 }
 
 .skip {
@@ -32,28 +36,36 @@ header {
   align-items: center;
   gap: var(--lorb-space-4);
   padding: var(--lorb-space-4) var(--lorb-space-7);
-  background: #292724;
+  background: #3a3350;
   color: #fff;
 }
 .wordmark {
-  font-size: 1.25rem;
-  font-weight: 800;
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 .badge,
 .environment {
-  border: 2px solid #d6a638;
+  border: 1px solid #a495cf;
+  color: #d9d0ee;
   border-radius: var(--lorb-radius-pill);
-  padding: 0.15rem 0.6rem;
-  font-size: 0.8rem;
-  font-weight: 800;
+  padding: 0.15rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+header button {
+  margin-left: auto;
+  background: transparent;
+  border-color: #7c6fa4;
+  color: #e6e0f4;
 }
 
 .environment-notice {
-  background: #4a3212;
-  color: #fff7df;
+  background: #4b4166;
+  color: #f1ecfa;
   text-align: center;
-  padding: 0.7rem;
-  font-weight: 700;
+  padding: 0.6rem;
+  font-weight: 600;
 }
 
 .small-screen {
@@ -61,36 +73,93 @@ header {
 }
 
 main:not(.launch) {
-  max-width: 1100px;
+  max-width: 1040px;
   margin: auto;
-  padding: 2.5rem 2rem;
+  padding: 2.5rem 2rem 4rem;
+}
+
+h1 {
+  font-size: 1.5rem;
+  margin: 0 0 0.35rem;
+  color: var(--lorb-ink);
+}
+.lede {
+  color: var(--lorb-ink-soft);
+  margin: 0 0 1.75rem;
 }
 
 button {
-  border: 2px solid #4a3212;
+  border: 1px solid var(--lorb-accent-deep);
   background: var(--lorb-accent);
-  color: #fff;
+  color: var(--lorb-on-accent);
   border-radius: var(--lorb-radius-sm);
-  padding: 0.65rem 1rem;
-  margin: 0.25rem;
+  padding: 0.6rem 1.05rem;
+  margin: 0.25rem 0.25rem 0.25rem 0;
+  font-weight: 600;
+}
+
+/* Breadcrumb-style navigation reads as a link, not an action. */
+.crumb,
+.crumbs button {
+  background: none;
+  border: none;
+  color: var(--lorb-accent-deep);
+  font-weight: 600;
+  padding: 0.2rem 0;
+  margin: 0 0 1rem;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
 }
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: var(--lorb-space-4);
+  margin-top: 1.25rem;
 }
 
 .card {
-  background: #d8d4ca;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  text-align: left;
+  background: var(--lorb-surface);
   color: var(--lorb-ink);
+  border: 1px solid var(--lorb-line);
+  border-radius: var(--lorb-radius-md, 0.75rem);
+  padding: 1.1rem 1.2rem;
+  box-shadow: 0 1px 2px rgb(43 39 60 / 6%);
+  font-weight: 400;
+}
+.card strong {
+  font-size: 1.02rem;
+  color: var(--lorb-ink);
+}
+.card span {
+  color: var(--lorb-ink-soft);
+  font-size: 0.88rem;
+}
+.course-card {
+  border-left: 4px solid var(--lorb-accent);
+}
+.course-card .count {
+  margin-top: 0.35rem;
+  color: var(--lorb-accent-deep);
+  font-weight: 600;
+}
+
+.empty {
+  color: var(--lorb-ink-soft);
+  font-style: italic;
 }
 
 .notice,
 .session {
-  border-left: 5px solid #b45f24;
-  background: #fff2d2;
+  border-left: 4px solid var(--lorb-accent);
+  background: var(--lorb-accent-wash);
   padding: var(--lorb-space-4);
+  border-radius: 0 var(--lorb-radius-sm) var(--lorb-radius-sm) 0;
 }
 
 .launch {
@@ -107,8 +176,10 @@ button {
 .launch iframe {
   max-width: 1200px;
   max-height: 900px;
-  border: 2px solid #3b3833;
+  border: 1px solid var(--lorb-line);
+  border-radius: var(--lorb-radius-sm);
   align-self: center;
+  background: var(--lorb-surface);
 }
 
 .sr-only {
@@ -123,15 +194,27 @@ button {
   position: fixed;
   right: 1rem;
   bottom: 1rem;
+  background: transparent;
+  border-color: var(--lorb-line);
+  color: var(--lorb-ink-soft);
 }
 
 dl {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 0.5rem 1rem;
+  gap: 0.5rem 1.25rem;
+  background: var(--lorb-surface);
+  border: 1px solid var(--lorb-line);
+  border-radius: var(--lorb-radius-sm);
+  padding: 1rem 1.25rem;
 }
 dt {
-  font-weight: bold;
+  font-weight: 600;
+  color: var(--lorb-ink-soft);
+}
+dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 767px) {
@@ -148,27 +231,168 @@ dt {
   }
 }
 
-/* Roster administration */
-.admin-head{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap}
-.admin-columns{display:grid;grid-template-columns:minmax(16rem,1fr) minmax(0,2fr);gap:2rem;align-items:start}
-.admin-error{color:#8a1c1c;font-weight:600}
-.admin-expired{display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;border:1px solid #8a1c1c;border-radius:.25rem;padding:.75rem}
-.admin-expired p{margin:0}
-.class-list,.learner-list,.topic-list,.assign-list{list-style:none;padding:0;margin:0 0 1rem}
-.class-list button{display:flex;flex-direction:column;gap:.15rem;width:100%;text-align:left;padding:.6rem .75rem;margin-bottom:.4rem}
-.class-list button[aria-current="true"]{outline:2px solid currentColor}
-.learner-list li,.assign-list li{display:flex;align-items:center;gap:.75rem;padding:.35rem 0;flex-wrap:wrap}
-.learner-list code{font-size:.85em;opacity:.75}
-.learner-list button{margin-left:auto}
-.admin .empty{opacity:.7;font-style:italic}
-.admin form{display:grid;gap:.5rem;margin-bottom:1.5rem}
-.admin label{display:grid;gap:.2rem}
-.results table{border-collapse:collapse;width:100%;margin-bottom:1rem}
-.results th,.results td{text-align:left;padding:.35rem .5rem;border-bottom:1px solid rgba(128,128,128,.35)}
-@media (max-width:60rem){.admin-columns{grid-template-columns:1fr}}
-.agent-links{margin-top:2.5rem;border-top:1px solid rgba(128,128,128,.35);padding-top:1.5rem}
-.link-list{list-style:none;padding:0;margin:0 0 1rem}
-.link-list li{display:flex;align-items:center;gap:.75rem;padding:.35rem 0;flex-wrap:wrap}
-.link-list code{font-size:.85em;opacity:.75}
-.link-list button{margin-left:auto}
-.link-issuer{opacity:.6;max-width:22rem;overflow-wrap:anywhere}
+/* Teacher administration area — the same quiet surface language as the learner side: white cards
+ * on the muted paper, one accent, generous spacing. */
+.admin-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+.admin-columns {
+  display: grid;
+  grid-template-columns: minmax(16rem, 1fr) minmax(0, 2fr);
+  gap: 1.5rem;
+  align-items: start;
+  margin-top: 1.25rem;
+}
+.admin-columns > * {
+  background: var(--lorb-surface);
+  border: 1px solid var(--lorb-line);
+  border-radius: var(--lorb-radius-md, 0.75rem);
+  padding: 1.25rem 1.4rem;
+  box-shadow: 0 1px 2px rgb(43 39 60 / 6%);
+}
+.admin h2,
+.admin h3 {
+  margin-top: 0;
+  color: var(--lorb-ink);
+}
+.admin-error {
+  color: #8a2f43;
+  font-weight: 600;
+}
+.admin-expired {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  border: 1px solid #c48b9b;
+  background: #f9eef1;
+  border-radius: var(--lorb-radius-sm);
+  padding: 0.75rem 1rem;
+}
+.admin-expired p {
+  margin: 0;
+}
+.class-list,
+.learner-list,
+.topic-list,
+.assign-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+}
+.class-list button {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.65rem 0.8rem;
+  margin: 0 0 0.4rem;
+  background: var(--lorb-surface);
+  color: var(--lorb-ink);
+  border: 1px solid var(--lorb-line);
+  font-weight: 500;
+}
+.class-list button[aria-current='true'] {
+  border-color: var(--lorb-accent);
+  background: var(--lorb-accent-wash);
+  outline: none;
+}
+.learner-list li,
+.assign-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--lorb-line);
+}
+.learner-list code {
+  font-size: 0.85em;
+  color: var(--lorb-ink-soft);
+}
+.learner-list button {
+  margin-left: auto;
+}
+.admin .empty {
+  color: var(--lorb-ink-soft);
+  font-style: italic;
+}
+.admin form {
+  display: grid;
+  gap: 0.6rem;
+  margin-bottom: 1.5rem;
+}
+.admin label {
+  display: grid;
+  gap: 0.25rem;
+  font-weight: 600;
+  color: var(--lorb-ink-soft);
+}
+.admin input,
+.admin select,
+.admin textarea {
+  border: 1px solid var(--lorb-line);
+  border-radius: var(--lorb-radius-sm);
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+  color: var(--lorb-ink);
+  background: var(--lorb-surface);
+}
+.results table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 1rem;
+}
+.results th,
+.results td {
+  text-align: left;
+  padding: 0.4rem 0.55rem;
+  border-bottom: 1px solid var(--lorb-line);
+}
+.results th {
+  color: var(--lorb-ink-soft);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+@media (max-width: 60rem) {
+  .admin-columns {
+    grid-template-columns: 1fr;
+  }
+}
+.agent-links {
+  margin-top: 2.5rem;
+  border-top: 1px solid var(--lorb-line);
+  padding-top: 1.5rem;
+}
+.link-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+}
+.link-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--lorb-line);
+}
+.link-list code {
+  font-size: 0.85em;
+  color: var(--lorb-ink-soft);
+}
+.link-list button {
+  margin-left: auto;
+}
+.link-issuer {
+  color: var(--lorb-ink-soft);
+  max-width: 22rem;
+  overflow-wrap: anywhere;
+}

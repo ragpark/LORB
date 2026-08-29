@@ -85,6 +85,19 @@ describe('learner catalogue scope',()=>{
   expect(source('src/App.tsx')).not.toContain("apiRequest<{items:{repository_id:string}[]}>");
  });
 
+ // The course layer groups the same full response; it must not turn the grouping into a hole.
+ it('lists every repository as a course and keeps unlisted objects reachable',async()=>{
+  const {fetchCourses}=await import('../../src/catalogue.js');
+  const UNLISTED='22222222-2222-4222-8222-222222222222';
+  stubApi([object('a',OLDER,'Ratios'),object('b',DEFAULT_REPO,'Photosynthesis quiz'),object('c',UNLISTED,'Orphaned activity')]);
+  const courses=await fetchCourses(config);
+  expect(courses.map((course)=>course.repository_id)).toEqual([OLDER,DEFAULT_REPO,'']);
+  expect(courses[0]!.objects.map((row)=>row.title)).toEqual(['Ratios']);
+  expect(courses[1]!.objects.map((row)=>row.title)).toEqual(['Photosynthesis quiz']);
+  // An object whose repository the list does not name lands in the catch-all course, never nowhere.
+  expect(courses[2]!.objects.map((row)=>row.title)).toEqual(['Orphaned activity']);
+ });
+
  it('reports a leaked identity field through the same guard as every other learner-facing read',async()=>{
   stubApi([{...object('a',DEFAULT_REPO,'Quiz'),email:'leaked@example.test'} as never]);
   const leak=vi.fn();

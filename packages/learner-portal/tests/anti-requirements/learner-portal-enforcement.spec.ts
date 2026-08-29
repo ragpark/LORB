@@ -13,6 +13,13 @@ describe('learner portal enforcement',()=>{beforeEach(()=>{vi.restoreAllMocks()}
  it('rejects unsupported environment labels and wildcard origins',()=>{expect(()=>readConfig({VITE_ENVIRONMENT_LABEL:'PRODUCTION'} as ImportMetaEnv)).toThrow();expect(()=>readConfig({VITE_ALLOWED_SHELL_ORIGINS:'*'} as ImportMetaEnv)).toThrow()});
  it('derives the Runtime descriptor issuer when the optional override is blank',()=>{const config=readConfig({VITE_RUNTIME_API_BASE:'https://runtime.example/api/v1/runtime',VITE_RUNTIME_ISSUER:'',VITE_ALLOWED_SHELL_ORIGINS:'https://shell.example'} as ImportMetaEnv);expect(config.runtimeIssuer).toBe('https://runtime.example')});
  it('removes suspected identity fields recursively',()=>{const leak=vi.fn();expect(sanitise({title:'Safe',email:'hidden',nested:{date_of_birth:'hidden'}},leak)).toEqual({title:'Safe',nested:{}});expect(leak).toHaveBeenCalledTimes(2)});
+ it('withholds display_name by default and honours only a caller-supplied allowance',()=>{const leak=vi.fn();
+  // The default guard withholds every name-shaped field, repository rows included.
+  expect(sanitise({repository_id:'r1',display_name:'Default repository'},leak)).toEqual({repository_id:'r1'});
+  // Only a caller that names the key for its one call gets it through — the repositories fetch does.
+  expect(sanitise({repository_id:'r1',display_name:'Default repository',name:'hidden'},leak,new Set(['display_name']))).toEqual({repository_id:'r1',display_name:'Default repository'});
+  expect(source('src/catalogue.ts')).toContain("new Set(['display_name'])");
+ });
  it('uses the restrictive iframe sandbox',()=>{const app=source('src/App.tsx');expect(app).toContain('sandbox="allow-scripts"');expect(app).not.toContain('allow-same-origin')});
  it('rejects an origin outside the allow-list',()=>{vi.spyOn(console,'warn').mockImplementation(()=>{});expect(acceptPlayerMessage({origin:'https://wrong.test',source:{},data:envelope} as unknown as MessageEvent,new Set(['https://shell.test']),{} as Window)).toBeNull()});
  it('rejects a mismatched frame source',()=>{vi.spyOn(console,'warn').mockImplementation(()=>{});expect(acceptPlayerMessage({origin:'https://shell.test',source:{},data:envelope} as unknown as MessageEvent,new Set(['https://shell.test']),{} as Window)).toBeNull()});
