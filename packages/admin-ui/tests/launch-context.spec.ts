@@ -8,7 +8,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  keptRows, launchContextPayload, RESERVED_SETTING_KEY, settingsProblem, settingValue,
+  contextEquals, keptRows, launchContextPayload, RESERVED_SETTING_KEY, settingDisplay, settingsProblem, settingValue,
 } from '../src/lib/launch-context-draft.js';
 
 const workspace = readFileSync(new URL('../src/learning-objects.tsx', import.meta.url).pathname, 'utf8');
@@ -58,6 +58,26 @@ describe('authoring a launch context in the workspace', () => {
       expect(settingsProblem([{ key, value: 'x' }])).toContain('reserved name');
     }
     expect(RESERVED_SETTING_KEY.test('llm_endpoint')).toBe(false);
+  });
+
+  it('a stored scalar keeps its type across the display round trip, quotes forcing text', () => {
+    // The string "true" and the boolean true must stay distinguishable, or a save made to change
+    // one setting silently retypes another.
+    for (const stored of [true, false, 3, 2.5, 'demo', 'true', '3', '"quoted"', '3 turns', '']) {
+      expect(settingValue(settingDisplay(stored))).toBe(stored);
+    }
+    expect(settingDisplay('true')).toBe('"true"');
+    expect(settingDisplay(true)).toBe('true');
+    expect(settingValue('"true"')).toBe('true');
+  });
+
+  it('compares stored and drafted settings independent of key order, as jsonb returns them', () => {
+    const drafted = launchContextPayload('', [{ key: 'topic', value: 'x' }, { key: 'llm_endpoint', value: 'demo' }]);
+    expect(contextEquals(drafted, { settings: { llm_endpoint: 'demo', topic: 'x' } })).toBe(true);
+    expect(contextEquals(drafted, { settings: { llm_endpoint: 'other', topic: 'x' } })).toBe(false);
+    expect(contextEquals(drafted, { theme: 'midnight', settings: { llm_endpoint: 'demo', topic: 'x' } })).toBe(false);
+    expect(contextEquals(null, null)).toBe(true);
+    expect(contextEquals(launchContextPayload('', []), null)).toBe(true);
   });
 
   it('the tab offers settings, not only the theme', () => {

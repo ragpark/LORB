@@ -24,7 +24,7 @@ import * as Tabs from '@radix-ui/react-tabs';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AdminApiError } from './lib/api-client.js';
 import { admin, errorMessage, publisher } from './lib/catalogue-api.js';
-import { keptRows, launchContextPayload, settingsProblem, settingValue, type SettingRow } from './lib/launch-context-draft.js';
+import { contextEquals, launchContextPayload, settingDisplay, settingsProblem, type SettingRow } from './lib/launch-context-draft.js';
 import {
   emptyQuestion, emptyQuiz, OPTION_IDS, MAX_QUESTIONS, quizFormFrom, quizPayload, quizProblem,
   type QuizForm, type QuizQuestion,
@@ -702,16 +702,16 @@ function LaunchContextTab({ object, onSaved }: { object: Row & { versions?: Row[
   const active = (object.versions ?? []).find((version) => version.object_version_id === object.active_object_version_id);
   const context = active?.launch_context as { theme?: string; settings?: Record<string, string | number | boolean> } | null | undefined;
   const currentTheme = context?.theme ?? '';
-  const currentRows: SettingRow[] = Object.entries(context?.settings ?? {}).map(([key, value]) => ({ key, value: String(value) }));
+  // settingDisplay keeps each stored scalar's type across the round trip: a stored *string* "true"
+  // or "3" is shown quoted, so re-saving cannot silently turn it into a boolean or number.
+  const currentRows: SettingRow[] = Object.entries(context?.settings ?? {}).map(([key, value]) => ({ key, value: settingDisplay(value) }));
   const [theme, setTheme] = useState(currentTheme);
   const [rows, setRows] = useState<SettingRow[]>(currentRows);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const rowProblem = settingsProblem(rows);
-  const dirty = theme !== currentTheme
-    || JSON.stringify(keptRows(rows).map((row) => [row.key.trim(), String(settingValue(row.value))]))
-      !== JSON.stringify(currentRows.map((row) => [row.key, row.value]));
+  const dirty = !contextEquals(launchContextPayload(theme, rows), context ?? null);
 
   const submit = async () => {
     setSaving(true);
@@ -740,7 +740,8 @@ function LaunchContextTab({ object, onSaved }: { object: Row & { versions?: Row[
         <legend>Settings</legend>
         <p className="small">
           Named values the player reads at launch — for the AI coach: <code>llm_endpoint</code> (an endpoint <em>name</em>,
-          e.g. <code>demo</code>, never a URL), <code>topic</code>, <code>title</code>.
+          e.g. <code>demo</code>, never a URL), <code>topic</code>, <code>title</code>. <code>true</code>, <code>false</code> and
+          numbers are saved as those types; wrap a value in double quotes to save it as text.
         </p>
         {rows.map((row, index) => (
           <div className="setting-row" key={index}>
