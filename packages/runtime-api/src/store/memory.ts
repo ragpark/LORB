@@ -249,16 +249,23 @@ export class MemoryRuntimeStore implements RuntimeStore {
   }
 
   async activeSmartLinkForObject(objectId: string): Promise<SmartLink | undefined> {
-    const link = [...this.smartLinksByHash.values()].find((candidate) => candidate.object_id === objectId && !candidate.revoked_at);
+    const link = [...this.smartLinksByHash.values()].find((candidate) => candidate.object_id === objectId && !candidate.object_version_id && !candidate.revoked_at);
+    return link ? { ...link } : undefined;
+  }
+
+  async activeSmartLinkForVersion(objectId: string, objectVersionId: string): Promise<SmartLink | undefined> {
+    const link = [...this.smartLinksByHash.values()].find((candidate) =>
+      candidate.object_id === objectId && candidate.object_version_id === objectVersionId && !candidate.revoked_at);
     return link ? { ...link } : undefined;
   }
 
   async revokeSmartLink(objectId: string, revokedByPseudonym: string): Promise<SmartLink | undefined> {
-    const link = [...this.smartLinksByHash.values()].find((candidate) => candidate.object_id === objectId && !candidate.revoked_at);
-    if (!link) return undefined;
-    link.revoked_at = new Date().toISOString();
-    (link as SmartLink & { revoked_by_pseudonym?: string }).revoked_by_pseudonym = revokedByPseudonym;
-    return { ...link };
+    const links = [...this.smartLinksByHash.values()].filter((candidate) => candidate.object_id === objectId && !candidate.revoked_at);
+    for (const link of links) {
+      link.revoked_at = new Date().toISOString();
+      (link as SmartLink & { revoked_by_pseudonym?: string }).revoked_by_pseudonym = revokedByPseudonym;
+    }
+    return links[0] ? { ...links[0] } : undefined;
   }
 
   async recordSmartLinkRedemption(smartLinkId: string): Promise<void> {

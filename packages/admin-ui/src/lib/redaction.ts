@@ -15,7 +15,12 @@ const isApprovedPseudonymField = (key: string) => key === 'pseudonym' || key.end
 // it to reach the DOM so an admin can copy and share it. Scoped to siblings of `smart_link_id` so a
 // genuine bearer/access token elsewhere in a payload still trips the leak guard.
 const isApprovedSmartLinkTokenField = (key: string, parent: Record<string, unknown>) => key === 'token' && typeof parent.smart_link_id === 'string';
-const isForbiddenKey = (key: string, parent: Record<string, unknown>) => !isApprovedPseudonymField(key) && !isApprovedSmartLinkTokenField(key, parent) && forbiddenKey.test(key);
+// A quiz's `subject` is a curriculum subject ("Science"), not an identity — the name collision with
+// the banned raw-identity field is unfortunate but the contract already shipped. Scoped to the quiz
+// content shape (a sibling `questions` array), so a genuine subject claim anywhere else still trips
+// the guard.
+const isApprovedQuizSubjectField = (key: string, parent: Record<string, unknown>) => key === 'subject' && Array.isArray(parent.questions);
+const isForbiddenKey = (key: string, parent: Record<string, unknown>) => !isApprovedPseudonymField(key) && !isApprovedSmartLinkTokenField(key, parent) && !isApprovedQuizSubjectField(key, parent) && forbiddenKey.test(key);
 
 export function containsForbiddenField(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;

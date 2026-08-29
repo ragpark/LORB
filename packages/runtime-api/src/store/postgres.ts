@@ -80,6 +80,7 @@ function toSmartLink(row: Record<string, any>): SmartLink {
   return {
     smart_link_id: row.smart_link_id,
     object_id: row.object_id,
+    object_version_id: row.object_version_id ?? null,
     token_prefix: row.token_prefix,
     created_by_pseudonym: row.created_by_pseudonym,
     created_at: iso(row.created_at)!,
@@ -436,9 +437,9 @@ export class PostgresRuntimeStore implements RuntimeStore {
 
   async createSmartLink(link: SmartLink & { token_hash: string }): Promise<void> {
     await this.pool.query(
-      `insert into smart_link (smart_link_id, object_id, token_hash, token_prefix, created_by_pseudonym, created_at)
-       values ($1,$2,$3,$4,$5, coalesce($6::timestamptz, now()))`,
-      [link.smart_link_id, link.object_id, link.token_hash, link.token_prefix, link.created_by_pseudonym, link.created_at ?? null],
+      `insert into smart_link (smart_link_id, object_id, object_version_id, token_hash, token_prefix, created_by_pseudonym, created_at)
+       values ($1,$2,$3,$4,$5,$6, coalesce($7::timestamptz, now()))`,
+      [link.smart_link_id, link.object_id, link.object_version_id ?? null, link.token_hash, link.token_prefix, link.created_by_pseudonym, link.created_at ?? null],
     );
   }
 
@@ -448,7 +449,15 @@ export class PostgresRuntimeStore implements RuntimeStore {
   }
 
   async activeSmartLinkForObject(objectId: string): Promise<SmartLink | undefined> {
-    const result = await this.pool.query("select * from smart_link where object_id = $1 and revoked_at is null", [objectId]);
+    const result = await this.pool.query("select * from smart_link where object_id = $1 and object_version_id is null and revoked_at is null", [objectId]);
+    return result.rows[0] ? toSmartLink(result.rows[0]) : undefined;
+  }
+
+  async activeSmartLinkForVersion(objectId: string, objectVersionId: string): Promise<SmartLink | undefined> {
+    const result = await this.pool.query(
+      "select * from smart_link where object_id = $1 and object_version_id = $2 and revoked_at is null",
+      [objectId, objectVersionId],
+    );
     return result.rows[0] ? toSmartLink(result.rows[0]) : undefined;
   }
 

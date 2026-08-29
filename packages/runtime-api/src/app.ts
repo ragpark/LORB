@@ -522,9 +522,10 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
 
   const smartLinkUrl = (token: string) => `${publicIssuer}/api/v1/runtime/smart-links/${token}`;
 
-  const smartLinkResponse = (link: { smart_link_id: string; object_id: string; created_at: string; revoked_at: string | null; token_prefix: string; redemption_count: number }, token: string | undefined, correlationValue: string) => ({
+  const smartLinkResponse = (link: { smart_link_id: string; object_id: string; object_version_id?: string | null; created_at: string; revoked_at: string | null; token_prefix: string; redemption_count: number }, token: string | undefined, correlationValue: string) => ({
     smart_link_id: link.smart_link_id,
     object_id: link.object_id,
+    object_version_id: link.object_version_id ?? null,
     // The token itself is returned only on the response that created it: the store keeps a hash, so
     // a later read cannot reproduce it. An admin who loses it revokes and creates a new one.
     ...(token ? { token, url: smartLinkUrl(token) } : { token_prefix: link.token_prefix }),
@@ -562,6 +563,19 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
       metrics.smartLinkRedemptions.inc({ outcome: "unavailable" });
       return sendProblem(reply, "LEARNING_OBJECT_NOT_AVAILABLE", correlationValue, 410);
     }
+    // A pinned link keeps delivering the version it was created against — that a later publish
+    // superseded it is the reason the link exists. The version chain is immutable, so the only
+    // failure here is a link whose version no longer resolves at all.
+    const pinnedVersion = link.object_version_id ? await catalogue.objectVersion(link.object_version_id) : undefined;
+    if (link.object_version_id && (!pinnedVersion || pinnedVersion.object_id.toLowerCase() !== object.object_id.toLowerCase())) {
+      metrics.smartLinkRedemptions.inc({ outcome: "unavailable" });
+      return sendProblem(reply, "LEARNING_OBJECT_NOT_AVAILABLE", correlationValue, 410);
+    }
+    const deliveredVersionId = pinnedVersion?.object_version_id ?? object.active_object_version_id;
+    const deliveredPackageId = pinnedVersion?.package_version_id ?? object.active_package_version_id;
+    const deliveredModulePath = pinnedVersion
+      ? (await catalogue.packageVersion(pinnedVersion.package_version_id))?.module_path ?? object.module_path
+      : object.module_path;
 
     let subject = readCookie(request, "lorb_smart_link_subject");
     if (!subject || !/^[a-f0-9-]{36}$/i.test(subject)) subject = randomUUID();
@@ -578,8 +592,8 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
       attempt_id: attemptId,
       repository_id: object.repository_id,
       object_id: object.object_id,
-      object_version_id: object.active_object_version_id,
-      package_version_id: object.active_package_version_id,
+      object_version_id: deliveredVersionId,
+      package_version_id: deliveredPackageId,
       pseudonym,
       consumer_id: "smart-link",
       status: "CREATED",
@@ -594,13 +608,13 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
       repository_id: object.repository_id,
       consumer_id: "smart-link",
       object_id: object.object_id,
-      object_version_id: object.active_object_version_id,
-      package_version_id: object.active_package_version_id,
+      object_version_id: deliveredVersionId,
+      package_version_id: deliveredPackageId,
       correlation_id: randomUUID(),
       locale: "en-GB",
       attempt_id: attemptId,
       state_endpoint: `${publicIssuer}/api/v1/runtime/attempts/${attemptId}/state`,
-      package_url: `${playerOrigin}${object.module_path}`,
+      package_url: `${playerOrigin}${deliveredModulePath}`,
       session_config: { expires_at: expiresAt },
     }, { issuer: publicIssuer, evidenceEndpoint });
 
@@ -643,13 +657,29 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     if (!object) return sendAdminError(reply, "LEARNING_OBJECT_NOT_FOUND", correlationValue);
     if (object.status !== "PUBLISHED") return sendAdminError(reply, "LEARNING_OBJECT_NOT_PUBLISHED", correlationValue);
 
-    const existing = await store.activeSmartLinkForObject(object.object_id);
+    // Naming a version pins the link to it — the artefact form of sharing. Every published or
+    // superseded version of this object qualifies: superseded is the case the pin exists for.
+    // Without one the link follows the active version, as it always has.
+    const requestedVersion = (req as { body?: { object_version_id?: unknown } }).body?.object_version_id;
+    if (requestedVersion !== undefined && typeof requestedVersion !== "string") return sendAdminError(reply, "ADMIN_REQUEST_INVALID", correlationValue);
+    let pinnedVersionId: string | null = null;
+    if (typeof requestedVersion === "string") {
+      const version = await catalogue.objectVersion(requestedVersion);
+      if (!version || version.object_id.toLowerCase() !== object.object_id.toLowerCase()) return sendAdminError(reply, "LEARNING_OBJECT_NOT_FOUND", correlationValue);
+      if (!["PUBLISHED", "SUPERSEDED"].includes(version.status)) return sendAdminError(reply, "LEARNING_OBJECT_STATE_INVALID", correlationValue);
+      pinnedVersionId = version.object_version_id;
+    }
+
+    const existing = pinnedVersionId
+      ? await store.activeSmartLinkForVersion(object.object_id, pinnedVersionId)
+      : await store.activeSmartLinkForObject(object.object_id);
     if (existing) return (reply as { code: (n: number) => { send: (b: unknown) => unknown } }).code(200).send(smartLinkResponse(existing, undefined, correlationValue));
 
     const token = randomBytes(32).toString("base64url");
     const link = {
       smart_link_id: randomUUID(),
       object_id: object.object_id,
+      object_version_id: pinnedVersionId,
       token_prefix: token.slice(0, 8),
       created_by_pseudonym: principal.pseudonym,
       created_at: new Date().toISOString(),
@@ -665,7 +695,10 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     const principal = await requireAdmin(req, reply, adminCtx, "smart_link.get", "smart_link");
     if (!principal) return;
     const correlationValue = correlationOf(req);
-    const link = await store.activeSmartLinkForObject((req as { params: { objectId: string } }).params.objectId);
+    const request = req as { params: { objectId: string }; query: { object_version_id?: string } };
+    const link = request.query.object_version_id
+      ? await store.activeSmartLinkForVersion(request.params.objectId, request.query.object_version_id)
+      : await store.activeSmartLinkForObject(request.params.objectId);
     if (!link) return sendAdminError(reply, "SMART_LINK_NOT_FOUND", correlationValue);
     return smartLinkResponse(link, undefined, correlationValue);
   });

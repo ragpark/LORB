@@ -214,6 +214,13 @@ stay reachable through a link that needs no sign-in.
 2. Roll the Runtime API replicas. Attempt state is in Postgres, so a replica leaving mid-request
    costs that request and nothing else. Shutdown is graceful: in-flight requests finish before the
    process exits.
+
+   While replicas are mixed, do not *exercise* a capability the deploy introduces — mint nothing,
+   share nothing that only the new version understands. A concrete case: a version-pinned smart
+   link created while an old replica still serves redemptions is redeemed by that replica as the
+   object's *active* version, because the old code does not read the pin. The window is the roll
+   itself; a pinned link minted after `/ready` is green on every replica behaves as pinned
+   everywhere.
 3. Roll the front ends. They are static bundles behind a CDN or nginx; nothing coordinates with the
    API roll.
 
