@@ -12,6 +12,7 @@
 import "dotenv/config";
 import { buildRuntime } from "../packages/runtime-api/src/app.js";
 import { registerEvidenceRoutes } from "../packages/evidence-api/src/app.js";
+import { endpointsFromEnvironment, registerRelayRoutes } from "../packages/experience-relay/src/app.js";
 import { ConfigurationError, loadConfig } from "../packages/runtime-api/src/config/index.js";
 import { logger, metricsRegistry } from "../packages/runtime-api/src/services/observability.js";
 import { httpSender, startForwarder, type ForwarderHandle } from "../packages/evidence-forwarder/src/worker.js";
@@ -45,6 +46,8 @@ await catalogue.ensureSharedPlayer();
 
 const { app, ring } = await buildRuntime({ config: runtimeConfig, store, catalogue });
 registerEvidenceRoutes(app, ring, { issuer: runtimeConfig.publicIssuer, store });
+const relayEndpoints = endpointsFromEnvironment();
+registerRelayRoutes(app, ring, { issuer: runtimeConfig.publicIssuer, endpoints: relayEndpoints });
 
 app.get("/", async () => ({
   name: "LORB Runtime API",
@@ -60,6 +63,7 @@ app.get("/", async () => ({
     launches: "/api/v1/runtime/launches",
     publisher: "/api/v1/publisher/learning-objects",
     evidence_statements: "/api/v1/evidence/statements",
+    coach_relay: "/api/v1/relay/coach/messages",
     activity_results: "/api/v1/evidence/activity-results",
   },
 }));

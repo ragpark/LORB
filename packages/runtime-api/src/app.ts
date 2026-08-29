@@ -136,6 +136,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     const path = url.split("?")[0] ?? url;
     return path === "/api/v1/runtime/jwks"
       || path === "/api/v1/evidence/statements"
+      || path === "/api/v1/relay/coach/messages"
       || /^\/api\/v1\/runtime\/attempts\/[^/]+\/(state|complete)$/.test(path)
       || /^\/api\/v1\/runtime\/learning-objects\/[^/]+\/content$/.test(path);
   };

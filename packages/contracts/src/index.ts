@@ -80,3 +80,24 @@ export const launchContextSchema = z.object({
 }).strict()
   .refine((value) => Object.keys(value.settings ?? {}).length <= 16, { message: "at most 16 settings" });
 export type LaunchContext = z.infer<typeof launchContextSchema>;
+
+// ---------------------------------------------------------------------------
+// Coach relay (packages/experience-relay)
+//
+// The conversation a coaching player has with its provider goes through a
+// server-side relay: the player authenticates with its launch descriptor and
+// names an endpoint; the relay holds the real URL and credentials. Nothing
+// here ever carries a key, and the endpoint is a name, never an address.
+// ---------------------------------------------------------------------------
+const relayEndpointName = z.string().regex(/^[a-z][a-z\d-]{0,63}$/, "an endpoint is a configured name, not a URL");
+export const coachRelayRequestSchema = z.object({
+  endpoint: relayEndpointName,
+  messages: z.array(z.object({
+    role: z.enum(["learner", "coach"]),
+    content: z.string().min(1).max(4000),
+  }).strict()).min(1).max(32),
+  /** Small named scalars from the object's launch context, passed through for the provider. */
+  context: z.record(z.string().regex(/^[a-z][a-z\d_]{0,63}$/), z.union([z.string().max(256), z.number().finite(), z.boolean()])).optional(),
+}).strict()
+  .refine((value) => Object.keys(value.context ?? {}).length <= 16, { message: "at most 16 context entries" });
+export type CoachRelayRequest = z.infer<typeof coachRelayRequestSchema>;
