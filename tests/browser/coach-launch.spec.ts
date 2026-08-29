@@ -27,6 +27,77 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => harness?.stop());
 
+/**
+ * The multi-course pattern: a second course gets its own coaching object — same module file, same
+ * player, its own launch context. What this pins is that the context travels with the object, not
+ * the player: two objects registered against the identical module sha present different titles,
+ * open on different topics, and would name different provider endpoints, with no policy involved.
+ */
+test("a second course reuses the coach module with its own launch context", async ({ page }) => {
+  const adminToken = await issueIesToken(harness.iesPrivateKey, "coach-admin", "lorb-runtime", IES_ISSUER, { role: "admin" });
+  const moduleSha = createHash("sha256")
+    .update(readFileSync(resolve(import.meta.dirname, "../../packages/coach-player/src/index.html")))
+    .digest("hex");
+  // The second course exists first — in production this is the admin repositories surface.
+  const scienceRepository = randomUUID();
+  await harness.catalogue.addRepository({ repository_id: scienceRepository, slug: "science", display_name: "Science" });
+
+  const register = async (repositoryId: string, title: string, settings: Record<string, string>) => {
+    const created = await harness.runtime.app.inject({
+      method: "POST", url: "/api/v1/publisher/learning-objects",
+      headers: { authorization: `Bearer ${adminToken}`, "idempotency-key": randomUUID() },
+      payload: {
+        repository_id: repositoryId, title, duration: "10 minutes", kind: "ai-coach",
+        module_path: "/modules/coach-player/index.html", semver: "1.0.0", sha256: moduleSha,
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const objectId = created.json().object_id as string;
+    const contextSet = await harness.runtime.app.inject({
+      method: "PUT", url: `/api/v1/publisher/learning-objects/${objectId}/launch-context`,
+      headers: { authorization: `Bearer ${adminToken}`, "idempotency-key": randomUUID() },
+      payload: { launch_context: { settings } },
+    });
+    expect(contextSet.statusCode).toBe(200);
+    return objectId;
+  };
+
+  const maths = await register(REPOSITORY_ID, "Fractions coaching session",
+    { llm_endpoint: "demo", topic: "equivalent fractions", title: "Fractions coach" });
+  const science = await register(scienceRepository, "Photosynthesis coaching session",
+    { llm_endpoint: "demo", topic: "photosynthesis", title: "Science coach" });
+
+  const learnerToken = await issueIesToken(harness.iesPrivateKey, "synthetic-two-course-learner", "lorb-runtime", IES_ISSUER);
+  const launchOf = async (repositoryId: string, objectId: string) => {
+    const launch = await harness.runtime.app.inject({
+      method: "POST", url: "/api/v1/runtime/launches",
+      headers: { authorization: `Bearer ${learnerToken}`, "idempotency-key": randomUUID() },
+      payload: {
+        contract_version: "1.0", consumer_id: "browser-suite", repository_id: repositoryId,
+        object_id: objectId, requested_launch_mode: "embedded-iframe", locale: "en-GB",
+      },
+    });
+    expect(launch.statusCode).toBe(201);
+    return launch.json().player_url as string;
+  };
+
+  // The same learner opens each course's coach: same module, but each greets with its own
+  // identity — the second course's context never bleeds into the first's.
+  await page.goto(await launchOf(REPOSITORY_ID, maths), { waitUntil: "networkidle" });
+  const module = page.frameLocator("#module");
+  await expect(module.locator("#title")).toHaveText("Fractions coach", { timeout: 15000 });
+  await expect(module.locator(".bubble.coach").first()).toContainText("equivalent fractions", { timeout: 15000 });
+
+  // The two player URLs differ only in their fragment, and a hash-only navigation does not reload
+  // the document — leave the page first so the second launch starts a fresh shell, as a real
+  // learner's would.
+  await page.goto("about:blank");
+  await page.goto(await launchOf(scienceRepository, science), { waitUntil: "networkidle" });
+  await expect(module.locator("#title")).toHaveText("Science coach", { timeout: 15000 });
+  await expect(module.locator(".bubble.coach").first()).toContainText("photosynthesis", { timeout: 15000 });
+  await expect(module.locator(".bubble.coach").first()).not.toContainText("fractions");
+});
+
 test("a coaching launch chats through the relay and completes like any other attempt", async ({ page }) => {
   const adminToken = await issueIesToken(harness.iesPrivateKey, "coach-admin", "lorb-runtime", IES_ISSUER, { role: "admin" });
   const moduleSha = createHash("sha256")
