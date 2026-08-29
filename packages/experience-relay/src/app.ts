@@ -101,7 +101,9 @@ export function registerRelayRoutes(app: FastifyInstance, ring: SigningKeyRing, 
   const correlation = (req: { correlationId?: string; headers: Record<string, unknown> }): string =>
     req.correlationId ?? (typeof req.headers["x-correlation-id"] === "string" ? req.headers["x-correlation-id"] : randomUUID());
 
-  app.post("/api/v1/relay/coach/messages", { rateLimit: { max: perMinute, timeWindow: "1 minute" } } as never, async (req, reply) => {
+  // Under route `config`, where @fastify/rate-limit (registered global: false) actually looks —
+  // a top-level rateLimit shorthand is silently ignored and the route would run unlimited.
+  app.post("/api/v1/relay/coach/messages", { config: { rateLimit: { max: perMinute, timeWindow: "1 minute" } } }, async (req, reply) => {
     const request = req as { headers: Record<string, unknown>; body: unknown; correlationId?: string };
     const correlationValue = correlation(request);
 

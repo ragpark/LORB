@@ -7,6 +7,7 @@
  * turn with a 502, never the attempt.
  */
 import { randomUUID } from "node:crypto";
+import rateLimit from "@fastify/rate-limit";
 import { generateKeyPair } from "jose";
 import { describe, expect, it, vi } from "vitest";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
@@ -15,7 +16,7 @@ import { issueIesToken } from "../../packages/dev-identity/src/issuer.js";
 import { MemoryRuntimeStore } from "../../packages/runtime-api/src/store/index.js";
 import { MemoryCatalogueStore } from "../../packages/runtime-api/src/catalogue/index.js";
 
-async function setup(options: { endpoints?: Record<string, { url: string; authorization?: string }>; fetchImpl?: typeof fetch } = {}) {
+async function setup(options: { endpoints?: Record<string, { url: string; authorization?: string }>; fetchImpl?: typeof fetch; perMinute?: number } = {}) {
   const ies = await generateKeyPair("ES256");
   const issuer = `https://ies.relay-${randomUUID()}.test`;
   const publicIssuer = "http://localhost:3000";
@@ -24,7 +25,12 @@ async function setup(options: { endpoints?: Record<string, { url: string; author
     iesKey: ies.publicKey, iesIssuer: issuer, playerOrigin: `https://player.relay-${randomUUID()}.test`,
     secret: Buffer.alloc(32, 8), store: new MemoryRuntimeStore(), catalogue, publicIssuer,
   });
-  registerRelayRoutes(runtime.app, runtime.ring, { issuer: publicIssuer, endpoints: options.endpoints ?? {}, fetchImpl: options.fetchImpl, timeoutMs: 2000 });
+  if (options.perMinute !== undefined) {
+    // Mirrors production: the plugin registered global: false, so the route's own config must be
+    // where the limit lives — this is what proves the nesting @fastify/rate-limit v9 discovers.
+    await runtime.app.register(rateLimit, { global: false });
+  }
+  registerRelayRoutes(runtime.app, runtime.ring, { issuer: publicIssuer, endpoints: options.endpoints ?? {}, fetchImpl: options.fetchImpl, timeoutMs: 2000, perMinute: options.perMinute });
 
   const learnerToken = await issueIesToken(ies.privateKey, "relay-learner", "lorb-runtime", issuer, {});
   const objectId = (await catalogue.learningObjects({ status: "PUBLISHED" }))[0]!.object_id;
@@ -119,6 +125,14 @@ describe("coach relay", () => {
     });
     expect((await refused.relay(turn("coach-default"))).statusCode).toBe(502);
     await refused.runtime.app.close();
+  });
+
+  it("rate-limits the route where the host app enforces limits, with a 429 past the ceiling", async () => {
+    const { runtime, relay } = await setup({ perMinute: 2 });
+    expect((await relay(turn())).statusCode).toBe(200);
+    expect((await relay(turn())).statusCode).toBe(200);
+    expect((await relay(turn())).statusCode).toBe(429);
+    await runtime.app.close();
   });
 
   it("reads only well-formed https endpoints from the environment", () => {

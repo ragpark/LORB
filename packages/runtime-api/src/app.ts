@@ -184,8 +184,11 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     });
   }
 
+  // Per-route limits must live under route `config` — with `global: false`, @fastify/rate-limit
+  // only discovers `routeOptions.config.rateLimit`; a top-level shorthand is silently ignored and
+  // the route runs unlimited.
   const limit = (perMinute: number) =>
-    runtimeConfig.rateLimit.enabled ? { rateLimit: { max: perMinute, timeWindow: "1 minute" } } : {};
+    runtimeConfig.rateLimit.enabled ? { config: { rateLimit: { max: perMinute, timeWindow: "1 minute" } } } : {};
 
   const correlation = (req: unknown): string => (req as { correlationId?: string }).correlationId ?? randomUUID();
   const envelope = (items: unknown[], req: unknown) => ({ items, next_cursor: null, correlation_id: correlation(req) });
