@@ -339,7 +339,7 @@ export function loadConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfi
   // Outside production the local consumer and console origins are convenient defaults. In production
   // the allow-list is exactly what the operator configured: a built-in origin nobody reviewed is the
   // same defect as a wildcard, only harder to notice.
-  const developmentOrigins = ["http://localhost:3300", "http://localhost:5176", "http://localhost:5173"];
+  const developmentOrigins = ["http://localhost:3300", "http://localhost:5176", "http://localhost:5173", "http://localhost:5174"];
   const allowedConsumerOrigins = production ? configuredOrigins : [...new Set([...developmentOrigins, ...configuredOrigins])];
   if (production && allowedConsumerOrigins.length === 0) {
     problems.push("ALLOWED_CONSUMER_ORIGINS must list at least one origin in production");

@@ -10,10 +10,10 @@
  * then present, published and launchable, visible in the ops and administration consoles, and
  * absent from the one screen a learner can reach.
  *
- * A learner has no concept of a repository — it is a publishing boundary, not a shelf they browse —
- * so the catalogue asks for the whole catalogue and the scoping question stops being asked at all.
- * Which objects a caller may see is the Runtime API's to decide, and a client-side filter over a
- * list the API already chose to serve was never enforcing anything.
+ * The catalogue therefore asks for the whole catalogue, and which objects a caller may see stays
+ * the Runtime API's decision: a client-side filter over a list the API already chose to serve was
+ * never enforcing anything. The course layer below presents repositories as navigation, but it is
+ * grouping over that same full response — see fetchCourses.
  */
 import {apiRequest} from './api.js';
 import type {Config} from './config.js';
@@ -28,4 +28,35 @@ export interface CatalogueObject {
 export async function fetchCatalogue(config:Config,onLeak=()=>{}):Promise<CatalogueObject[]>{
  const data=await apiRequest<{items:CatalogueObject[]}>(config,'learning-objects',{},onLeak);
  return data.items;
+}
+
+/**
+ * A course, as the portal presents one: a repository worn as a navigation grouping.
+ *
+ * This does not reintroduce the filter the module comment above warns about. The catalogue is still
+ * fetched whole and unfiltered; courses are grouped *client-side over that full response*, every
+ * repository is listed, and an object whose repository the list does not name lands in a catch-all
+ * course rather than nowhere. Nothing the API serves can be unreachable — the grouping adds a level
+ * of navigation, never a hole.
+ */
+export interface Course{repository_id:string;name:string;objects:CatalogueObject[]}
+export async function fetchCourses(config:Config,onLeak=()=>{}):Promise<Course[]>{
+ const [repositories,objects]=await Promise.all([
+  apiRequest<{items:{repository_id:string;display_name?:string;slug?:string}[]}>(config,'repositories',{},onLeak),
+  fetchCatalogue(config,onLeak),
+ ]);
+ const grouped=new Map<string,CatalogueObject[]>();
+ for(const object of objects){
+  const key=object.repository_id.toLowerCase();
+  grouped.set(key,[...(grouped.get(key)??[]),object]);
+ }
+ const courses:Course[]=repositories.items.map(repository=>({
+  repository_id:repository.repository_id,
+  name:repository.display_name||repository.slug||'Course',
+  objects:grouped.get(repository.repository_id.toLowerCase())??[],
+ }));
+ const listed=new Set(repositories.items.map(repository=>repository.repository_id.toLowerCase()));
+ const orphaned=objects.filter(object=>!listed.has(object.repository_id.toLowerCase()));
+ if(orphaned.length>0)courses.push({repository_id:'',name:'More activities',objects:orphaned});
+ return courses;
 }
