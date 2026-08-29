@@ -24,6 +24,7 @@ import * as Tabs from '@radix-ui/react-tabs';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AdminApiError } from './lib/api-client.js';
 import { admin, errorMessage, publisher } from './lib/catalogue-api.js';
+import { keptRows, launchContextPayload, settingsProblem, settingValue, type SettingRow } from './lib/launch-context-draft.js';
 import {
   emptyQuestion, emptyQuiz, OPTION_IDS, MAX_QUESTIONS, quizFormFrom, quizPayload, quizProblem,
   type QuizForm, type QuizQuestion,
@@ -686,7 +687,8 @@ function PublishVersionForm({ objectId, onPublished }: { objectId: string; onPub
 
 /**
  * Publisher-authored launch context: which theme the experience presents, chosen from the tokens the
- * player ships. Saving publishes a new object version — the context reaches a descriptor-pinned
+ * player ships, plus named settings the module reads at launch (the AI coach's `llm_endpoint`,
+ * `topic`, `title`). Saving publishes a new object version — the context reaches a descriptor-pinned
  * surface, so it follows the same rule as content: an attempt already in flight keeps the context it
  * was launched with, and the change applies from the next launch.
  */
@@ -698,17 +700,26 @@ const LAUNCH_THEMES = [
 
 function LaunchContextTab({ object, onSaved }: { object: Row & { versions?: Row[] }; onSaved: () => void }) {
   const active = (object.versions ?? []).find((version) => version.object_version_id === object.active_object_version_id);
-  const current = (active?.launch_context as { theme?: string } | null | undefined)?.theme ?? '';
-  const [theme, setTheme] = useState(current);
+  const context = active?.launch_context as { theme?: string; settings?: Record<string, string | number | boolean> } | null | undefined;
+  const currentTheme = context?.theme ?? '';
+  const currentRows: SettingRow[] = Object.entries(context?.settings ?? {}).map(([key, value]) => ({ key, value: String(value) }));
+  const [theme, setTheme] = useState(currentTheme);
+  const [rows, setRows] = useState<SettingRow[]>(currentRows);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  const rowProblem = settingsProblem(rows);
+  const dirty = theme !== currentTheme
+    || JSON.stringify(keptRows(rows).map((row) => [row.key.trim(), String(settingValue(row.value))]))
+      !== JSON.stringify(currentRows.map((row) => [row.key, row.value]));
+
   const submit = async () => {
     setSaving(true);
     setError('');
     try {
       await publisher(`learning-objects/${String(object.object_id)}/launch-context`, {
         method: 'PUT',
-        body: { launch_context: theme ? { theme } : null },
+        body: { launch_context: launchContextPayload(theme, rows) },
       });
       onSaved();
     } catch (reason) {
@@ -725,11 +736,37 @@ function LaunchContextTab({ object, onSaved }: { object: Row & { versions?: Row[
           {LAUNCH_THEMES.map((option) => <option key={option.token} value={option.token}>{option.label}</option>)}
         </select>
       </label>
+      <fieldset className="settings-list">
+        <legend>Settings</legend>
+        <p className="small">
+          Named values the player reads at launch — for the AI coach: <code>llm_endpoint</code> (an endpoint <em>name</em>,
+          e.g. <code>demo</code>, never a URL), <code>topic</code>, <code>title</code>.
+        </p>
+        {rows.map((row, index) => (
+          <div className="setting-row" key={index}>
+            <input
+              aria-label={`Setting ${index + 1} name`}
+              placeholder="llm_endpoint"
+              value={row.key}
+              onChange={(e) => setRows(rows.map((item, at) => (at === index ? { ...item, key: e.target.value } : item)))}
+            />
+            <input
+              aria-label={`Setting ${index + 1} value`}
+              placeholder="demo"
+              value={row.value}
+              onChange={(e) => setRows(rows.map((item, at) => (at === index ? { ...item, value: e.target.value } : item)))}
+            />
+            <button type="button" aria-label={`Remove setting ${index + 1}`} onClick={() => setRows(rows.filter((_, at) => at !== index))}>Remove</button>
+          </div>
+        ))}
+        <button type="button" onClick={() => setRows([...rows, { key: '', value: '' }])} disabled={rows.length >= 16}>Add setting</button>
+      </fieldset>
       <p className="governance-note">
-        The theme is presented by the player itself; learners are not asked and are not told. Saving publishes a new
-        version, so launches already in progress keep the look they started with.
+        The theme and settings are presented by the player itself; learners are not asked and are not told. Saving
+        publishes a new version, so launches already in progress keep the context they started with.
       </p>
-      <button type="submit" disabled={saving || theme === current}>{saving ? 'Saving…' : 'Save launch context'}</button>
+      {rowProblem && <p role="alert" className="error-text">{rowProblem}</p>}
+      <button type="submit" disabled={saving || !dirty || rowProblem !== ''}>{saving ? 'Saving…' : 'Save launch context'}</button>
       {error && <p role="alert" className="error-text">{error}</p>}
     </form>
   );
