@@ -23,7 +23,7 @@ describe('roster administration',()=>{
  // apiRequest is what every learner-facing screen uses. If sanitise were ever dropped from it, the
  // guard would be gone everywhere rather than only on the roster surface.
  it('still routes learner-facing responses through sanitise',()=>{
-  expect(read('api.ts')).toContain('sanitise(body,onLeak)');
+  expect(read('api.ts')).toContain('sanitise(body,onLeak,approved)');
  });
 
  it('confines the unsanitised path to the administration client',()=>{

@@ -42,7 +42,8 @@ export async function fetchCatalogue(config:Config,onLeak=()=>{}):Promise<Catalo
 export interface Course{repository_id:string;name:string;objects:CatalogueObject[]}
 export async function fetchCourses(config:Config,onLeak=()=>{}):Promise<Course[]>{
  const [repositories,objects]=await Promise.all([
-  apiRequest<{items:{repository_id:string;display_name?:string;slug?:string}[]}>(config,'repositories',{},onLeak),
+  // The one endpoint-scoped allowance: a repository's display_name is a course label, not a person.
+  apiRequest<{items:{repository_id:string;display_name?:string;slug?:string}[]}>(config,'repositories',{},onLeak,new Set(['display_name'])),
   fetchCatalogue(config,onLeak),
  ]);
  const grouped=new Map<string,CatalogueObject[]>();
