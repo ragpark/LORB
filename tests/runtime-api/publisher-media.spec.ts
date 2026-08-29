@@ -139,4 +139,39 @@ describe("publisher media registration", () => {
     vi.unstubAllGlobals();
     await runtime.app.close();
   });
+
+  it("accepts an ordinary Office file's base64 body, well past the Runtime API's default 128KB limit", async () => {
+    // ~300KB of base64 — comfortably over BODY_LIMIT_BYTES's 131072-byte default, and representative
+    // of a genuinely small PowerPoint file, not an edge case. Before the route-specific bodyLimit,
+    // Fastify rejected this with a 413 before the handler ever ran.
+    const content_base64 = Buffer.alloc(220_000, "a").toString("base64");
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({
+      conversion_id: randomUUID(), page_count: 1,
+      draft: { title: "Week 3 slides", source_format: "pptx", pages: [{ index: 0, image_url: "https://files.test/page-0.png" }] },
+    }), { status: 201 }));
+    const { runtime, call } = await setup({ documentConverterUrl: "https://converter.test", fetchImpl: fetchSpy as never });
+
+    const response = await call("/api/v1/publisher/learning-objects/documents/upload", {
+      title: "Week 3 slides", source_format: "pptx", filename: "week-3.pptx", content_base64,
+    });
+    expect(response.statusCode).toBe(201);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+
+    vi.unstubAllGlobals();
+    await runtime.app.close();
+  });
+
+  it("never spends a conversion on a repository that does not exist", async () => {
+    const fetchSpy = vi.fn();
+    const { runtime, call } = await setup({ documentConverterUrl: "https://converter.test", fetchImpl: fetchSpy as never });
+
+    const response = await call("/api/v1/publisher/learning-objects/documents/upload", {
+      repository_id: randomUUID(), title: "Week 3 slides", source_format: "pptx", filename: "week-3.pptx", content_base64: "Zm9v",
+    });
+    expect(response.statusCode).toBe(404);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
+    await runtime.app.close();
+  });
 });

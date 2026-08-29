@@ -182,9 +182,11 @@ DOCUMENT_CONVERTER_PUBLIC_URL=…    # this service's own public origin; default
 DOCUMENT_CONVERTER_DATA_DIR=…      # defaults to /app/data — attach a volume, or every restart loses every conversion's output
 ```
 
-Its output is deliberately temporary storage (its own local disk), never a durability guarantee —
-a caller registering a document should fetch the page image URLs once, right after conversion, and
-re-host them before calling `POST /api/v1/internal/runtime/documents`.
+Deploy it as **exactly one replica**. Its output is deliberately temporary storage (its own local
+disk), never a durability guarantee: a caller registering a document manually should fetch the page
+image URLs once, right after conversion, and re-host them before calling
+`POST /api/v1/internal/runtime/documents`; the Admin UI's own upload button (below) does not
+re-host, so a second replica's separate disk would serve 404s for pages the first one converted.
 
 For the Administration workspace's own upload button (`.../learning-objects/documents/upload`) to
 work, also point the **Runtime API** at this service — a separate setting from the two above, which

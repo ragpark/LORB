@@ -48,6 +48,16 @@ conversion, and re-host them behind whatever object storage the deployment actua
 calling `registerMedia`. Restarting this service's container without a persistent volume loses every
 conversion's output.
 
+**Run this service as a single replica.** The Admin UI's own upload flow
+(`POST /api/v1/publisher/learning-objects/documents/upload`) does not re-host — it registers the
+page URLs this service returns directly, honouring the same deliberately-temporary storage
+described above rather than inventing durability this repo has nowhere else. That is only safe
+behind a persistent `DOCUMENT_CONVERTER_DATA_DIR` volume and exactly one replica: a second replica
+has its own separate local disk, so a page converted by one and served later from behind a load
+balancer routed to the other 404s. Multi-replica conversion, or genuine durability independent of
+this service staying up, needs real re-hosting into object storage — deliberately not built here
+yet.
+
 ## Known limitations
 
 - **Fidelity is "good enough for a formative slide deck", not "identical to PowerPoint".** Headless

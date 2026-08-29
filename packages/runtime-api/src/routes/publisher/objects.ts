@@ -410,7 +410,12 @@ export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherCont
    * service, and registers the result as a document object in one call — the path a person actually
    * wants, versus assembling `pages` by hand against `.../documents` above.
    */
-  app.post("/api/v1/publisher/learning-objects/documents/upload", async (req, reply) => {
+  // The base64 envelope of an uploaded file is ~1.4x its raw bytes (same factor document-converter's
+  // own MAX_UPLOAD_BYTES check uses); the Runtime API's global BODY_LIMIT_BYTES (128KB, sized for
+  // ordinary JSON requests) would reject an ordinary PowerPoint or Word file well under a megabyte,
+  // long before this handler ever ran. This route alone gets a limit sized for what it actually is.
+  const DOCUMENT_UPLOAD_BODY_LIMIT_BYTES = Math.ceil(50 * 1024 * 1024 * 1.4);
+  app.post("/api/v1/publisher/learning-objects/documents/upload", { bodyLimit: DOCUMENT_UPLOAD_BODY_LIMIT_BYTES }, async (req, reply) => {
     const principal = await requireAdmin(req, reply, ctx.adminCtx, "learning_object.author_document", "learning_object");
     if (!principal) return;
     const correlation = correlationOf(req);
@@ -423,7 +428,18 @@ export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherCont
       if (!parsed.success) return sendAdminError(reply, "ADMIN_REQUEST_INVALID", correlation);
       if (!ctx.documentConverterUrl) return sendAdminError(reply, "DOCUMENT_CONVERTER_NOT_CONFIGURED", correlation);
 
+      // Resolve and authorise before spending anything on conversion: an administrator who lacks
+      // repository_operator membership, or names a repository that doesn't exist, must not be able
+      // to make this route run LibreOffice/Poppler on their upload anyway — that's real CPU, memory
+      // and disk on the converter, spent before the refusal they were always going to get.
       const { repository_id: requestedRepository, ...upload } = parsed.data;
+      const repository = requestedRepository
+        ? await ctx.catalogue.repository(requestedRepository)
+        : await ctx.catalogue.defaultRepository();
+      if (!repository) return sendAdminError(reply, "REPOSITORY_NOT_FOUND", correlation);
+      if (repository.status !== "ACTIVE") return sendAdminError(reply, "REPOSITORY_STATE_INVALID", correlation);
+      if (!await authorised(req, reply, principal, "learning_object.author_document", repository.repository_id, undefined, "repository_operator")) return;
+
       let draft: unknown;
       try {
         const converted = await fetch(`${ctx.documentConverterUrl.replace(/\/$/, "")}/convert`, {
@@ -438,13 +454,6 @@ export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherCont
       }
       const parsedDraft = documentDraftSchema.safeParse(draft);
       if (!parsedDraft.success) return sendAdminError(reply, "DOCUMENT_CONVERSION_FAILED", correlation);
-
-      const repository = requestedRepository
-        ? await ctx.catalogue.repository(requestedRepository)
-        : await ctx.catalogue.defaultRepository();
-      if (!repository) return sendAdminError(reply, "REPOSITORY_NOT_FOUND", correlation);
-      if (repository.status !== "ACTIVE") return sendAdminError(reply, "REPOSITORY_STATE_INVALID", correlation);
-      if (!await authorised(req, reply, principal, "learning_object.author_document", repository.repository_id, undefined, "repository_operator")) return;
 
       const registered = await ctx.catalogue.registerMedia("document", parsedDraft.data, {
         repository_id: repository.repository_id,

@@ -516,6 +516,8 @@ function NewDocumentForm({ repositories, onCreated }: { repositories: Row[]; onC
       <p className="governance-note">
         The file is converted to one image per page and never sent to a learner as-is: the player renders images, never a native Office or PDF viewer, inside
         its sandboxed iframe. Large decks with complex animation or embedded video may render slightly differently than in PowerPoint or Word itself.
+        The converted pages live on the conversion service's own storage, not this platform's — keep your original file until you've confirmed the activity
+        opens correctly.
       </p>
       <MediaBasics
         repositoryId={repositoryId} onRepositoryId={setRepositoryId}
