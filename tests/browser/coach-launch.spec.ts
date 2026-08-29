@@ -98,6 +98,64 @@ test("a second course reuses the coach module with its own launch context", asyn
   await expect(module.locator(".bubble.coach").first()).not.toContainText("fractions");
 });
 
+/**
+ * Coach player v2 — the launch-policy demonstration target. What matters here is that v2 speaks the
+ * identical shell protocol and completes the identical evidence chain, because a launch policy
+ * substitutes the renderer without the object knowing: v2 has to be a drop-in. The policy routing
+ * itself is proven in tests/runtime-api/admin-enforcement.spec.ts (the resolver prefers the active
+ * policy's matched rule); this pins that what the policy routes *to* actually works.
+ */
+test("coach player v2 is a drop-in: same protocol, same evidence, visibly v2", async ({ page }) => {
+  const adminToken = await issueIesToken(harness.iesPrivateKey, "coach-admin", "lorb-runtime", IES_ISSUER, { role: "admin" });
+  const moduleSha = createHash("sha256")
+    .update(readFileSync(resolve(import.meta.dirname, "../../packages/coach-player/src/v2/index.html")))
+    .digest("hex");
+
+  const created = await harness.runtime.app.inject({
+    method: "POST", url: "/api/v1/publisher/learning-objects",
+    headers: { authorization: `Bearer ${adminToken}`, "idempotency-key": randomUUID() },
+    payload: {
+      repository_id: REPOSITORY_ID, title: "Fractions coaching (v2 renderer)", duration: "10 minutes",
+      kind: "ai-coach", module_path: "/modules/coach-player/v2/index.html", semver: "2.0.0", sha256: moduleSha,
+    },
+  });
+  expect(created.statusCode).toBe(201);
+  const objectId = created.json().object_id as string;
+  const contextSet = await harness.runtime.app.inject({
+    method: "PUT", url: `/api/v1/publisher/learning-objects/${objectId}/launch-context`,
+    headers: { authorization: `Bearer ${adminToken}`, "idempotency-key": randomUUID() },
+    payload: { launch_context: { settings: { llm_endpoint: "demo", topic: "equivalent fractions", title: "Fractions coach" } } },
+  });
+  expect(contextSet.statusCode).toBe(200);
+
+  const learnerToken = await issueIesToken(harness.iesPrivateKey, "synthetic-v2-learner", "lorb-runtime", IES_ISSUER);
+  const launch = await harness.runtime.app.inject({
+    method: "POST", url: "/api/v1/runtime/launches",
+    headers: { authorization: `Bearer ${learnerToken}`, "idempotency-key": randomUUID() },
+    payload: {
+      contract_version: "1.0", consumer_id: "browser-suite", repository_id: REPOSITORY_ID,
+      object_id: objectId, requested_launch_mode: "embedded-iframe", locale: "en-GB",
+    },
+  });
+  expect(launch.statusCode).toBe(201);
+  const attemptId = launch.json().attempt_id as string;
+
+  await page.goto(launch.json().player_url as string, { waitUntil: "networkidle" });
+  const module = page.frameLocator("#module");
+
+  // Visibly v2, with the same publisher-authored identity from the launch context.
+  await expect(module.locator(".badge")).toHaveText("V2", { timeout: 15000 });
+  await expect(module.locator("#title")).toHaveText("Fractions coach");
+  await expect(module.locator(".bubble.coach").first()).toContainText("equivalent fractions", { timeout: 15000 });
+
+  // A learner turn round-trips, and finishing completes the attempt — the identical chain as v1.
+  await module.locator("#input").fill("Halving top and bottom keeps the value the same.");
+  await module.locator("#send").click();
+  await expect(module.locator(".bubble.coach").nth(1)).toContainText("keeps the value", { timeout: 15000 });
+  await module.locator("#finish").click();
+  await expect.poll(async () => (await harness.store.getAttempt(attemptId))?.status, { timeout: 15000 }).toBe("COMPLETED");
+});
+
 test("a coaching launch chats through the relay and completes like any other attempt", async ({ page }) => {
   const adminToken = await issueIesToken(harness.iesPrivateKey, "coach-admin", "lorb-runtime", IES_ISSUER, { role: "admin" });
   const moduleSha = createHash("sha256")
