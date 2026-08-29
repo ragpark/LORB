@@ -2,11 +2,14 @@
  * In-process catalogue, for the test suites and for `pnpm dev` without a database.
  */
 import { randomUUID } from "node:crypto";
-import type { LaunchContext, QuizContent, QuizDraft } from "../../../contracts/src/index.js";
-import { buildQuizRegistration, buildQuizRevision, DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, nextMinorSemver, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE } from "./shared.js";
+import type { LaunchContext, QuizDraft } from "../../../contracts/src/index.js";
+import {
+  buildMediaRegistration, buildMediaRevision, buildQuizRegistration, buildQuizRevision,
+  DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, MEDIA_PLAYERS, MEDIA_PLAYER_PACKAGES, nextMinorSemver, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE,
+} from "./shared.js";
 import type {
-  CatalogueStore, LaunchContextRevision, LearningObjectRow, ObjectContentRevision, ObjectDeletion, ObjectLifecycleStatus,
-  ObjectMetadataPatch, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredQuiz, Repository,
+  AnyContent, AnyMediaDraft, CatalogueStore, LaunchContextRevision, LearningObjectRow, MediaKind, ObjectContentRevision, ObjectDeletion,
+  ObjectLifecycleStatus, ObjectMetadataPatch, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredMedia, RegisteredQuiz, Repository,
 } from "./types.js";
 
 export class MemoryCatalogueStore implements CatalogueStore {
@@ -15,9 +18,9 @@ export class MemoryCatalogueStore implements CatalogueStore {
   private readonly objects = new Map<string, LearningObjectRow>();
   private readonly versions = new Map<string, ObjectVersionRow>();
   private readonly packages = new Map<string, PackageVersionRow>();
-  private readonly contents = new Map<string, QuizContent>();
+  private readonly contents = new Map<string, AnyContent>();
   /** Every content version ever written, keyed `objectId:contentVersion`. Nothing here is overwritten. */
-  private readonly contentHistory = new Map<string, QuizContent>();
+  private readonly contentHistory = new Map<string, AnyContent>();
 
   constructor(options: { seedExamples?: boolean } = {}) {
     this.reset(options.seedExamples ?? true);
@@ -40,6 +43,9 @@ export class MemoryCatalogueStore implements CatalogueStore {
       created_at: "2026-08-12T09:14:00.000Z",
     });
     this.packages.set(QUIZ_PLAYER_PACKAGE.package_version_id, { ...QUIZ_PLAYER_PACKAGE });
+    for (const kind of Object.keys(MEDIA_PLAYER_PACKAGES) as MediaKind[]) {
+      this.packages.set(MEDIA_PLAYER_PACKAGES[kind].package_version_id, { ...MEDIA_PLAYER_PACKAGES[kind] });
+    }
     if (!seedExamples) return;
     for (const example of EXAMPLE_OBJECTS) {
       this.objects.set(example.object.object_id, { ...example.object });
@@ -113,15 +119,15 @@ export class MemoryCatalogueStore implements CatalogueStore {
     return row ? { ...row } : undefined;
   }
 
-  async content(objectId: string): Promise<QuizContent | undefined> {
+  async content(objectId: string): Promise<AnyContent | undefined> {
     return this.contents.get(objectId.toLowerCase());
   }
 
-  async contentRevision(objectId: string, contentVersion: string): Promise<QuizContent | undefined> {
+  async contentRevision(objectId: string, contentVersion: string): Promise<AnyContent | undefined> {
     return this.contentHistory.get(`${objectId.toLowerCase()}:${contentVersion}`);
   }
 
-  async contentForObjectVersion(objectId: string, objectVersionId: string): Promise<QuizContent | undefined> {
+  async contentForObjectVersion(objectId: string, objectVersionId: string): Promise<AnyContent | undefined> {
     const version = this.versions.get(objectVersionId.toLowerCase());
     if (!version || version.object_id.toLowerCase() !== objectId.toLowerCase()) return undefined;
     const pinned = version.content_version ? await this.contentRevision(objectId, version.content_version) : undefined;
@@ -295,9 +301,59 @@ export class MemoryCatalogueStore implements CatalogueStore {
     return built.registered;
   }
 
+  async registerMedia(kind: MediaKind, draft: AnyMediaDraft, options: { repository_id?: string; authored_by?: string } = {}): Promise<RegisteredMedia> {
+    const repositoryId = options.repository_id ?? (await this.defaultRepository())?.repository_id ?? DEFAULT_REPOSITORY.repository_id;
+    const built = buildMediaRegistration(kind, draft, repositoryId, options.authored_by);
+    this.objects.set(built.object.object_id, built.object);
+    this.contents.set(built.object.object_id, built.content);
+    this.contentHistory.set(`${built.object.object_id}:${built.content.content_version}`, built.content);
+    this.versions.set(built.object.active_object_version_id, {
+      object_version_id: built.object.active_object_version_id,
+      object_id: built.object.object_id,
+      semver: built.objectVersionSemver,
+      package_version_id: MEDIA_PLAYERS[kind].package_version_id,
+      status: "PUBLISHED",
+      published_at: built.object.created_at,
+      content_version: built.content.content_version,
+    });
+    return built.registered;
+  }
+
+  async reviseMediaContent(objectId: string, kind: MediaKind, draft: AnyMediaDraft): Promise<ObjectContentRevision | undefined> {
+    const object = this.objects.get(objectId.toLowerCase());
+    if (!object || object.content_profile !== MEDIA_PLAYERS[kind].content_profile) return undefined;
+    const previous = this.contents.get(objectId.toLowerCase());
+    const versions = await this.objectVersions(object.object_id);
+    const built = buildMediaRevision(kind, object, draft, previous?.content_version, versions.map((row) => row.semver));
+    const superseded = this.versions.get(object.active_object_version_id);
+    if (superseded) superseded.status = "SUPERSEDED";
+    this.versions.set(built.revision.object_version_id, {
+      object_version_id: built.revision.object_version_id,
+      object_id: object.object_id,
+      semver: built.revision.semver,
+      package_version_id: MEDIA_PLAYERS[kind].package_version_id,
+      status: "PUBLISHED",
+      published_at: built.content.created_at,
+      content_version: built.content.content_version,
+      launch_context: superseded?.launch_context ?? null,
+    });
+    this.contents.set(object.object_id, built.content);
+    this.contentHistory.set(`${object.object_id}:${built.content.content_version}`, built.content);
+    object.active_object_version_id = built.revision.object_version_id;
+    object.title = built.objectPatch.title;
+    object.description = built.objectPatch.description;
+    object.duration = built.objectPatch.duration;
+    return built.revision;
+  }
+
   async ensureSharedPlayer(): Promise<void> {
     if (!this.packages.has(QUIZ_PLAYER_PACKAGE.package_version_id)) {
       this.packages.set(QUIZ_PLAYER_PACKAGE.package_version_id, { ...QUIZ_PLAYER_PACKAGE });
+    }
+    for (const kind of Object.keys(MEDIA_PLAYER_PACKAGES) as MediaKind[]) {
+      if (!this.packages.has(MEDIA_PLAYER_PACKAGES[kind].package_version_id)) {
+        this.packages.set(MEDIA_PLAYER_PACKAGES[kind].package_version_id, { ...MEDIA_PLAYER_PACKAGES[kind] });
+      }
     }
   }
 }

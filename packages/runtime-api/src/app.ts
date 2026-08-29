@@ -38,6 +38,7 @@ import { registerPublisherRoutes } from "./routes/publisher/objects.js";
 import { correlationOf, requireAdmin, requireIdempotencyKey, sendAdminError } from "./routes/admin/shared.js";
 import { checkServiceCredential, sendInternalError } from "./routes/internal/service-auth.js";
 import { registerInternalQuizRoutes } from "./routes/internal/quizzes.js";
+import { registerInternalMediaRoutes } from "./routes/internal/media.js";
 import { registerInternalLaunchBatchRoutes } from "./routes/internal/launch-batch.js";
 import { registerInternalRosterRoutes } from "./routes/internal/roster.js";
 
@@ -742,6 +743,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
   };
 
   registerInternalQuizRoutes(app, internalGuard, { store, catalogue });
+  registerInternalMediaRoutes(app, internalGuard, { store, catalogue });
   registerInternalLaunchBatchRoutes(app, {
     serviceToken: internalServiceToken, ring, secret,
     identityIssuer: verifier.issuer, publicIssuer, playerOrigin, evidenceEndpoint,

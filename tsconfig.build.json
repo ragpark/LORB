@@ -13,6 +13,10 @@
     "packages/learner-portal",
     "packages/admin-ui",
     "packages/example-react-xapi-experience",
-    "packages/quiz-player"
+    "packages/quiz-player",
+    "packages/coach-player",
+    "packages/video-player",
+    "packages/document-player",
+    "packages/audio-player"
   ]
 }

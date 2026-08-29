@@ -9,7 +9,16 @@
  * The catalogue is now a store with the same two backends as the runtime state, and object versions
  * are real rows: a descriptor binds to the version that was actually published.
  */
-import type { LaunchContext, QuizContent, QuizDraft } from "../../../contracts/src/index.js";
+import type {
+  AudioContent, AudioDraft, DocumentContent, DocumentDraft, LaunchContext, QuizContent, QuizDraft, VideoContent, VideoDraft,
+} from "../../../contracts/src/index.js";
+
+/** The three media kinds registered alongside quizzes, each behind one fixed shared player. */
+export type MediaKind = "video" | "document" | "audio";
+export type AnyMediaContent = VideoContent | DocumentContent | AudioContent;
+export type AnyMediaDraft = VideoDraft | DocumentDraft | AudioDraft;
+/** Everything a learning object's content route may serve. */
+export type AnyContent = QuizContent | AnyMediaContent;
 
 export interface Repository {
   repository_id: string;
@@ -32,7 +41,7 @@ export interface LearningObjectRow {
   kind: string;
   module_path: string;
   /** Present only on objects whose content is a JSON payload rather than bundled code. */
-  content_profile?: "quiz-json-v1";
+  content_profile?: "quiz-json-v1" | "video-json-v1" | "document-json-v1" | "audio-json-v1";
   /** Provenance, so an operator can see which objects an agent authored. */
   authored_by?: string;
 }
@@ -82,6 +91,17 @@ export interface RegisteredQuiz {
   title: string;
 }
 
+/** What registering a video, document, or audio object produces — the media analogue of
+ * RegisteredQuiz, minus the quiz-only question_count. */
+export interface RegisteredMedia {
+  object_id: string;
+  object_version_id: string;
+  package_version_id: string;
+  package_version: string;
+  content_version: string;
+  title: string;
+}
+
 /**
  * What a publisher may change about a learning object without publishing anything.
  *
@@ -123,7 +143,8 @@ export interface ObjectContentRevision {
   package_version_id: string;
   semver: string;
   content_version: string;
-  question_count: number;
+  /** Quiz-only; absent for a video, document, or audio revision. */
+  question_count?: number;
   title: string;
 }
 
@@ -159,15 +180,15 @@ export interface CatalogueStore {
   packageVersions(filter?: { object_id?: string }): Promise<PackageVersionRow[]>;
   packageVersion(packageVersionId: string): Promise<PackageVersionRow | undefined>;
 
-  /** Learner-facing structured content, including any marking key. */
-  content(objectId: string): Promise<QuizContent | undefined>;
+  /** Learner-facing structured content, including any marking key. Quiz, video, document, or audio. */
+  content(objectId: string): Promise<AnyContent | undefined>;
   /** One historical content version, so a superseded attempt can still be read against what it was delivered. */
-  contentRevision(objectId: string, contentVersion: string): Promise<QuizContent | undefined>;
+  contentRevision(objectId: string, contentVersion: string): Promise<AnyContent | undefined>;
   /**
    * The content one launched object version delivers, falling back to the object's current content
    * where the version names none — a descriptor issued before content versions were recorded.
    */
-  contentForObjectVersion(objectId: string, objectVersionId: string): Promise<QuizContent | undefined>;
+  contentForObjectVersion(objectId: string, objectVersionId: string): Promise<AnyContent | undefined>;
 
   /** Registers a code-bearing learning object and publishes its first version. */
   registerObject(registration: ObjectRegistration): Promise<LearningObjectRow>;
@@ -197,6 +218,13 @@ export interface CatalogueStore {
   reviseQuizContent(objectId: string, draft: QuizDraft): Promise<ObjectContentRevision | undefined>;
 
   /**
+   * Replaces a video, document, or audio object's content with a new immutable content version,
+   * bound to a new object version. Refuses (returns undefined) an object whose content_profile does
+   * not match `kind` — same guard reviseQuizContent applies for quizzes.
+   */
+  reviseMediaContent(objectId: string, kind: MediaKind, draft: AnyMediaDraft): Promise<ObjectContentRevision | undefined>;
+
+  /**
    * Sets or clears the launch context by publishing a new object version that carries it, with the
    * current package and content bindings copied across unchanged. Follows the same rule as every
    * other edit that reaches a descriptor: never in place. Versions published by other paths carry
@@ -207,6 +235,11 @@ export interface CatalogueStore {
   /** Registers agent-authored quiz content against the shared, already-reviewed quiz player. */
   registerQuiz(draft: QuizDraft, options?: { repository_id?: string; authored_by?: string }): Promise<RegisteredQuiz>;
 
-  /** Ensures the shared quiz-player package row exists. Idempotent. */
+  /** Registers agent- or publisher-authored video/document/audio content against the shared,
+   * already-reviewed player for that kind. The document-player expects `draft` to already carry
+   * pre-rasterised page image URLs — see packages/document-converter. */
+  registerMedia(kind: MediaKind, draft: AnyMediaDraft, options?: { repository_id?: string; authored_by?: string }): Promise<RegisteredMedia>;
+
+  /** Ensures every shared player package row exists (quiz, video, document, audio). Idempotent. */
   ensureSharedPlayer(): Promise<void>;
 }

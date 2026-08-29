@@ -24,6 +24,7 @@ import { buildRuntime } from "../../packages/runtime-api/src/app.js";
 import { issueIesToken } from "../../packages/dev-identity/src/issuer.js";
 import { PostgresCatalogueStore } from "../../packages/runtime-api/src/catalogue/postgres.js";
 import { PostgresRuntimeStore } from "../../packages/runtime-api/src/store/postgres.js";
+import type { QuizContent } from "../../packages/contracts/src/index.js";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const describeIfDatabase = DATABASE_URL ? describe : describe.skip;
@@ -189,8 +190,8 @@ describeIfDatabase("Publisher authoring against Postgres", () => {
     expect(Number(versions.rows[1].questions)).toBe(2);
 
     // The pointer moves; what it pointed at before does not change.
-    expect((await catalogue.content(quiz.object_id))?.questions).toHaveLength(2);
-    expect((await catalogue.contentRevision(quiz.object_id, "1"))?.questions).toHaveLength(1);
+    expect(((await catalogue.content(quiz.object_id)) as QuizContent | undefined)?.questions).toHaveLength(2);
+    expect(((await catalogue.contentRevision(quiz.object_id, "1")) as QuizContent | undefined)?.questions).toHaveLength(1);
 
     // The previous object version is superseded rather than rewritten, so an attempt bound to it
     // still names a row that exists.

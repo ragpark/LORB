@@ -34,6 +34,9 @@ const BUNDLES = [
   { from: "packages/example-module/src", to: "module" },
   { from: "packages/quiz-player/dist", to: "modules/quiz-player" },
   { from: "packages/coach-player/src", to: "modules/coach-player" },
+  { from: "packages/video-player/dist", to: "modules/video-player" },
+  { from: "packages/document-player/dist", to: "modules/document-player" },
+  { from: "packages/audio-player/dist", to: "modules/audio-player" },
 ] as const;
 
 const CONTENT_TYPES: Record<string, string> = {

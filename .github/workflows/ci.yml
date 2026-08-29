@@ -119,6 +119,9 @@ jobs:
           pnpm --filter player-shell build
           pnpm --filter quiz-player build
           pnpm --filter example-react-xapi-experience build
+          pnpm --filter video-player build
+          pnpm --filter document-player build
+          pnpm --filter audio-player build
 
       # The player bundles must exist before this step; the browser suite starts its own Runtime API
       # and static player origin and drives a real launch. Only Chromium is installed — the suite
