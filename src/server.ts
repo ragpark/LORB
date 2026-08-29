@@ -47,7 +47,7 @@ await catalogue.ensureSharedPlayer();
 const { app, ring } = await buildRuntime({ config: runtimeConfig, store, catalogue });
 registerEvidenceRoutes(app, ring, { issuer: runtimeConfig.publicIssuer, store });
 const relayEndpoints = endpointsFromEnvironment();
-registerRelayRoutes(app, ring, { issuer: runtimeConfig.publicIssuer, endpoints: relayEndpoints });
+registerRelayRoutes(app, ring, { issuer: runtimeConfig.publicIssuer, endpoints: relayEndpoints, perMinute: Number.parseInt(process.env.RELAY_RATE_LIMIT_PER_MINUTE ?? "30", 10) });
 
 app.get("/", async () => ({
   name: "LORB Runtime API",
