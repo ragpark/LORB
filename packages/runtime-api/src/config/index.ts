@@ -82,6 +82,9 @@ export interface RuntimeConfig {
   playerOrigin: string;
   evidenceEndpoint: string;
   packageUrl: string;
+  /** Base origin of the document-converter service. Absent where that optional service isn't
+   * deployed — only the .../documents/upload publisher route needs it. */
+  documentConverterUrl?: string;
   allowedConsumerOrigins: string[];
   identity: IdentityProviderConfig;
   lrs: LrsConfig;
@@ -292,6 +295,15 @@ function readIdentity(production: boolean, publicIssuer: string, problems: strin
   };
 }
 
+/** Optional, unlike LRS_ENDPOINT: a deployment without the document-converter service simply can't
+ * offer "upload a PowerPoint or Word file" from the Admin UI — every other content path still works. */
+function readDocumentConverterUrl(production: boolean, problems: string[]): string | undefined {
+  const url = env("DOCUMENT_CONVERTER_URL");
+  if (!url) return undefined;
+  if (production && !url.startsWith("https://")) problems.push("DOCUMENT_CONVERTER_URL must be an https URL in production");
+  return url;
+}
+
 function readLrs(production: boolean, problems: string[]): LrsConfig {
   const endpoint = env("LRS_ENDPOINT") ?? env("DEVELOPMENT_LRS_URL");
   if (!endpoint) {
@@ -371,6 +383,7 @@ export function loadConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfi
     playerOrigin,
     evidenceEndpoint: env("EVIDENCE_API_ENDPOINT") ?? `${publicIssuer}/api/v1/evidence/statements`,
     packageUrl: env("PACKAGE_PUBLIC_URL") ?? `${playerOrigin}/module/index.html`,
+    documentConverterUrl: readDocumentConverterUrl(production, problems),
     allowedConsumerOrigins,
     identity: readIdentity(production, publicIssuer, problems),
     lrs: readLrs(production, problems),

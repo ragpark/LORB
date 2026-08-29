@@ -57,6 +57,7 @@ export interface RuntimeOptions {
   evidenceEndpoint?: string;
   packageUrl?: string;
   internalServiceToken?: string;
+  documentConverterUrl?: string;
   store?: RuntimeStore;
   catalogue?: CatalogueStore;
   signingKeys?: SigningKeyRing;
@@ -87,6 +88,7 @@ function applyOverrides(base: RuntimeConfig, options: RuntimeOptions): RuntimeCo
     ...(options.evidenceEndpoint ? { evidenceEndpoint: options.evidenceEndpoint } : {}),
     ...(options.packageUrl ? { packageUrl: options.packageUrl } : {}),
     ...(options.internalServiceToken ? { internalServiceToken: options.internalServiceToken } : {}),
+    ...(options.documentConverterUrl ? { documentConverterUrl: options.documentConverterUrl } : {}),
   };
 }
 
@@ -751,7 +753,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
   }, internalGuard);
   registerInternalRosterRoutes(app, internalGuard);
 
-  registerPublisherRoutes(app, { catalogue, store, adminCtx });
+  registerPublisherRoutes(app, { catalogue, store, adminCtx, documentConverterUrl: runtimeConfig.documentConverterUrl });
   registerAdminRepositoryRoutes(app, adminCtx);
   registerAdminMembershipRoutes(app, adminCtx);
   registerAdminPlayerRoutes(app, adminCtx);
