@@ -2,8 +2,11 @@
  * Values shared by both catalogue backends.
  */
 import { randomUUID } from "node:crypto";
-import { quizContentSchema, type QuizContent, type QuizDraft } from "../../../contracts/src/index.js";
-import type { LearningObjectRow, ObjectContentRevision, PackageVersionRow, RegisteredQuiz } from "./types.js";
+import {
+  audioContentSchema, documentContentSchema, quizContentSchema, videoContentSchema,
+  type AudioDraft, type DocumentDraft, type QuizContent, type QuizDraft, type VideoDraft,
+} from "../../../contracts/src/index.js";
+import type { AnyContent, AnyMediaDraft, LearningObjectRow, MediaKind, ObjectContentRevision, PackageVersionRow, RegisteredMedia, RegisteredQuiz } from "./types.js";
 
 /**
  * One fixed, already-reviewed player package version shared by every authored quiz. A quiz author —
@@ -30,6 +33,144 @@ export const QUIZ_PLAYER_PACKAGE: PackageVersionRow = {
   module_path: QUIZ_PLAYER.module_path,
   shared_player: true,
 };
+
+/**
+ * One fixed, already-reviewed player package version per media kind, shared by every video,
+ * document, or audio learning object of that kind — same reasoning as QUIZ_PLAYER: an author
+ * supplies JSON content, never a bundle, so registering media adds no per-object code-injection
+ * surface. Bumping a semver here is a content-model change, same as for the quiz player.
+ */
+export const MEDIA_PLAYERS = {
+  video: {
+    package_version_id: "5cbe1b8a-2f2a-4a5c-9f8b-6d1c0a7e4b31",
+    package_id: "5cbe1b8a-2f2a-4a5c-9f8b-6d1c0a7e4b32",
+    semver: "1.0.0",
+    module_path: "/modules/video-player/index.html",
+    sha256: "1a2b3c4d5e6f7081920a3b4c5d6e7f8091a2b3c4d5e6f7081920a3b4c5d6e7f8",
+    content_profile: "video-json-v1",
+  },
+  document: {
+    package_version_id: "5cbe1b8a-2f2a-4a5c-9f8b-6d1c0a7e4b41",
+    package_id: "5cbe1b8a-2f2a-4a5c-9f8b-6d1c0a7e4b42",
+    semver: "1.0.0",
+    module_path: "/modules/document-player/index.html",
+    sha256: "2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a",
+    content_profile: "document-json-v1",
+  },
+  audio: {
+    package_version_id: "5cbe1b8a-2f2a-4a5c-9f8b-6d1c0a7e4b51",
+    package_id: "5cbe1b8a-2f2a-4a5c-9f8b-6d1c0a7e4b52",
+    semver: "1.0.0",
+    module_path: "/modules/audio-player/index.html",
+    sha256: "3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b",
+    content_profile: "audio-json-v1",
+  },
+} as const satisfies Record<MediaKind, { package_version_id: string; package_id: string; semver: string; module_path: string; sha256: string; content_profile: string }>;
+
+export const MEDIA_PLAYER_PACKAGES: Record<MediaKind, PackageVersionRow> = Object.fromEntries(
+  (Object.keys(MEDIA_PLAYERS) as MediaKind[]).map((kind) => {
+    const player = MEDIA_PLAYERS[kind];
+    return [kind, {
+      package_version_id: player.package_version_id,
+      object_id: null,
+      semver: player.semver,
+      sha256: player.sha256,
+      delivery_profile: "native-web-package",
+      status: "PUBLISHED",
+      published_at: "2026-08-20T08:00:00.000Z",
+      module_path: player.module_path,
+      shared_player: true,
+    }];
+  }),
+) as Record<MediaKind, PackageVersionRow>;
+
+const MEDIA_SCHEMAS = { video: videoContentSchema, document: documentContentSchema, audio: audioContentSchema } as const;
+
+function defaultDurationFor(kind: MediaKind, draft: AnyMediaDraft): string {
+  if (kind === "document") return `${Math.max(1, Math.round((draft as DocumentDraft).pages?.length ? (draft as DocumentDraft).pages.length * 0.5 : 5))} minutes`;
+  const seconds = (draft as VideoDraft | AudioDraft).duration_seconds;
+  return seconds ? `${Math.max(1, Math.round(seconds / 60))} minutes` : "a few minutes";
+}
+
+/** Builds the rows registering a video, document, or audio object produces — the media analogue of
+ * buildQuizRegistration, generalised over the three kinds since all three follow the same shape:
+ * one JSON content payload bound to one fixed shared player. */
+export function buildMediaRegistration(
+  kind: MediaKind,
+  draft: AnyMediaDraft,
+  repositoryId: string,
+  authoredBy: string | undefined,
+): { object: LearningObjectRow; content: AnyContent; registered: RegisteredMedia; objectVersionSemver: string } {
+  const player = MEDIA_PLAYERS[kind];
+  const object_id = randomUUID();
+  const object_version_id = randomUUID();
+  const created_at = new Date().toISOString();
+  const content = MEDIA_SCHEMAS[kind].parse({ ...draft, object_id, content_version: "1", created_at }) as AnyContent;
+  const object: LearningObjectRow = {
+    object_id,
+    repository_id: repositoryId,
+    status: "PUBLISHED",
+    active_object_version_id: object_version_id,
+    active_package_version_id: player.package_version_id,
+    created_at,
+    title: draft.title,
+    description: draft.description ?? `A ${kind} activity rendered by the shared ${kind} player.`,
+    duration: defaultDurationFor(kind, draft),
+    kind: `${kind}-json`,
+    module_path: player.module_path,
+    content_profile: player.content_profile,
+    ...(authoredBy ? { authored_by: authoredBy } : {}),
+  };
+  return {
+    object,
+    content,
+    objectVersionSemver: "1.0.0",
+    registered: {
+      object_id,
+      object_version_id,
+      package_version_id: player.package_version_id,
+      package_version: player.semver,
+      content_version: content.content_version,
+      title: draft.title,
+    },
+  };
+}
+
+/** Builds the rows a media-content *edit* produces — the media analogue of buildQuizRevision. */
+export function buildMediaRevision(
+  kind: MediaKind,
+  object: LearningObjectRow,
+  draft: AnyMediaDraft,
+  previousContentVersion: string | undefined,
+  existingSemvers: string[],
+): { content: AnyContent; revision: ObjectContentRevision; objectPatch: Pick<LearningObjectRow, "title" | "description" | "duration"> } {
+  const player = MEDIA_PLAYERS[kind];
+  const object_version_id = randomUUID();
+  const content_version = nextContentVersion(previousContentVersion);
+  const semver = nextMinorSemver(existingSemvers);
+  const content = MEDIA_SCHEMAS[kind].parse({
+    ...draft,
+    object_id: object.object_id,
+    content_version,
+    created_at: new Date().toISOString(),
+  }) as AnyContent;
+  return {
+    content,
+    revision: {
+      object_id: object.object_id,
+      object_version_id,
+      package_version_id: player.package_version_id,
+      semver,
+      content_version,
+      title: draft.title,
+    },
+    objectPatch: {
+      title: draft.title,
+      description: draft.description ?? object.description,
+      duration: defaultDurationFor(kind, draft),
+    },
+  };
+}
 
 /** The repository every deployment starts with when an operator has registered none of their own. */
 export const DEFAULT_REPOSITORY = {

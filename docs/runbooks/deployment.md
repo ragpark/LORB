@@ -13,7 +13,9 @@ Six independently deployable units, each with its own image:
 | Operations console | `Dockerfile.ops-console` | Yes, restricted |
 | Agent connector | `Dockerfile.mcp-connector` | Yes |
 
-Plus one managed Postgres instance, which is the system of record for all of them.
+Plus one managed Postgres instance, which is the system of record for all of them, and one optional
+service — the document converter (`Dockerfile.document-converter`) — needed only where PowerPoint or
+Word files are turned into learning objects; see step 6b.
 
 The Evidence API runs inside the Runtime API's process rather than as a seventh service. It verifies
 launch descriptors with the Runtime's signing key and writes to the same store, so splitting them
@@ -169,6 +171,21 @@ The store refuses a statement whose actor carries an `mbox`, `openid`, `mbox_sha
 name. If a deployment genuinely receives identified statements from elsewhere, that is a deliberate
 `LRS_REQUIRE_PSEUDONYMOUS_ACTOR=false`, not a default to drift into.
 
+### 6b. Deploy the document converter (optional)
+
+Only needed to turn an uploaded PowerPoint or Word file into a `document-player` learning object —
+skip this if that path isn't in use yet. Unlike every other service here it needs real system
+packages, not just Node (`packages/document-converter/README.md` has the full pipeline):
+
+```
+DOCUMENT_CONVERTER_PUBLIC_URL=…    # this service's own public origin; defaults to localhost, wrong in production
+DOCUMENT_CONVERTER_DATA_DIR=…      # defaults to /app/data — attach a volume, or every restart loses every conversion's output
+```
+
+Its output is deliberately temporary storage (its own local disk), never a durability guarantee —
+a caller registering a document should fetch the page image URLs once, right after conversion, and
+re-host them before calling `POST /api/v1/internal/runtime/documents`.
+
 ### 7. Register content
 
 A new catalogue is empty. The Administration workspace does this on the Learning objects page — "New
@@ -205,6 +222,12 @@ membership of the object's repository:
 
 Suspension, retirement and deletion also revoke the object's smart link: a withdrawn object must not
 stay reachable through a link that needs no sign-in.
+
+Video, document (PowerPoint/Word-as-slides) and audio content register the same way quizzes do:
+structured JSON against a fixed shared player, never a bundle — but through the internal service
+surface (`POST …/internal/runtime/videos` \| `/documents` \| `/audio`, the pre-shared service
+credential from step 5, not an admin token), the same one the agent connector uses for quizzes. There
+is no Administration workspace screen for these three yet.
 
 ## Deploying a new version
 

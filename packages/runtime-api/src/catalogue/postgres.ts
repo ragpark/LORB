@@ -8,12 +8,28 @@
  */
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { quizContentSchema, type LaunchContext, type QuizContent, type QuizDraft } from "../../../contracts/src/index.js";
-import { buildQuizRegistration, buildQuizRevision, DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, nextMinorSemver, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE } from "./shared.js";
+import {
+  audioContentSchema, documentContentSchema, quizContentSchema, videoContentSchema, type LaunchContext, type QuizDraft,
+} from "../../../contracts/src/index.js";
+import {
+  buildMediaRegistration, buildMediaRevision, buildQuizRegistration, buildQuizRevision,
+  DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, MEDIA_PLAYERS, MEDIA_PLAYER_PACKAGES, nextMinorSemver, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE,
+} from "./shared.js";
 import type {
-  CatalogueStore, LaunchContextRevision, LearningObjectRow, ObjectContentRevision, ObjectLifecycleStatus, ObjectMetadataPatch,
-  ObjectDeletion, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredQuiz, Repository,
+  AnyContent, AnyMediaDraft, CatalogueStore, LaunchContextRevision, LearningObjectRow, MediaKind, ObjectContentRevision, ObjectLifecycleStatus,
+  ObjectMetadataPatch, ObjectDeletion, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredMedia, RegisteredQuiz, Repository,
 } from "./types.js";
+
+const CONTENT_SCHEMAS = { video: videoContentSchema, document: documentContentSchema, audio: audioContentSchema } as const;
+/** Parses a stored payload against whichever schema its content_profile names — quiz included. */
+function parseContent(contentProfile: string | null | undefined, payload: unknown): AnyContent | undefined {
+  const schema = contentProfile === "video-json-v1" ? CONTENT_SCHEMAS.video
+    : contentProfile === "document-json-v1" ? CONTENT_SCHEMAS.document
+    : contentProfile === "audio-json-v1" ? CONTENT_SCHEMAS.audio
+    : quizContentSchema; // covers 'quiz-json-v1' and legacy rows written before content_profile was stored on this table
+  const parsed = schema.safeParse(payload);
+  return parsed.success ? parsed.data : undefined;
+}
 
 const iso = (value: Date | string | null | undefined): string =>
   value === null || value === undefined ? "" : (value instanceof Date ? value.toISOString() : new Date(value).toISOString());
@@ -117,24 +133,22 @@ export class PostgresCatalogueStore implements CatalogueStore {
     return result.rows[0] ? toPackage(result.rows[0]) : undefined;
   }
 
-  async content(objectId: string): Promise<QuizContent | undefined> {
-    const result = await this.pool.query("select payload from learning_object_content where lower(object_id::text) = $1", [objectId.toLowerCase()]);
+  async content(objectId: string): Promise<AnyContent | undefined> {
+    const result = await this.pool.query("select content_profile, payload from learning_object_content where lower(object_id::text) = $1", [objectId.toLowerCase()]);
     if (!result.rows[0]) return undefined;
-    const parsed = quizContentSchema.safeParse(result.rows[0].payload);
-    return parsed.success ? parsed.data : undefined;
+    return parseContent(result.rows[0].content_profile, result.rows[0].payload);
   }
 
-  async contentRevision(objectId: string, contentVersion: string): Promise<QuizContent | undefined> {
+  async contentRevision(objectId: string, contentVersion: string): Promise<AnyContent | undefined> {
     const result = await this.pool.query(
-      "select payload from learning_object_content_version where lower(object_id::text) = $1 and content_version = $2",
+      "select content_profile, payload from learning_object_content_version where lower(object_id::text) = $1 and content_version = $2",
       [objectId.toLowerCase(), contentVersion],
     );
     if (!result.rows[0]) return undefined;
-    const parsed = quizContentSchema.safeParse(result.rows[0].payload);
-    return parsed.success ? parsed.data : undefined;
+    return parseContent(result.rows[0].content_profile, result.rows[0].payload);
   }
 
-  async contentForObjectVersion(objectId: string, objectVersionId: string): Promise<QuizContent | undefined> {
+  async contentForObjectVersion(objectId: string, objectVersionId: string): Promise<AnyContent | undefined> {
     const version = await this.objectVersion(objectVersionId);
     if (!version || version.object_id.toLowerCase() !== objectId.toLowerCase()) return undefined;
     const pinned = version.content_version ? await this.contentRevision(objectId, version.content_version) : undefined;
@@ -361,6 +375,53 @@ export class PostgresCatalogueStore implements CatalogueStore {
     return built.revision;
   }
 
+  async reviseMediaContent(objectId: string, kind: MediaKind, draft: AnyMediaDraft): Promise<ObjectContentRevision | undefined> {
+    const object = await this.learningObject(objectId);
+    if (!object || object.content_profile !== MEDIA_PLAYERS[kind].content_profile) return undefined;
+    const previous = await this.content(object.object_id);
+    const versions = await this.objectVersions(object.object_id);
+    const supersededContext = versions.find((row) => row.object_version_id === object.active_object_version_id)?.launch_context ?? null;
+    const built = buildMediaRevision(kind, object, draft, previous?.content_version, versions.map((row) => row.semver));
+    const contentProfile = MEDIA_PLAYERS[kind].content_profile;
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      await client.query("update object_version set status = 'SUPERSEDED' where object_id = $1 and status = 'PUBLISHED'", [object.object_id]);
+      await client.query(
+        `insert into object_version (object_version_id, object_id, semver, package_version_id, status, published_at, content_version, launch_context)
+         values ($1,$2,$3,$4,'PUBLISHED', now(), $5, $6)`,
+        [built.revision.object_version_id, object.object_id, built.revision.semver,
+         MEDIA_PLAYERS[kind].package_version_id, built.content.content_version,
+         supersededContext ? JSON.stringify(supersededContext) : null],
+      );
+      await client.query(
+        `insert into learning_object_content_version (object_id, content_profile, content_version, payload)
+         values ($1,$2,$3,$4) on conflict (object_id, content_version) do nothing`,
+        [object.object_id, contentProfile, built.content.content_version, JSON.stringify(built.content)],
+      );
+      await client.query(
+        `insert into learning_object_content (object_id, content_profile, content_version, payload)
+         values ($1,$2,$3,$4)
+         on conflict (object_id) do update set content_version = excluded.content_version,
+           payload = excluded.payload, updated_at = now()`,
+        [object.object_id, contentProfile, built.content.content_version, JSON.stringify(built.content)],
+      );
+      await client.query(
+        `update learning_object set active_object_version_id = $2, title = $3, description = $4,
+           duration = $5, updated_at = now() where object_id = $1`,
+        [object.object_id, built.revision.object_version_id, built.objectPatch.title,
+         built.objectPatch.description, built.objectPatch.duration],
+      );
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+    return built.revision;
+  }
+
   async setLaunchContext(objectId: string, context: LaunchContext | null): Promise<LaunchContextRevision | undefined> {
     const object = await this.learningObject(objectId);
     if (!object) return undefined;
@@ -434,6 +495,49 @@ export class PostgresCatalogueStore implements CatalogueStore {
     return built.registered;
   }
 
+  async registerMedia(kind: MediaKind, draft: AnyMediaDraft, options: { repository_id?: string; authored_by?: string } = {}): Promise<RegisteredMedia> {
+    await this.ensureSharedPlayer();
+    const repositoryId = options.repository_id ?? (await this.defaultRepository())?.repository_id;
+    if (!repositoryId) throw new Error("NO_ACTIVE_REPOSITORY");
+    const built = buildMediaRegistration(kind, draft, repositoryId, options.authored_by);
+    const player = MEDIA_PLAYERS[kind];
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      await client.query(
+        `insert into learning_object (object_id, repository_id, active_object_version_id, active_package_version_id,
+           status, title, description, duration, kind, module_path, content_profile, authored_by, created_at)
+         values ($1,$2,$3,$4,'PUBLISHED',$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [built.object.object_id, repositoryId, built.object.active_object_version_id, player.package_version_id,
+         built.object.title, built.object.description, built.object.duration, built.object.kind,
+         built.object.module_path, player.content_profile, built.object.authored_by ?? null, built.object.created_at],
+      );
+      await client.query(
+        `insert into object_version (object_version_id, object_id, semver, package_version_id, status, published_at, content_version)
+         values ($1,$2,$3,$4,'PUBLISHED', now(), $5)`,
+        [built.object.active_object_version_id, built.object.object_id, built.objectVersionSemver,
+         player.package_version_id, built.content.content_version],
+      );
+      await client.query(
+        `insert into learning_object_content (object_id, content_profile, content_version, payload)
+         values ($1,$2,$3,$4)`,
+        [built.object.object_id, player.content_profile, built.content.content_version, JSON.stringify(built.content)],
+      );
+      await client.query(
+        `insert into learning_object_content_version (object_id, content_profile, content_version, payload)
+         values ($1,$2,$3,$4) on conflict (object_id, content_version) do nothing`,
+        [built.object.object_id, player.content_profile, built.content.content_version, JSON.stringify(built.content)],
+      );
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+    return built.registered;
+  }
+
   async ensureSharedPlayer(): Promise<void> {
     await this.pool.query(
       `insert into package_version (package_version_id, package_id, object_id, semver, sha256, delivery_profile,
@@ -443,6 +547,17 @@ export class PostgresCatalogueStore implements CatalogueStore {
       [QUIZ_PLAYER.package_version_id, QUIZ_PLAYER.package_id, QUIZ_PLAYER.semver, QUIZ_PLAYER.sha256,
        QUIZ_PLAYER.module_path, QUIZ_PLAYER_PACKAGE.published_at],
     );
+    for (const kind of Object.keys(MEDIA_PLAYERS) as MediaKind[]) {
+      const player = MEDIA_PLAYERS[kind];
+      await this.pool.query(
+        `insert into package_version (package_version_id, package_id, object_id, semver, sha256, delivery_profile,
+           entry_point, module_path, status, published_at, shared_player)
+         values ($1,$2,null,$3,$4,'native-web-package',$5,$5,'PUBLISHED',$6,true)
+         on conflict (package_version_id) do nothing`,
+        [player.package_version_id, player.package_id, player.semver, player.sha256,
+         player.module_path, MEDIA_PLAYER_PACKAGES[kind].published_at],
+      );
+    }
   }
 
   /**

@@ -23,6 +23,7 @@ import { buildRuntime } from "../../packages/runtime-api/src/app.js";
 import { issueIesToken } from "../../packages/dev-identity/src/issuer.js";
 import { MemoryRuntimeStore } from "../../packages/runtime-api/src/store/index.js";
 import { MemoryCatalogueStore } from "../../packages/runtime-api/src/catalogue/index.js";
+import type { QuizContent } from "../../packages/contracts/src/index.js";
 
 async function setup() {
   const ies = await generateKeyPair("ES256");
@@ -157,9 +158,9 @@ describe("Publisher authoring and CRUD", () => {
     expect(detail.json().versions.find((v: { object_version_id: string }) => v.object_version_id === firstVersionId).status).toBe("SUPERSEDED");
 
     // What the first version's learners answered is still readable at the version they answered it at.
-    const original = await catalogue.contentRevision(objectId, "1");
+    const original = await catalogue.contentRevision(objectId, "1") as QuizContent | undefined;
     expect(original?.questions).toHaveLength(1);
-    expect((await catalogue.content(objectId))?.questions).toHaveLength(2);
+    expect(((await catalogue.content(objectId)) as QuizContent | undefined)?.questions).toHaveLength(2);
   });
 
   it("keeps serving a launched version its own questions after the quiz has been edited", async () => {

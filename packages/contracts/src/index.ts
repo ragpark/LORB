@@ -66,6 +66,88 @@ export type QuizDraft = z.infer<typeof quizDraftSchema>;
 export type QuizContent = z.infer<typeof quizContentSchema>;
 
 // ---------------------------------------------------------------------------
+// Video content payloads (packages/video-player)
+//
+// Data, not code, same as the quiz: a file the runtime already hosts, or a
+// YouTube video by id. The player never receives an arbitrary embed URL —
+// only a video_id it builds the iframe src from itself — so this cannot
+// become a way to smuggle a third-party origin into the sandboxed launch.
+// ---------------------------------------------------------------------------
+export const videoSourceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("file"), url: z.string().url(), mime_type: z.enum(["video/mp4", "video/webm"]) }).strict(),
+  z.object({ kind: z.literal("youtube"), video_id: z.string().regex(/^[A-Za-z0-9_-]{6,20}$/) }).strict(),
+]);
+export const videoDraftSchema = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().max(600).optional(),
+  source: videoSourceSchema,
+  poster_url: z.string().url().optional(),
+  duration_seconds: z.number().int().positive().max(21600).optional(),
+  captions_url: z.string().url().optional(),
+}).strict();
+export const videoContentSchema = videoDraftSchema.extend({
+  object_id: uuid,
+  content_version: z.string().regex(/^\d+$/),
+  created_at: z.string().datetime(),
+}).strict();
+export type VideoSource = z.infer<typeof videoSourceSchema>;
+export type VideoDraft = z.infer<typeof videoDraftSchema>;
+export type VideoContent = z.infer<typeof videoContentSchema>;
+
+// ---------------------------------------------------------------------------
+// Document content payloads (packages/document-player)
+//
+// A PowerPoint or Word file is never shipped to the sandboxed player as-is:
+// an offline conversion step (see packages/document-converter) rasterises it
+// server-side to one image per page. The player only ever renders images it
+// is handed — never a native Office or PDF viewer plugin, which a strictly
+// sandboxed iframe cannot reliably host anyway. pdf_url, if present, is
+// offered purely as an original-fidelity download link, never as the render
+// surface.
+// ---------------------------------------------------------------------------
+export const documentPageSchema = z.object({
+  index: z.number().int().min(0),
+  image_url: z.string().url(),
+}).strict();
+const documentPagesInOrder = { message: "pages must be contiguous, zero-indexed, and in reading order" } as const;
+const documentBaseSchema = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().max(600).optional(),
+  source_format: z.enum(["pptx", "ppt", "docx", "doc"]),
+  pages: z.array(documentPageSchema).min(1).max(500),
+  pdf_url: z.string().url().optional(),
+}).strict();
+export const documentDraftSchema = documentBaseSchema
+  .refine((d) => d.pages.every((page, position) => page.index === position), documentPagesInOrder);
+export const documentContentSchema = documentBaseSchema.extend({
+  object_id: uuid,
+  content_version: z.string().regex(/^\d+$/),
+  created_at: z.string().datetime(),
+}).strict()
+  .refine((d) => d.pages.every((page, position) => page.index === position), documentPagesInOrder);
+export type DocumentPage = z.infer<typeof documentPageSchema>;
+export type DocumentDraft = z.infer<typeof documentDraftSchema>;
+export type DocumentContent = z.infer<typeof documentContentSchema>;
+
+// ---------------------------------------------------------------------------
+// Audio content payloads (packages/audio-player)
+// ---------------------------------------------------------------------------
+export const audioDraftSchema = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().max(600).optional(),
+  source: z.object({ url: z.string().url(), mime_type: z.enum(["audio/mpeg", "audio/mp4", "audio/ogg", "audio/wav"]) }).strict(),
+  duration_seconds: z.number().int().positive().max(21600).optional(),
+  transcript_url: z.string().url().optional(),
+}).strict();
+export const audioContentSchema = audioDraftSchema.extend({
+  object_id: uuid,
+  content_version: z.string().regex(/^\d+$/),
+  created_at: z.string().datetime(),
+}).strict();
+export type AudioDraft = z.infer<typeof audioDraftSchema>;
+export type AudioContent = z.infer<typeof audioContentSchema>;
+
+// ---------------------------------------------------------------------------
 // Launch context (publisher-authored, versioned with the object)
 //
 // Configuration a published object carries into its own launch: which theme
