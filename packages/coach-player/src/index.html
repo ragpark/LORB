@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Coach</title>
+<style>
+  :root{color-scheme:light}
+  *{box-sizing:border-box}
+  body{margin:0;font:16px/1.5 system-ui,sans-serif;background:#f6f4f9;color:#2b2735}
+  main{max-width:680px;margin:0 auto;padding:1.5rem;display:flex;flex-direction:column;min-height:100vh}
+  h1{font-size:1.1rem;margin:0 0 .25rem}
+  p.lede{margin:0 0 1rem;color:#6a6478;font-size:.9rem}
+  #transcript{flex:1;display:flex;flex-direction:column;gap:.6rem;overflow-y:auto;padding-bottom:1rem}
+  .bubble{max-width:82%;padding:.6rem .85rem;border-radius:.9rem;font-size:.95rem;white-space:pre-wrap}
+  .coach{align-self:flex-start;background:#eeeaf6;border-bottom-left-radius:.2rem}
+  .learner{align-self:flex-end;background:#6d5f92;color:#fff;border-bottom-right-radius:.2rem}
+  .thinking{align-self:flex-start;color:#6a6478;font-style:italic;font-size:.9rem}
+  #composer{display:flex;gap:.5rem;padding:.75rem 0 0}
+  textarea{flex:1;resize:none;border:1px solid #e2ddec;border-radius:.6rem;padding:.6rem .8rem;font:inherit;min-height:2.9rem;background:#fff}
+  button{border:1px solid #514573;background:#6d5f92;color:#fff;border-radius:.5rem;padding:.6rem 1.05rem;font:inherit;font-weight:600;cursor:pointer}
+  button:disabled{background:#a89fc4;border-color:#a89fc4;cursor:not-allowed}
+  #finish{background:#fff;color:#514573;margin-top:.5rem;align-self:flex-start}
+  .status{font-size:.8rem;color:#8a8497;margin-top:.75rem}
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title">AI Coach</h1>
+  <p class="lede" id="lede">A conversational coaching activity. Your messages go to the coaching provider your school has configured; the conversation contributes to your learning record pseudonymously.</p>
+  <div id="transcript" aria-live="polite"></div>
+  <!-- Not a <form>: the sandbox deliberately lacks allow-forms, so submission events are blocked.
+       The composer is a plain button and an Enter-key handler instead. -->
+  <div id="composer" role="group" aria-label="Message composer">
+    <textarea id="input" rows="2" placeholder="Type your reply…" aria-label="Your message" maxlength="4000"></textarea>
+    <button id="send" type="button" disabled>Send</button>
+  </div>
+  <button id="finish" type="button" disabled>Finish coaching session</button>
+  <p class="status" id="status"></p>
+</main>
+<script>
+(function () {
+  "use strict";
+  // "*" only when the shell has no origin to name — it is sandboxed without allow-same-origin, so it
+  // sends no referrer and no concrete target origin can address it. The shell still accepts a hello
+  // only from its own iframe window carrying the launch nonce.
+  var shellOrigin = document.referrer ? new URL(document.referrer).origin : "*";
+  var handshakeNonce = (/(?:^#|&)lorb_handshake=([^&]+)/.exec(location.hash) || [])[1];
+  var statusEl = document.getElementById("status");
+  var transcript = document.getElementById("transcript");
+  var input = document.getElementById("input");
+  var send = document.getElementById("send");
+  var finish = document.getElementById("finish");
+  var port = null;
+  var context = null;       // shell.context payload: attempt/object ids, pseudonym, content_url
+  var settings = {};        // launch_context.settings from the content route: llm_endpoint, topic…
+  var turns = [];           // {role:"learner"|"coach", content}
+  var pendingRelay = {};    // message_id -> handler for relay.reply
+  var exchanges = 0;
+
+  function envelope(type, payload) {
+    return { protocol: "lorb-player", version: "1.0", type: type,
+      message_id: crypto.randomUUID(),
+      correlation_id: (context && context.correlation_id) || crypto.randomUUID(),
+      reply_to: null, sent_at: new Date().toISOString(), payload: payload };
+  }
+  function emit(type, payload) { if (port) port.postMessage(envelope(type, payload)); }
+
+  function bubble(role, text) {
+    var el = document.createElement("div");
+    el.className = "bubble " + (role === "learner" ? "learner" : "coach");
+    el.textContent = text;
+    transcript.appendChild(el);
+    transcript.scrollTop = transcript.scrollHeight;
+    return el;
+  }
+
+  // xAPI, within the enforced verb contract: launched when the coach greets, one answered per
+  // learner turn, completed when the session is finished.
+  function statement(verbKey, verbName, objectSuffix, result) {
+    return {
+      id: crypto.randomUUID(),
+      actor: { objectType: "Agent", account: { name: context.pseudonym, homePage: "https://lorb.example/pseudonym" } },
+      verb: { id: "http://adlnet.gov/expapi/verbs/" + verbKey, display: { "en-GB": verbName } },
+      object: { objectType: "Activity", id: "https://lorb.example/objects/" + context.object_id + "/versions/" + context.object_version_id + (objectSuffix || "") },
+      result: result,
+      context: { extensions: {
+        "https://lorb.example/xapi/repository_id": context.repository_id,
+        "https://lorb.example/xapi/attempt_id": context.attempt_id,
+        "https://lorb.example/xapi/package_version_id": context.package_version_id,
+        "https://lorb.example/xapi/correlation_id": context.correlation_id,
+        "https://lorb.example/xapi/completion_authority": "PACKAGE"
+      } },
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  function relay(messages, onReply) {
+    var request = envelope("relay.request", {
+      endpoint: typeof settings.llm_endpoint === "string" ? settings.llm_endpoint : "demo",
+      messages: messages,
+      context: settings
+    });
+    pendingRelay[request.message_id] = onReply;
+    port.postMessage(request);
+  }
+
+  function coachTurn(onDone) {
+    var thinking = document.createElement("p");
+    thinking.className = "thinking";
+    thinking.textContent = "The coach is thinking…";
+    transcript.appendChild(thinking);
+    send.disabled = true;
+    relay(turns.slice(-16), function (payload) {
+      thinking.remove();
+      send.disabled = false;
+      if (payload && typeof payload.reply === "string") {
+        turns.push({ role: "coach", content: payload.reply });
+        bubble("coach", payload.reply);
+      } else {
+        bubble("coach", "Sorry — I could not reach the coach just now. Your message is kept; try sending another when you are ready.");
+      }
+      if (onDone) onDone();
+    });
+  }
+
+  function begin() {
+    var topic = typeof settings.topic === "string" ? settings.topic : "";
+    if (typeof settings.title === "string") document.getElementById("title").textContent = settings.title;
+    emit("evidence.emit", { statement: statement("launched", "launched", "") });
+    turns.push({ role: "learner", content: "Hello — I am ready to start" + (topic ? " talking about " + topic : "") + "." });
+    coachTurn(function () {
+      send.disabled = false;
+      finish.disabled = false;
+      input.focus();
+    });
+  }
+
+  function sendMessage() {
+    var text = input.value.trim();
+    if (!text || send.disabled) return;
+    input.value = "";
+    turns.push({ role: "learner", content: text });
+    bubble("learner", text);
+    exchanges += 1;
+    // The turn is the evidence; the words are not. The statement contract refuses free text in a
+    // result on purpose — learner-authored content must never become learning-record data — so the
+    // response names the turn and the transcript itself lives only in attempt state.
+    emit("evidence.emit", { statement: statement("answered", "answered", "/turns/" + exchanges, { response: "turn_" + Math.min(exchanges, 999), success: true }) });
+    // Persist the transcript: resuming shows the conversation, and the first save is what legally
+    // moves the attempt CREATED -> STARTED so completion is accepted later.
+    emit("state.put", { state: { turns: turns.slice(-40) } });
+    coachTurn();
+  }
+  send.addEventListener("click", sendMessage);
+  input.addEventListener("keydown", function (event) {
+    if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); sendMessage(); }
+  });
+
+  finish.addEventListener("click", function () {
+    finish.disabled = true;
+    send.disabled = true;
+    emit("evidence.emit", { statement: statement("completed", "completed", "", { completion: true, success: exchanges > 0 }) });
+    emit("experience.complete", {});
+    statusEl.textContent = "Coaching session finished. You can close this activity.";
+  });
+
+  function handlePortMessage(event) {
+    var data = event.data || {};
+    if (data.protocol !== "lorb-player") return;
+    if (data.type === "shell.context" && data.payload) {
+      context = data.payload;
+      // The one fetch this module makes: the version-pinned content route, which carries the
+      // publisher's launch context. No bearer token — the sandboxed module never holds one.
+      fetch(context.content_url, { headers: { accept: "application/json" } })
+        .then(function (response) { return response.ok ? response.json() : {}; })
+        .catch(function () { return {}; })
+        .then(function (body) {
+          settings = (body && body.launch_context && body.launch_context.settings) || {};
+          begin();
+        });
+      return;
+    }
+    if (data.type === "relay.reply" && data.reply_to && pendingRelay[data.reply_to]) {
+      var handler = pendingRelay[data.reply_to];
+      delete pendingRelay[data.reply_to];
+      handler(data.payload || {});
+    }
+  }
+
+  if (handshakeNonce) {
+    var channel = new MessageChannel();
+    port = channel.port1;
+    port.onmessage = handlePortMessage;
+    port.start();
+    parent.postMessage(envelope("module.hello", { lorb_handshake: handshakeNonce }), shellOrigin, [channel.port2]);
+    statusEl.textContent = "Connecting to your activity…";
+  } else {
+    statusEl.textContent = "This activity must be opened inside the LORB Player Shell.";
+  }
+})();
+</script>
+</body>
+</html>

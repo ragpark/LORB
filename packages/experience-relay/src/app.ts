@@ -38,6 +38,12 @@ export interface RelayOptions {
   fetchImpl?: typeof fetch;
   /** Outbound timeout. Providers that think for longer than this lose the turn, not the attempt. */
   timeoutMs?: number;
+  /**
+   * Per-address route limit, honoured where the host app has @fastify/rate-limit registered. A
+   * relay turn can occupy a paid provider for many seconds, so it must not be the one launch-path
+   * route the runtime's production abuse controls skip.
+   */
+  perMinute?: number;
 }
 
 /**
@@ -91,10 +97,13 @@ export function registerRelayRoutes(app: FastifyInstance, ring: SigningKeyRing, 
   const endpoints = options.endpoints ?? endpointsFromEnvironment();
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? 20000;
+  const perMinute = options.perMinute ?? 30;
   const correlation = (req: { correlationId?: string; headers: Record<string, unknown> }): string =>
     req.correlationId ?? (typeof req.headers["x-correlation-id"] === "string" ? req.headers["x-correlation-id"] : randomUUID());
 
-  app.post("/api/v1/relay/coach/messages", async (req, reply) => {
+  // Under route `config`, where @fastify/rate-limit (registered global: false) actually looks —
+  // a top-level rateLimit shorthand is silently ignored and the route would run unlimited.
+  app.post("/api/v1/relay/coach/messages", { config: { rateLimit: { max: perMinute, timeWindow: "1 minute" } } }, async (req, reply) => {
     const request = req as { headers: Record<string, unknown>; body: unknown; correlationId?: string };
     const correlationValue = correlation(request);
 
@@ -129,9 +138,12 @@ export function registerRelayRoutes(app: FastifyInstance, ring: SigningKeyRing, 
       context: body.context ?? {},
     };
 
+    // One timer covers the whole exchange, body included: a provider that returns headers promptly
+    // and then stalls mid-body would otherwise hold this connection forever — the abort signal has
+    // to stay armed until the reply is fully read.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
       const response = await fetchImpl(endpoint.url, {
         method: "POST",
         headers: {
@@ -140,13 +152,15 @@ export function registerRelayRoutes(app: FastifyInstance, ring: SigningKeyRing, 
         },
         body: JSON.stringify(outbound),
         signal: controller.signal,
-      }).finally(() => clearTimeout(timer));
+      });
       if (!response.ok) return sendProblem(reply, "RELAY_UPSTREAM_FAILED", descriptor.correlation_id, 502);
       const answer = replyFrom(await response.json().catch(() => undefined));
       if (!answer) return sendProblem(reply, "RELAY_UPSTREAM_FAILED", descriptor.correlation_id, 502);
       return reply.code(200).send({ endpoint: body.endpoint, reply: answer, correlation_id: descriptor.correlation_id });
     } catch {
       return sendProblem(reply, "RELAY_UPSTREAM_FAILED", descriptor.correlation_id, 502);
+    } finally {
+      clearTimeout(timer);
     }
   });
 }

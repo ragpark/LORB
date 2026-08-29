@@ -16,6 +16,7 @@ import { dirname, join, normalize, resolve } from "node:path";
 import { generateKeyPair, type KeyLike } from "jose";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
 import { registerEvidenceRoutes } from "../../packages/evidence-api/src/app.js";
+import { registerRelayRoutes } from "../../packages/experience-relay/src/app.js";
 import { MemoryRuntimeStore } from "../../packages/runtime-api/src/store/index.js";
 import { MemoryCatalogueStore } from "../../packages/runtime-api/src/catalogue/index.js";
 
@@ -32,6 +33,7 @@ const BUNDLES = [
   { from: "packages/player-shell/dist", to: "." },
   { from: "packages/example-module/src", to: "module" },
   { from: "packages/quiz-player/dist", to: "modules/quiz-player" },
+  { from: "packages/coach-player/src", to: "modules/coach-player" },
 ] as const;
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -107,6 +109,7 @@ export async function startHarness(): Promise<Harness> {
     internalServiceToken: INTERNAL_SERVICE_TOKEN,
   });
   registerEvidenceRoutes(runtime.app, runtime.ring, { issuer: RUNTIME_ORIGIN, store });
+  registerRelayRoutes(runtime.app, runtime.ring, { issuer: RUNTIME_ORIGIN, endpoints: {} });
   await runtime.app.listen({ host: "127.0.0.1", port: RUNTIME_PORT });
 
   const player = staticServer(playerRoot);
