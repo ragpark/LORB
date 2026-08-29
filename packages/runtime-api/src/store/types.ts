@@ -85,6 +85,12 @@ export interface Assignment {
 export interface SmartLink {
   smart_link_id: string;
   object_id: string;
+  /**
+   * The object version this link delivers, or null for a link that follows the object's active
+   * version. A version-pinned link is how a superseded version stays shareable as an artefact:
+   * publishing again moves the active pointer, never what an existing pinned link resolves to.
+   */
+  object_version_id?: string | null;
   /** Present only on the response to the request that created the link; never read back from store. */
   token?: string;
   token_prefix: string;
@@ -190,7 +196,11 @@ export interface RuntimeStore {
 
   createSmartLink(link: SmartLink & { token_hash: string }): Promise<void>;
   smartLinkByTokenHash(tokenHash: string): Promise<SmartLink | undefined>;
+  /** The active link that follows the object's active version, if one exists. */
   activeSmartLinkForObject(objectId: string): Promise<SmartLink | undefined>;
+  /** The active link pinned to one object version, if one exists. */
+  activeSmartLinkForVersion(objectId: string, objectVersionId: string): Promise<SmartLink | undefined>;
+  /** Revokes every active link for the object — version-pinned links included: a withdrawn object must not stay reachable through any of them. */
   revokeSmartLink(objectId: string, revokedByPseudonym: string): Promise<SmartLink | undefined>;
   recordSmartLinkRedemption(smartLinkId: string): Promise<void>;
 

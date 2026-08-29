@@ -171,6 +171,16 @@ describe('Administration workspace enforcement controls', () => {
     expect(redaction).toMatch(/bearer/i);
   });
 
+  // A quiz's curriculum `subject` ("Science") collides with the banned raw-identity field name; the
+  // guard allows it only inside the quiz-content shape, so an authored quiz's own payload does not
+  // read as a leak while a genuine subject claim anywhere else still trips it.
+  it('21a permits the curriculum subject inside quiz content and nowhere else', async () => {
+    const { containsForbiddenField } = await import('../../src/lib/redaction.js');
+    expect(containsForbiddenField({ title: 'Fractions', subject: 'Science', questions: [] })).toBe(false);
+    expect(containsForbiddenField({ subject: 'raw-identity-subject' })).toBe(true);
+    expect(containsForbiddenField({ nested: { subject: 'raw' }, questions: [] })).toBe(true);
+  });
+
   it('22 does not use blue-and-white Pearson-style palettes', () => {
     for (const banned of ['#0d47a1', '#1565c0', '#1976d2', '#2196f3', '#003057']) {
       expect(styles.toLowerCase()).not.toContain(banned);

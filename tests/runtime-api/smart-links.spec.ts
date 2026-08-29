@@ -123,6 +123,76 @@ describe("Learning object smart links", () => {
     await runtime.app.close();
   });
 
+  it("pins a link to a version, so a superseded version stays shareable as an artefact", async () => {
+    const { runtime, store, catalogue, adminToken } = await setup();
+    // An authored quiz gives us a version chain to supersede.
+    const authored = await runtime.app.inject({
+      method: "POST", url: "/api/v1/publisher/learning-objects/quizzes",
+      headers: { authorization: `Bearer ${adminToken}`, "idempotency-key": randomUUID() },
+      payload: { title: "Version-shared quiz", questions: [{ stem: "Which is equivalent to 1/2?", options: [{ id: "a", text: "2/4" }, { id: "b", text: "1/3" }], correct_option_id: "a" }] },
+    });
+    expect(authored.statusCode).toBe(201);
+    const objectId = authored.json().object_id as string;
+    const firstVersion = authored.json().object_version_id as string;
+
+    // Supersede it with an edit, so the pinned version is no longer the active one.
+    const edited = await runtime.app.inject({
+      method: "PUT", url: `/api/v1/publisher/learning-objects/${objectId}/content`,
+      headers: { authorization: `Bearer ${adminToken}`, "idempotency-key": randomUUID() },
+      payload: { title: "Version-shared quiz, revised", questions: [{ stem: "Which is equivalent to 2/4?", options: [{ id: "a", text: "1/2" }, { id: "b", text: "1/3" }], correct_option_id: "a" }] },
+    });
+    expect(edited.statusCode).toBe(200);
+
+    const create = await runtime.app.inject({
+      method: "POST", url: `/api/v1/admin/learning-objects/${objectId}/smart-link`,
+      headers: { authorization: `Bearer ${adminToken}`, "idempotency-key": randomUUID() },
+      payload: { object_version_id: firstVersion },
+    });
+    expect(create.statusCode).toBe(201);
+    expect(create.json().object_version_id).toBe(firstVersion);
+
+    // The pinned link coexists with an object-level link that follows the active version.
+    const objectLevel = await runtime.app.inject({
+      method: "POST", url: `/api/v1/admin/learning-objects/${objectId}/smart-link`,
+      headers: { authorization: `Bearer ${adminToken}`, "idempotency-key": randomUUID() },
+    });
+    expect(objectLevel.statusCode).toBe(201);
+    expect(objectLevel.json().object_version_id).toBeNull();
+
+    // Redeeming the pinned link delivers the superseded version: the attempt and the descriptor
+    // both name it, and the content route serves the original questions against it.
+    const redeem = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/smart-links/${create.json().token}` });
+    expect(redeem.statusCode).toBe(302);
+    const descriptor = decodeJwt(decodeURIComponent((redeem.headers.location as string).split("#descriptor=")[1]!));
+    expect(descriptor.object_version_id).toBe(firstVersion);
+    const attempts = await store.listAttempts({ object_id: objectId });
+    expect(attempts[0]?.object_version_id).toBe(firstVersion);
+    const pinnedContent = await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/learning-objects/${objectId}/content?object_version_id=${firstVersion}` });
+    expect(pinnedContent.json().questions[0].stem).toBe("Which is equivalent to 1/2?");
+
+    // Withdrawing the object still severs every login-free path, pinned links included.
+    await runtime.app.inject({
+      method: "POST", url: `/api/v1/publisher/learning-objects/${objectId}/suspend`,
+      headers: { authorization: `Bearer ${adminToken}`, "idempotency-key": randomUUID() },
+    });
+    expect((await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/smart-links/${create.json().token}` })).statusCode).toBe(404);
+    expect((await runtime.app.inject({ method: "GET", url: `/api/v1/runtime/smart-links/${objectLevel.json().token}` })).statusCode).toBe(404);
+    expect(await store.activeSmartLinkForVersion(objectId, firstVersion)).toBeUndefined();
+    void catalogue;
+    await runtime.app.close();
+  });
+
+  it("refuses to pin a link to a version of a different object or an unknown one", async () => {
+    const { runtime, adminToken } = await setup();
+    const refused = await runtime.app.inject({
+      method: "POST", url: `/api/v1/admin/learning-objects/${PUBLISHED_OBJECT_ID}/smart-link`,
+      headers: { authorization: `Bearer ${adminToken}`, "idempotency-key": randomUUID() },
+      payload: { object_version_id: randomUUID() },
+    });
+    expect(refused.statusCode).toBe(404);
+    await runtime.app.close();
+  });
+
   it("rejects smart-link management by a non-admin and requests for an unknown or unpublished object", async () => {
     const { runtime, adminToken, learnerToken } = await setup();
 

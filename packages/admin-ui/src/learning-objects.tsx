@@ -330,7 +330,7 @@ function NewLearningObjectDialog({ repositories, onCreated }: { repositories: Ro
 // Smart links
 // ---------------------------------------------------------------------------
 
-type SmartLink = { smart_link_id: string; object_id: string; token: string; url: string; created_at: string; revoked_at: string | null };
+type SmartLink = { smart_link_id: string; object_id: string; object_version_id?: string | null; token?: string; url?: string; token_prefix?: string; created_at: string; revoked_at: string | null };
 
 export function LearningObjectSmartLink({ objectId }: { objectId: string }) {
   const queryClient = useQueryClient();
@@ -352,8 +352,14 @@ export function LearningObjectSmartLink({ objectId }: { objectId: string }) {
     setCopied(false);
     try {
       const result = await admin<SmartLink>(`learning-objects/${objectId}/smart-link`, { method: 'POST' });
-      await navigator.clipboard.writeText(result.url);
-      setCopied(true);
+      // The URL is returned only by the response that created the link; a later POST finds the
+      // existing link and can offer only its prefix. Copy what there is to copy.
+      if (result.url) {
+        await navigator.clipboard.writeText(result.url);
+        setCopied(true);
+      } else {
+        setError('This link already exists and its URL is only shown once. Revoke it and create a new one to copy a URL.');
+      }
       void queryClient.invalidateQueries({ queryKey: ['smart-link', objectId] });
     } catch (e) {
       setError(errorMessage(e));
@@ -729,6 +735,41 @@ function LaunchContextTab({ object, onSaved }: { object: Row & { versions?: Row[
   );
 }
 
+/**
+ * Shares one specific version — the artefact form of a smart link. The link keeps delivering this
+ * version however many are published after it, which is what makes a superseded version something
+ * that can still be handed out rather than merely something the evidence can be read against.
+ */
+function VersionShareLink({ objectId, objectVersionId }: { objectId: string; objectVersionId: string }) {
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const share = async () => {
+    setMessage('');
+    setError('');
+    try {
+      const result = await admin<SmartLink>(`learning-objects/${objectId}/smart-link`, {
+        method: 'POST',
+        body: { object_version_id: objectVersionId },
+      });
+      if (result.url) {
+        await navigator.clipboard.writeText(result.url);
+        setMessage(`Copied to clipboard: ${result.url}`);
+      } else {
+        setMessage(`A share link for this version already exists (token starts ${String(result.token_prefix)}…). Revoke the object's links to mint a new one.`);
+      }
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  };
+  return (
+    <p className="small">
+      <button onClick={() => void share()}>Share this version</button>
+      {message && <span role="status"> {message}</span>}
+      {error && <span role="alert" className="error-text"> {error}</span>}
+    </p>
+  );
+}
+
 export function LearningObjectDetail({ objectId, onClosed }: { objectId: string; onClosed: () => void }) {
   const queryClient = useQueryClient();
   const object = useQuery({
@@ -832,10 +873,18 @@ export function LearningObjectDetail({ objectId, onClosed }: { objectId: string;
                   {String(version.object_version_id)} · package {String(version.package_version_id)}
                 </p>
                 <p className="small">{version.published_at ? `Published ${String(version.published_at)}` : 'Not published'}</p>
+                {status === 'PUBLISHED' && ['PUBLISHED', 'SUPERSEDED'].includes(String(version.status)) && (
+                  <VersionShareLink objectId={objectId} objectVersionId={String(version.object_version_id)} />
+                )}
               </li>
             ))}
             {!(row.versions ?? []).length && <li>No versions recorded.</li>}
           </ul>
+          <p className="governance-note">
+            Superseded versions are kept, not discarded: their content stays readable, attempts launched against them
+            still resolve exactly what was delivered, and &ldquo;Share this version&rdquo; mints a link that keeps
+            delivering that version whatever is published after it.
+          </p>
           {editableContent ? (
             <p className="governance-note">
               This object&rsquo;s payload is authored content rendered by the shared quiz player, so it has no bundle of its own to publish. Edit its questions
