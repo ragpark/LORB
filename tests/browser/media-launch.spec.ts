@@ -84,6 +84,21 @@ test("a document object pages forward, completing on the last page", async ({ pa
   await expect.poll(async () => (await harness.store.getAttempt(attemptId))?.status, { timeout: 15000 }).toBe("COMPLETED");
 });
 
+test("a one-page document completes on display — its only page is already its last", async ({ page }) => {
+  // A single-page document's Next and Previous are both disabled from the start, so nothing ever
+  // calls goTo — completion has to fire from reaching the last page on load, not only from paging.
+  const objectId = await registerMedia("documents", {
+    title: "One-page handout", source_format: "docx",
+    pages: [{ index: 0, image_url: "https://example.invalid/page-0.png" }],
+  });
+  const { attemptId, playerUrl } = await launch(objectId);
+
+  await page.goto(playerUrl, { waitUntil: "networkidle" });
+  const module = page.frameLocator("#module");
+  await expect(module.getByText("Page 1 of 1")).toBeVisible({ timeout: 15000 });
+  await expect.poll(async () => (await harness.store.getAttempt(attemptId))?.status, { timeout: 15000 }).toBe("COMPLETED");
+});
+
 test("an audio object loads, and Mark as listened completes the attempt", async ({ page }) => {
   const objectId = await registerMedia("audio", {
     title: "Narrated intro",

@@ -116,7 +116,9 @@ export function App() {
     if (!video.duration || Number.isNaN(video.duration)) return;
     const fraction = video.currentTime / video.duration;
     for (const quartile of quartilesCrossed(watchedFraction.current, fraction)) emit(progressStatement(context, () => crypto.randomUUID(), quartile));
-    watchedFraction.current = fraction;
+    // The furthest point reached, never the current one: a learner who rewinds and re-passes p50
+    // must not re-emit it — quartilesCrossed only promises that per call, not across a rewind.
+    watchedFraction.current = Math.max(watchedFraction.current, fraction);
   }, [context, emit]);
 
   const styles = useMemo(() => buildStyles(paletteFor(content?.launch_context?.theme)), [content?.launch_context?.theme]);

@@ -109,7 +109,9 @@ export function App() {
     if (!audio.duration || Number.isNaN(audio.duration)) return;
     const fraction = audio.currentTime / audio.duration;
     for (const quartile of quartilesCrossed(heardFraction.current, fraction)) emit(progressStatement(context, () => crypto.randomUUID(), quartile));
-    heardFraction.current = fraction;
+    // The furthest point reached, never the current one: a learner who rewinds and re-passes p50
+    // must not re-emit it — quartilesCrossed only promises that per call, not across a rewind.
+    heardFraction.current = Math.max(heardFraction.current, fraction);
   }, [context, emit]);
 
   const styles = useMemo(() => buildStyles(paletteFor(content?.launch_context?.theme)), [content?.launch_context?.theme]);
@@ -138,9 +140,12 @@ export function App() {
             <source src={content.source.url} type={content.source.mime_type} />
             Your browser does not support embedded audio.
           </audio>
+          {/* No target="_blank": the Player Shell embeds every module with only sandbox="allow-scripts",
+              which blocks a sandboxed popup outright. Same-frame navigation isn't restricted by that
+              token, so this works — it leaves the activity, but progress is already saved server-side. */}
           {content.transcript_url && (
             <p style={styles.notice}>
-              <a href={content.transcript_url} target="_blank" rel="noreferrer noopener">Read the transcript</a>
+              <a href={content.transcript_url}>Read the transcript</a>
             </p>
           )}
           {phase !== "completed" && (

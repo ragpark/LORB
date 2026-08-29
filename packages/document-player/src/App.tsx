@@ -116,8 +116,15 @@ export function App() {
       furthestPage.current = clamped;
       port?.postMessage(envelope("state.put", { state: { furthest_page: clamped, completed: false } }, context.correlation_id));
     }
-    if (clamped === content.pages.length - 1) complete();
-  }, [content, context, port, emit, complete]);
+  }, [content, context, port, emit]);
+
+  // Completing on "the current page is the last page" — checked here rather than only from goTo —
+  // is what covers a one-page document: its first page is already its last, so Next/Previous never
+  // fire and goTo's own completion check would never run.
+  useEffect(() => {
+    if (!content || phase !== "reading") return;
+    if (pageIndex === content.pages.length - 1) complete();
+  }, [content, phase, pageIndex, complete]);
 
   const styles = useMemo(() => buildStyles(paletteFor(content?.launch_context?.theme)), [content?.launch_context?.theme]);
   useEffect(() => { document.body.style.background = paletteFor(content?.launch_context?.theme).page; }, [content?.launch_context?.theme]);
@@ -156,8 +163,13 @@ export function App() {
             >
               Next
             </button>
+            {/* No target="_blank": the Player Shell embeds every module with only sandbox="allow-scripts",
+                which blocks a sandboxed popup outright — a new-tab link would silently do nothing. A
+                same-frame navigation isn't restricted by that sandbox token, so this link works,
+                trading the new tab for leaving the activity; the learner's progress is already saved
+                server-side by the time they'd click it. */}
             {content.pdf_url && (
-              <a style={styles.link} href={content.pdf_url} target="_blank" rel="noreferrer noopener">
+              <a style={styles.link} href={content.pdf_url}>
                 Download original
               </a>
             )}
