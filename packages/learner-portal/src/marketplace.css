@@ -1,0 +1,173 @@
+/* Marketplace-only rules. Everything derives from the Learner Portal palette custom properties
+ * declared in styles.css and the shared foundation shapes; nothing here restyles an existing
+ * selector, and every class is .mkt- prefixed so the marketplace cannot collide with the portal. */
+
+.mkt-demo-badge {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.55rem;
+  border: 1px solid var(--lorb-accent);
+  border-radius: var(--lorb-radius-pill);
+  color: var(--lorb-accent-deep);
+  background: var(--lorb-accent-wash);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mkt-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lorb-space-3);
+  align-items: center;
+  margin-bottom: var(--lorb-space-2);
+}
+.mkt-search {
+  flex: 1 1 260px;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--lorb-line);
+  border-radius: var(--lorb-radius-md);
+  background: var(--lorb-surface);
+  color: var(--lorb-ink);
+}
+.mkt-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lorb-space-2);
+}
+.mkt-chip {
+  background: var(--lorb-surface);
+  color: var(--lorb-ink-soft);
+  border: 1px solid var(--lorb-line);
+  border-radius: var(--lorb-radius-pill);
+  padding: 0.3rem 0.85rem;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.mkt-chip-on {
+  background: var(--lorb-accent);
+  border-color: var(--lorb-accent-deep);
+  color: var(--lorb-on-accent);
+}
+
+.mkt-card-top {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--lorb-space-2);
+}
+.mkt-desc {
+  flex: 1;
+}
+.mkt-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--lorb-space-2);
+  flex-wrap: wrap;
+}
+.mkt-proto {
+  font-family: var(--lorb-font-mono);
+  font-size: 0.72rem;
+  border: 1px solid var(--lorb-accent-deep);
+  color: var(--lorb-accent-deep);
+  border-radius: var(--lorb-radius-sm);
+  padding: 0.1rem 0.4rem;
+  background: var(--lorb-surface);
+}
+.mkt-lic {
+  border-radius: var(--lorb-radius-pill);
+  padding: 0.15rem 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.mkt-lic-included {
+  background: var(--lorb-accent-wash);
+  color: var(--lorb-accent-deep);
+  border: 1px solid var(--lorb-accent);
+}
+.mkt-lic-sub {
+  background: var(--lorb-surface);
+  color: var(--lorb-ink-soft);
+  border: 1px solid var(--lorb-line);
+}
+.mkt-lic-trial {
+  background: var(--lorb-paper);
+  color: var(--lorb-ink);
+  border: 1px dashed var(--lorb-accent);
+}
+
+.mkt-placed {
+  border-left: 4px solid var(--lorb-accent);
+}
+.mkt-placed-heading {
+  margin: 2rem 0 0;
+  font-size: 1.05rem;
+  color: var(--lorb-ink);
+}
+
+.mkt-drawer p {
+  color: var(--lorb-ink-soft);
+}
+.mkt-provider {
+  margin-top: -0.5rem;
+  font-weight: 600;
+}
+.mkt-spec {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 1rem;
+  margin: 1rem 0 1.25rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--lorb-line);
+  border-radius: var(--lorb-radius-md);
+  background: var(--lorb-paper);
+}
+.mkt-spec dt {
+  color: var(--lorb-ink-soft);
+  font-size: 0.85rem;
+}
+.mkt-spec dd {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--lorb-ink);
+}
+.mkt-confirm {
+  border: 1px solid var(--lorb-accent);
+  border-radius: var(--lorb-radius-md);
+  background: var(--lorb-accent-wash);
+  padding: 1rem 1.1rem;
+  margin-bottom: 1rem;
+}
+.mkt-confirm p {
+  margin: 0.4rem 0 0;
+}
+.mkt-courses {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lorb-space-2);
+  margin: 0.75rem 0 1rem;
+}
+.mkt-course {
+  text-align: left;
+  background: var(--lorb-surface);
+  color: var(--lorb-ink);
+  border: 1px solid var(--lorb-line);
+  border-radius: var(--lorb-radius-md);
+  padding: 0.7rem 0.9rem;
+  font-weight: 600;
+}
+.mkt-course-on {
+  border-color: var(--lorb-accent-deep);
+  background: var(--lorb-accent-wash);
+  color: var(--lorb-accent-deep);
+}
+.mkt-quiet {
+  background: var(--lorb-surface);
+  color: var(--lorb-accent-deep);
+  border: 1px solid var(--lorb-line);
+}
