@@ -16,8 +16,8 @@ import {
   DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, MEDIA_PLAYERS, MEDIA_PLAYER_PACKAGES, nextMinorSemver, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE,
 } from "./shared.js";
 import type {
-  AnyContent, AnyMediaDraft, CatalogueStore, LaunchContextRevision, LearningObjectRow, MediaKind, ObjectContentRevision, ObjectLifecycleStatus,
-  ObjectMetadataPatch, ObjectDeletion, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredMedia, RegisteredQuiz, Repository,
+  AnyContent, AnyMediaDraft, CatalogueStore, LaunchContextRevision, LearningObjectRow, MarketplacePricing, MediaKind, ObjectContentRevision,
+  ObjectLifecycleStatus, ObjectMetadataPatch, ObjectDeletion, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredMedia, RegisteredQuiz, Repository,
 } from "./types.js";
 
 const CONTENT_SCHEMAS = { video: videoContentSchema, document: documentContentSchema, audio: audioContentSchema } as const;
@@ -50,6 +50,9 @@ function toObject(row: Record<string, any>): LearningObjectRow {
     ...(row.content_profile ? { content_profile: row.content_profile } : {}),
     ...(row.authored_by ? { authored_by: row.authored_by } : {}),
     marketplace_listed: !!row.marketplace_listed,
+    marketplace_price_cents: row.marketplace_price_cents ?? null,
+    marketplace_currency: row.marketplace_currency ?? null,
+    marketplace_billing_period: row.marketplace_billing_period ?? null,
   };
 }
 
@@ -269,11 +272,20 @@ export class PostgresCatalogueStore implements CatalogueStore {
     return this.setObjectStatus(objectId, "RETIRED");
   }
 
-  async setMarketplaceListed(objectId: string, listed: boolean): Promise<LearningObjectRow | undefined> {
-    const result = await this.pool.query(
-      "update learning_object set marketplace_listed = $2, updated_at = now() where lower(object_id::text) = $1 returning *",
-      [objectId.toLowerCase(), listed],
-    );
+  async setMarketplaceListed(objectId: string, listed: boolean, pricing?: MarketplacePricing): Promise<LearningObjectRow | undefined> {
+    // `pricing` omitted leaves the stored price as it was; passed (even all-null, for free) replaces
+    // it outright — coalesce() would keep an old price behind a listing an operator just marked free.
+    const result = pricing
+      ? await this.pool.query(
+          `update learning_object set marketplace_listed = $2, marketplace_price_cents = $3,
+             marketplace_currency = $4, marketplace_billing_period = $5, updated_at = now()
+           where lower(object_id::text) = $1 returning *`,
+          [objectId.toLowerCase(), listed, pricing.price_cents, pricing.currency, pricing.billing_period],
+        )
+      : await this.pool.query(
+          "update learning_object set marketplace_listed = $2, updated_at = now() where lower(object_id::text) = $1 returning *",
+          [objectId.toLowerCase(), listed],
+        );
     return result.rows[0] ? toObject(result.rows[0]) : undefined;
   }
 
