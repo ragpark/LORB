@@ -1074,14 +1074,37 @@ function VersionShareLink({ objectId, objectVersionId }: { objectId: string; obj
  * (GET /api/v1/admin/marketplace) for another repository's administrator to bookmark. Listing
  * changes nothing else about the object — not its version chain, not its content, not who owns it.
  */
-function MarketplaceListingControl({ objectId, listed, retired, onChanged }: { objectId: string; listed: boolean; retired: boolean; onChanged: () => void }) {
+type BillingPeriod = 'one_time' | 'month' | 'year';
+
+function MarketplaceListingControl({
+  objectId, listed, priceCents, currency, billingPeriod, retired, onChanged,
+}: {
+  objectId: string; listed: boolean; priceCents: number | null; currency: string | null; billingPeriod: BillingPeriod | null;
+  retired: boolean; onChanged: () => void;
+}) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const toggle = async () => {
+  // A blank price means free — that has to survive round-tripping through this form, so it starts
+  // blank rather than '0.00' whenever nothing is set yet.
+  const [priceInput, setPriceInput] = useState(priceCents != null ? (priceCents / 100).toFixed(2) : '');
+  const [currencyInput, setCurrencyInput] = useState(currency ?? 'GBP');
+  const [periodInput, setPeriodInput] = useState<BillingPeriod>(billingPeriod ?? 'month');
+
+  const save = async (nextListed: boolean) => {
     setSaving(true);
     setError('');
     try {
-      await publisher(`learning-objects/${objectId}/marketplace-listing`, { method: 'PUT', body: { listed: !listed } });
+      const parsedPrice = priceInput.trim() === '' ? null : Math.round(Number.parseFloat(priceInput) * 100);
+      const priced = nextListed && parsedPrice !== null && parsedPrice > 0;
+      await publisher(`learning-objects/${objectId}/marketplace-listing`, {
+        method: 'PUT',
+        body: {
+          listed: nextListed,
+          price_cents: priced ? parsedPrice : null,
+          currency: priced ? currencyInput.toUpperCase() : null,
+          billing_period: priced ? periodInput : null,
+        },
+      });
       onChanged();
     } catch (e) {
       setError(errorMessage(e));
@@ -1089,18 +1112,49 @@ function MarketplaceListingControl({ objectId, listed, retired, onChanged }: { o
       setSaving(false);
     }
   };
+
   return (
-    <p className="small">
-      Marketplace: {listed
-        ? 'Listed — administrators in other repositories can find and bookmark this object.'
-        : 'Not listed — only this repository can assign it.'}
-      {' '}
-      <button onClick={() => void toggle()} disabled={saving || retired}>
-        {saving ? 'Saving…' : listed ? 'Remove from marketplace' : 'List on marketplace'}
-      </button>
-      {retired && ' A retired learning object cannot be listed.'}
-      {error && <span role="alert" className="error-text"> {error}</span>}
-    </p>
+    <div className="small">
+      <p>
+        Marketplace: {listed
+          ? `Listed — ${priceCents ? `${(priceCents / 100).toFixed(2)} ${currency} / ${billingPeriod === 'one_time' ? 'one-time' : billingPeriod}` : 'free'} to subscribing administrators outside this repository.`
+          : 'Not listed — only this repository can assign it.'}
+      </p>
+      {!retired && (
+        <div className="form">
+          <label>
+            Price (blank = free)
+            <input type="number" min="0" step="0.01" inputMode="decimal" value={priceInput}
+              onChange={(e) => setPriceInput(e.target.value)} placeholder="0.00" style={{ maxWidth: '7rem' }} />
+          </label>
+          <label>
+            Currency
+            <input value={currencyInput} onChange={(e) => setCurrencyInput(e.target.value)} maxLength={3} style={{ maxWidth: '4rem' }} />
+          </label>
+          <label>
+            Billing period
+            <select value={periodInput} onChange={(e) => setPeriodInput(e.target.value as BillingPeriod)}>
+              <option value="one_time">One-time</option>
+              <option value="month">Per month</option>
+              <option value="year">Per year</option>
+            </select>
+          </label>
+        </div>
+      )}
+      <p className="governance-note">
+        This price is informational only — nothing here takes payment or gates access on it. It is shown to an administrator in another
+        repository before they subscribe.
+      </p>
+      {!retired && (
+        <p>
+          <button onClick={() => void save(true)} disabled={saving}>{saving ? 'Saving…' : listed ? 'Update listing' : 'List on marketplace'}</button>
+          {' '}
+          {listed && <button onClick={() => void save(false)} disabled={saving}>Remove from marketplace</button>}
+        </p>
+      )}
+      {retired && <p>A retired learning object cannot be listed.</p>}
+      {error && <p role="alert" className="error-text">{error}</p>}
+    </div>
   );
 }
 
@@ -1133,7 +1187,15 @@ export function LearningObjectDetail({ objectId, onClosed }: { objectId: string;
         Status: <span className="status-badge">{status}</span> · Kind: <span className="mono">{String(row.kind)}</span>
         {row.authored_by ? <> · Authored by <span className="mono">{String(row.authored_by)}</span></> : null}
       </p>
-      <MarketplaceListingControl objectId={objectId} listed={row.marketplace_listed === true} retired={status === 'RETIRED'} onChanged={refresh} />
+      <MarketplaceListingControl
+        objectId={objectId}
+        listed={row.marketplace_listed === true}
+        priceCents={typeof row.marketplace_price_cents === 'number' ? row.marketplace_price_cents : null}
+        currency={typeof row.marketplace_currency === 'string' ? row.marketplace_currency : null}
+        billingPeriod={row.marketplace_billing_period as BillingPeriod | null ?? null}
+        retired={status === 'RETIRED'}
+        onChanged={refresh}
+      />
       <div className="version-actions">
         {status === 'PUBLISHED' && (
           <ConfirmedAction

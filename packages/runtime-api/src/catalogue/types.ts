@@ -15,6 +15,18 @@ import type {
 
 /** The three media kinds registered alongside quizzes, each behind one fixed shared player. */
 export type MediaKind = "video" | "document" | "audio";
+
+/**
+ * What a repository charges for cross-repository access to a marketplace-listed object — informational
+ * only. Nothing in this platform takes payment or enforces access on it; it exists so a subscribing
+ * administrator can be shown a real figure the listing repository entered, never a placeholder.
+ * `null` (every field) means free.
+ */
+export interface MarketplacePricing {
+  price_cents: number | null;
+  currency: string | null;
+  billing_period: "one_time" | "month" | "year" | null;
+}
 export type AnyMediaContent = VideoContent | DocumentContent | AudioContent;
 export type AnyMediaDraft = VideoDraft | DocumentDraft | AudioDraft;
 /** Everything a learning object's content route may serve. */
@@ -48,6 +60,11 @@ export interface LearningObjectRow {
    *  Absent (or false) means the object is reachable only within its own repository, same as every
    *  object registered before the marketplace existed. */
   marketplace_listed?: boolean;
+  /** What the listing repository charges another repository's administrator to subscribe. Absent or
+   *  all-null means free. Informational — see MarketplacePricing. */
+  marketplace_price_cents?: number | null;
+  marketplace_currency?: string | null;
+  marketplace_billing_period?: "one_time" | "month" | "year" | null;
 }
 
 export interface PackageVersionRow {
@@ -202,9 +219,11 @@ export interface CatalogueStore {
   updateObject(objectId: string, patch: ObjectMetadataPatch): Promise<LearningObjectRow | undefined>;
   /** Moves a registered object between the lifecycle states an administrator controls. */
   setObjectStatus(objectId: string, status: ObjectLifecycleStatus): Promise<LearningObjectRow | undefined>;
-  /** Opts an object in or out of cross-repository marketplace discovery. Changes nothing else about
-   *  it — not its version chain, not its content, not which repository owns it. */
-  setMarketplaceListed(objectId: string, listed: boolean): Promise<LearningObjectRow | undefined>;
+  /** Opts an object in or out of cross-repository marketplace discovery, and sets what subscribing to
+   *  it costs. Changes nothing else about it — not its version chain, not its content, not which
+   *  repository owns it. Omitting `pricing` leaves the object's existing price untouched; passing it
+   *  (including all-null, for free) replaces it. */
+  setMarketplaceListed(objectId: string, listed: boolean, pricing?: MarketplacePricing): Promise<LearningObjectRow | undefined>;
   retireObject(objectId: string): Promise<LearningObjectRow | undefined>;
   /**
    * Removes an object and everything that only exists to describe it.

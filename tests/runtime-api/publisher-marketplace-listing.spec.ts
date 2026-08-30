@@ -79,4 +79,44 @@ describe("marketplace listing", () => {
     expect(marketplace.json().items).toEqual([]);
     await runtime.app.close();
   });
+
+  it("is free by default, and carries a real price through to the marketplace once set", async () => {
+    const { runtime, call, objectId } = await setup();
+    const free = await call("PUT", `/api/v1/publisher/learning-objects/${objectId}/marketplace-listing`, { listed: true });
+    expect(free.json()).toMatchObject({ marketplace_price_cents: null, marketplace_currency: null, marketplace_billing_period: null });
+
+    const priced = await call("PUT", `/api/v1/publisher/learning-objects/${objectId}/marketplace-listing`, {
+      listed: true, price_cents: 1200, currency: "GBP", billing_period: "month",
+    });
+    expect(priced.statusCode).toBe(200);
+    expect(priced.json()).toMatchObject({ marketplace_price_cents: 1200, marketplace_currency: "GBP", marketplace_billing_period: "month" });
+
+    const marketplace = await call("GET", "/api/v1/admin/marketplace");
+    const item = (marketplace.json().items as Array<{ object_id: string; marketplace_price_cents: number }>).find((i) => i.object_id === objectId);
+    expect(item?.marketplace_price_cents).toBe(1200);
+    await runtime.app.close();
+  });
+
+  it("re-listing without a price clears a previously set one — the route is authoritative, not a patch", async () => {
+    const { runtime, call, objectId } = await setup();
+    await call("PUT", `/api/v1/publisher/learning-objects/${objectId}/marketplace-listing`, {
+      listed: true, price_cents: 500, currency: "USD", billing_period: "year",
+    });
+    const relisted = await call("PUT", `/api/v1/publisher/learning-objects/${objectId}/marketplace-listing`, { listed: true });
+    expect(relisted.json()).toMatchObject({ marketplace_price_cents: null, marketplace_currency: null, marketplace_billing_period: null });
+    await runtime.app.close();
+  });
+
+  it("refuses a non-zero price with no currency or billing period", async () => {
+    const { runtime, call, objectId } = await setup();
+    const noCurrency = await call("PUT", `/api/v1/publisher/learning-objects/${objectId}/marketplace-listing`, {
+      listed: true, price_cents: 500, billing_period: "month",
+    });
+    expect(noCurrency.statusCode).toBe(400);
+    const noPeriod = await call("PUT", `/api/v1/publisher/learning-objects/${objectId}/marketplace-listing`, {
+      listed: true, price_cents: 500, currency: "GBP",
+    });
+    expect(noPeriod.statusCode).toBe(400);
+    await runtime.app.close();
+  });
 });

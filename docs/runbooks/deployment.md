@@ -254,14 +254,24 @@ edit. Nothing about the object changes: not its version chain, not its content, 
 owns it — only whether it appears on `GET /api/v1/admin/marketplace` for administrators outside that
 repository to find.
 
-An administrator "adds" a listed object to their own teaching workspace by bookmarking it —
-`POST /api/v1/admin/marketplace/imports {"object_id": "…"}` — which records the bookmark in
+The same call optionally carries what subscribing costs (migration 013): `price_cents`, `currency`
+(3-letter ISO), and `billing_period` (`one_time` | `month` | `year`). This is **informational only —
+LORB never processes payment or gates access on it**; it exists so a subscribing administrator is
+shown a real figure the listing repository entered, not a placeholder. Every call is authoritative
+for price, not a partial patch: omitting the three fields (or setting `price_cents` to `0`/`null`)
+lists the object as free, even if a price was set on an earlier call. A non-zero `price_cents`
+requires both `currency` and `billing_period`, so a subscriber is never shown a bare number with
+nothing to say what it's a number of.
+
+An administrator "subscribes" to a listed object from their own teaching workspace, shown that price
+and term first, which bookmarks it into their assignable set —
+`POST /api/v1/admin/marketplace/imports {"object_id": "…"}` — recording the bookmark in
 `marketplace_import`, keyed to the caller's own pseudonym. This copies nothing: `class_assignment`
 (step above, `POST …/classes/{classId}/assignments`) already resolves any published `object_id`
 regardless of which repository it belongs to, so the bookmark exists purely so
 `GET /api/v1/admin/marketplace/imports` can tell the teacher-facing UI which objects outside the
 caller's own repositories should show up as assignable. `DELETE …/marketplace/imports/{objectId}`
-removes the bookmark without touching the object or anything already assigned from it.
+unsubscribes — it removes the bookmark without touching the object or anything already assigned from it.
 
 `GET /api/v1/admin/learning-objects/{id}/preview` backs the teacher workspace's preview modal — any
 admin, no repository membership required, same scope as the unfiltered object list above. It mints

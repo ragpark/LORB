@@ -718,6 +718,19 @@ audio.teacher-preview-media {
   padding-top: 0.5rem;
   border-top: 1px solid var(--lorb-line);
 }
+.teacher-subscribe-terms {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.3rem 1rem;
+  margin: 1rem 0;
+}
+.teacher-subscribe-terms dt {
+  font-weight: 600;
+  color: var(--lorb-ink-soft);
+}
+.teacher-subscribe-terms dd {
+  margin: 0;
+}
 
 .teacher-toast {
   position: fixed;

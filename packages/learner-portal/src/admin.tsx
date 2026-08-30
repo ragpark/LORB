@@ -25,8 +25,9 @@ export interface AssignmentResults{assignment_id:string;object_id:string;assigne
 export interface AssignableObject{object_id:string;repository_id:string;title?:string;description?:string;kind?:string;duration?:string;status:string}
 /** A repository this teacher belongs to, worn as a course label — same grouping the learner-facing catalogue uses. */
 export interface Course{repository_id:string;slug:string;display_name:string}
-/** A published object another repository has opted in to marketplace discovery. */
-export interface MarketplaceListing{object_id:string;title?:string;description?:string;kind?:string;duration?:string;publisher_name:string}
+/** A published object another repository has opted in to marketplace discovery. Pricing is
+ *  informational — set by the listing repository, never charged or enforced by this platform. */
+export interface MarketplaceListing{object_id:string;title?:string;description?:string;kind?:string;duration?:string;publisher_name:string;marketplace_price_cents:number|null;marketplace_currency:string|null;marketplace_billing_period:'one_time'|'month'|'year'|null}
 /** One of this teacher's own bookmarks — a marketplace listing they have chosen to make assignable. */
 export interface MarketplaceImport{object_id:string;title?:string;description?:string;kind?:string;duration?:string;status:string;imported_at:string}
 
@@ -99,6 +100,11 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
   *  preview never flashes under a different activity's title while the next one loads. */
  const [previewObject,setPreviewObject]=useState<{object_id:string;title?:string}>();
  const [previewData,setPreviewData]=useState<PreviewPayload>();
+
+ /** The marketplace listing the subscribe confirmation is open for. Bookmarking (POST
+  *  marketplace/imports — "add to my library") only ever happens from confirmSubscribe below, never
+  *  directly from the tile: the cost and term have to be shown and agreed to first. */
+ const [subscribeListing,setSubscribeListing]=useState<MarketplaceListing>();
 
  /**
   * Expiry is a state of the workspace, not one more error message.
@@ -246,16 +252,28 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
   await fetchResults(selected.class_id);
  });
 
- /** Bookmarks a marketplace listing into this teacher's own assignable set. Nothing is copied — the
-  *  object stays owned by its own repository; this only records the choice to treat it as theirs. */
- const importListing=(objectId:string)=>run(async()=>{
-  await adminRequest(config,'marketplace/imports',{method:'POST',body:JSON.stringify({object_id:objectId})});
-  await fetchImports();
- });
-
  const removeImport=(objectId:string)=>run(async()=>{
   await adminRequest(config,`marketplace/imports/${encodeURIComponent(objectId)}`,{method:'DELETE'});
   await fetchImports();
+ });
+
+ // -------------------------------------------------------------------------
+ // Subscribing: the marketplace tile's call to action. It shows the listing repository's own price
+ // and term before anything is bookmarked — "Add to my library" never fires directly off the tile.
+ // -------------------------------------------------------------------------
+ const priceLabel=(item:{marketplace_price_cents:number|null;marketplace_currency:string|null;marketplace_billing_period:'one_time'|'month'|'year'|null})=>{
+  if(!item.marketplace_price_cents)return'Free';
+  const amount=(item.marketplace_price_cents/100).toFixed(2);
+  const period=item.marketplace_billing_period==='month'?'per month':item.marketplace_billing_period==='year'?'per year':'one-time';
+  return`${item.marketplace_currency??''} ${amount} ${period}`.trim();
+ };
+ const openSubscribe=(listing:MarketplaceListing)=>setSubscribeListing(listing);
+ const closeSubscribe=()=>setSubscribeListing(undefined);
+ const confirmSubscribe=()=>run(async()=>{
+  if(!subscribeListing)return;
+  await adminRequest(config,'marketplace/imports',{method:'POST',body:JSON.stringify({object_id:subscribeListing.object_id})});
+  await fetchImports();
+  closeSubscribe();
  });
 
  // -------------------------------------------------------------------------
@@ -514,12 +532,12 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
       <span className="teacher-tile-kind">{item.kind??'activity'}</span>
       <h3>{item.title??'Untitled activity'}</h3>
       <p>{item.description??'No description is available.'}</p>
-      <p className="teacher-tile-meta">from {item.publisher_name}</p>
+      <p className="teacher-tile-meta">from {item.publisher_name} · {priceLabel(item)}</p>
       <div className="teacher-tile-actions">
        <button className="teacher-tile-secondary" onClick={()=>openPreview(item)} disabled={busy}>Preview</button>
        {importedObjectIds.has(item.object_id)
-        ?<button onClick={()=>void removeImport(item.object_id)} disabled={busy}>Remove from my library</button>
-        :<button onClick={()=>void importListing(item.object_id)} disabled={busy}>Add to my library</button>}
+        ?<button onClick={()=>void removeImport(item.object_id)} disabled={busy}>Unsubscribe</button>
+        :<button onClick={()=>openSubscribe(item)} disabled={busy}>Subscribe</button>}
       </div>
      </article>)}
      {marketplace.length===0&&<p className="empty">No repository has listed anything on the marketplace yet.</p>}
@@ -594,6 +612,28 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
     <div className="teacher-preview-actions">
      <button onClick={assignFromPreview} disabled={busy}>Assign…</button>
      <button className="teacher-tile-secondary" onClick={closePreview}>Close</button>
+    </div>
+   </div>
+  </>}
+
+  {subscribeListing&&<>
+   <div className="teacher-scrim" onClick={closeSubscribe}/>
+   <div className="dialog" role="dialog" aria-label={`Subscribe to ${subscribeListing.title??'this activity'}`}>
+    <h2>{subscribeListing.title??'Untitled activity'}</h2>
+    <p className="lede">from {subscribeListing.publisher_name}</p>
+    <dl className="teacher-subscribe-terms">
+     <dt>Cost</dt>
+     <dd>{priceLabel(subscribeListing)}</dd>
+     <dt>Duration</dt>
+     <dd>{subscribeListing.marketplace_billing_period==='month'?'Billed monthly, cancel any time'
+       :subscribeListing.marketplace_billing_period==='year'?'Billed annually, cancel any time'
+       :subscribeListing.marketplace_billing_period==='one_time'?'One-time — no recurring charge'
+       :'No cost — free for as long as it stays listed'}</dd>
+    </dl>
+    <p className="notice">This is informational only: LORB does not process payment or enforce this price. It is set by {subscribeListing.publisher_name} for your reference. Subscribing bookmarks the activity into your own library — nothing is copied, and you can unsubscribe at any time.</p>
+    <div className="teacher-preview-actions">
+     <button onClick={()=>void confirmSubscribe()} disabled={busy}>{busy?'Subscribing…':'Subscribe'}</button>
+     <button className="teacher-tile-secondary" onClick={closeSubscribe} disabled={busy}>Cancel</button>
     </div>
    </div>
   </>}

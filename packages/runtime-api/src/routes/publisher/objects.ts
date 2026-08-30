@@ -80,7 +80,20 @@ const metadataSchema = z.object({
   kind: kind.optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "an edit must change something");
 
-const marketplaceListingSchema = z.object({ listed: z.boolean() }).strict();
+/**
+ * What subscribing costs, set by the listing repository — informational only, never enforced or
+ * charged here. `listed: true` with every pricing field omitted (or null) lists the object as free;
+ * a non-zero price requires both a currency and a billing period, so a subscriber is never shown a
+ * bare number with nothing to say what it's a number of.
+ */
+const marketplaceListingSchema = z.object({
+  listed: z.boolean(),
+  price_cents: z.number().int().min(0).max(100_000_000).nullable().optional(),
+  currency: z.string().regex(/^[A-Z]{3}$/, "currency must be a 3-letter ISO code").nullable().optional(),
+  billing_period: z.enum(["one_time", "month", "year"]).nullable().optional(),
+}).strict()
+  .refine((v) => !((v.price_cents ?? 0) > 0 && !v.currency), "currency is required when price_cents is set")
+  .refine((v) => !((v.price_cents ?? 0) > 0 && !v.billing_period), "billing_period is required when price_cents is set");
 
 /** repository_id plus whatever the specific draft schema (quiz, video, document, audio) validates next. */
 const authoringEnvelopeSchema = z.object({ repository_id: z.string().uuid().optional() })
@@ -531,13 +544,24 @@ export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherCont
       if (!existing) return;
       if (existing.status === "RETIRED") return sendAdminError(reply, "LEARNING_OBJECT_STATE_INVALID", correlation);
 
-      const updated = await ctx.catalogue.setMarketplaceListed(existing.object_id, parsed.data.listed);
+      // Every call is authoritative for price, not a partial patch: a caller who wants to keep the
+      // current price re-sends it. Omitting the fields here means free, not "leave unchanged" — that
+      // reading belongs to internal callers of the catalogue method, not to this admin-facing route.
+      const pricing = {
+        price_cents: parsed.data.price_cents ?? null,
+        currency: parsed.data.currency ?? null,
+        billing_period: parsed.data.billing_period ?? null,
+      };
+      const updated = await ctx.catalogue.setMarketplaceListed(existing.object_id, parsed.data.listed, pricing);
       if (!updated) return sendAdminError(reply, "LEARNING_OBJECT_NOT_FOUND", correlation);
       await audit({
         actorPseudonym: principal.pseudonym, actorRole: principal.role,
         actionType: "learning_object.marketplace_listing", targetType: "learning_object", targetId: updated.object_id,
-        priorState: { marketplace_listed: existing.marketplace_listed ?? false },
-        resultingState: { marketplace_listed: parsed.data.listed },
+        priorState: {
+          marketplace_listed: existing.marketplace_listed ?? false,
+          marketplace_price_cents: existing.marketplace_price_cents ?? null,
+        },
+        resultingState: { marketplace_listed: parsed.data.listed, ...pricing },
         outcome: "ALLOWED", correlationId: correlation,
       });
       const response = { ...updated, correlation_id: correlation };

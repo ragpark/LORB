@@ -8,8 +8,8 @@ import {
   DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, MEDIA_PLAYERS, MEDIA_PLAYER_PACKAGES, nextMinorSemver, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE,
 } from "./shared.js";
 import type {
-  AnyContent, AnyMediaDraft, CatalogueStore, LaunchContextRevision, LearningObjectRow, MediaKind, ObjectContentRevision, ObjectDeletion,
-  ObjectLifecycleStatus, ObjectMetadataPatch, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredMedia, RegisteredQuiz, Repository,
+  AnyContent, AnyMediaDraft, CatalogueStore, LaunchContextRevision, LearningObjectRow, MarketplacePricing, MediaKind, ObjectContentRevision,
+  ObjectDeletion, ObjectLifecycleStatus, ObjectMetadataPatch, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredMedia, RegisteredQuiz, Repository,
 } from "./types.js";
 
 export class MemoryCatalogueStore implements CatalogueStore {
@@ -216,10 +216,15 @@ export class MemoryCatalogueStore implements CatalogueStore {
     return this.setObjectStatus(objectId, "RETIRED");
   }
 
-  async setMarketplaceListed(objectId: string, listed: boolean): Promise<LearningObjectRow | undefined> {
+  async setMarketplaceListed(objectId: string, listed: boolean, pricing?: MarketplacePricing): Promise<LearningObjectRow | undefined> {
     const object = this.objects.get(objectId.toLowerCase());
     if (!object) return undefined;
     object.marketplace_listed = listed;
+    if (pricing) {
+      object.marketplace_price_cents = pricing.price_cents;
+      object.marketplace_currency = pricing.currency;
+      object.marketplace_billing_period = pricing.billing_period;
+    }
     return { ...object };
   }
 
