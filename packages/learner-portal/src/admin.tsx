@@ -30,6 +30,18 @@ export interface MarketplaceListing{object_id:string;title?:string;description?:
 /** One of this teacher's own bookmarks — a marketplace listing they have chosen to make assignable. */
 export interface MarketplaceImport{object_id:string;title?:string;description?:string;kind?:string;duration?:string;status:string;imported_at:string}
 
+/** What GET .../preview returns — a read-only look at what an object actually delivers, shaped for
+ *  whichever of the four data-authored kinds it is. A quiz never carries its marking key here, and a
+ *  code-bundled object (no structured content to show) comes back as "unsupported" rather than
+ *  something this workspace would have to fake a launch to render. */
+export type PreviewPayload = {object_id:string;title:string;description?:string;duration?:string} & (
+ | {kind:'quiz';questions:Array<{stem:string;options:Array<{id:string;text:string}>}>}
+ | {kind:'video';source:{kind:'file';url:string;mime_type:string}|{kind:'youtube';video_id:string};poster_url?:string}
+ | {kind:'document';pages:Array<{index:number;image_url:string}>}
+ | {kind:'audio';source:{url:string;mime_type:string};transcript_url?:string}
+ | {kind:'unsupported'}
+);
+
 /** The roster accepts only identifiers that could round-trip through the identity provider, so a
  *  roster entry and that learner's own sign-in derive the same pseudonym. Enforced again server-side. */
 export const LEARNER_REF=/^[A-Za-z\d._:-]{1,128}$/;
@@ -82,6 +94,11 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
  /** The activity the assign drawer is open for, and which of this teacher's classes are checked in it. */
  const [drawerObject,setDrawerObject]=useState<{object_id:string;title?:string}>();
  const [drawerClassIds,setDrawerClassIds]=useState<Set<string>>(new Set());
+
+ /** The activity the preview modal is open for, and what it fetched — cleared together so a stale
+  *  preview never flashes under a different activity's title while the next one loads. */
+ const [previewObject,setPreviewObject]=useState<{object_id:string;title?:string}>();
+ const [previewData,setPreviewData]=useState<PreviewPayload>();
 
  /**
   * Expiry is a state of the workspace, not one more error message.
@@ -272,6 +289,27 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
   closeDrawer();
  });
 
+ // -------------------------------------------------------------------------
+ // The preview modal: what a teacher actually looks at before deciding to assign. Read-only — it
+ // never mints a launch descriptor or creates an attempt, so opening one leaves no evidence and
+ // works for a marketplace listing the teacher has not bookmarked yet, same as for their own content.
+ // -------------------------------------------------------------------------
+ const openPreview=(object:{object_id:string;title?:string})=>{
+  setPreviewObject(object);
+  setPreviewData(undefined);
+  void run(async()=>{
+   setPreviewData(await adminRequest<PreviewPayload>(config,`learning-objects/${encodeURIComponent(object.object_id)}/preview`));
+  });
+ };
+ const closePreview=()=>{setPreviewObject(undefined);setPreviewData(undefined)};
+ /** Jumps straight from reviewing to assigning, without the teacher having to relocate the tile. */
+ const assignFromPreview=()=>{
+  if(!previewObject)return;
+  const object=previewObject;
+  closePreview();
+  openDrawer(object);
+ };
+
  const titleFor=(objectId:string)=>objects.find(o=>o.object_id===objectId)?.title??objectId;
  const importedObjectIds=new Set(imports.map(i=>i.object_id));
 
@@ -326,7 +364,10 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
        <h3>{o.title??'Untitled activity'}</h3>
        <p>{o.description??'No description is available.'}</p>
        {o.duration&&<p className="teacher-tile-meta">{o.duration}</p>}
-       <button onClick={()=>openDrawer(o)} disabled={busy}>Assign</button>
+       <div className="teacher-tile-actions">
+        <button className="teacher-tile-secondary" onClick={()=>openPreview(o)} disabled={busy}>Preview</button>
+        <button onClick={()=>openDrawer(o)} disabled={busy}>Assign</button>
+       </div>
       </article>)}
      </div>
     </div>)}
@@ -339,7 +380,10 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
        <h3>{o.title??'Untitled activity'}</h3>
        <p>{o.description??'No description is available.'}</p>
        {o.duration&&<p className="teacher-tile-meta">{o.duration}</p>}
-       <button onClick={()=>openDrawer(o)} disabled={busy}>Assign</button>
+       <div className="teacher-tile-actions">
+        <button className="teacher-tile-secondary" onClick={()=>openPreview(o)} disabled={busy}>Preview</button>
+        <button onClick={()=>openDrawer(o)} disabled={busy}>Assign</button>
+       </div>
       </article>)}
      </div>
     </div>}
@@ -471,9 +515,12 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
       <h3>{item.title??'Untitled activity'}</h3>
       <p>{item.description??'No description is available.'}</p>
       <p className="teacher-tile-meta">from {item.publisher_name}</p>
-      {importedObjectIds.has(item.object_id)
-       ?<button onClick={()=>void removeImport(item.object_id)} disabled={busy}>Remove from my library</button>
-       :<button onClick={()=>void importListing(item.object_id)} disabled={busy}>Add to my library</button>}
+      <div className="teacher-tile-actions">
+       <button className="teacher-tile-secondary" onClick={()=>openPreview(item)} disabled={busy}>Preview</button>
+       {importedObjectIds.has(item.object_id)
+        ?<button onClick={()=>void removeImport(item.object_id)} disabled={busy}>Remove from my library</button>
+        :<button onClick={()=>void importListing(item.object_id)} disabled={busy}>Add to my library</button>}
+      </div>
      </article>)}
      {marketplace.length===0&&<p className="empty">No repository has listed anything on the marketplace yet.</p>}
     </div>
@@ -498,6 +545,51 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
     <p className="teacher-drawer-summary">{drawerClassIds.size===0?'No classes selected.':drawerClassIds.size===1?'1 class selected.':`${drawerClassIds.size} classes selected.`}</p>
     <button onClick={()=>void confirmAssign()} disabled={busy||drawerClassIds.size===0}>Assign</button>
    </aside>
+  </>}
+
+  {previewObject&&<>
+   <div className="teacher-scrim" onClick={closePreview}/>
+   <div className="dialog teacher-preview" role="dialog" aria-label={`Preview ${previewObject.title??'this activity'}`}>
+    <button className="teacher-drawer-close" onClick={closePreview} aria-label="Close">×</button>
+    <h2>{previewObject.title??'Untitled activity'}</h2>
+    {busy&&!previewData&&<p className="empty">Loading preview…</p>}
+    {error&&!expired&&<p role="alert" className="admin-error">{error}</p>}
+    {previewData&&<div className="teacher-preview-body">
+     {previewData.description&&<p className="lede">{previewData.description}</p>}
+
+     {previewData.kind==='quiz'&&<ol className="teacher-preview-questions">
+      {previewData.questions.map((q,i)=><li key={i}>
+       <p>{q.stem}</p>
+       <ul>{q.options.map(o=><li key={o.id}>{o.text}</li>)}</ul>
+      </li>)}
+     </ol>}
+
+     {previewData.kind==='video'&&(previewData.source.kind==='youtube'
+      ?<iframe
+         className="teacher-preview-media"
+         src={`https://www.youtube.com/embed/${previewData.source.video_id}`}
+         title={previewObject.title??'Video preview'}
+         allow="encrypted-media"
+         allowFullScreen
+        />
+      :<video className="teacher-preview-media" src={previewData.source.url} controls/>)}
+
+     {previewData.kind==='document'&&<div className="teacher-preview-pages">
+      {previewData.pages.map(p=><img key={p.index} src={p.image_url} alt={`Page ${p.index+1}`}/>)}
+     </div>}
+
+     {previewData.kind==='audio'&&<>
+      <audio className="teacher-preview-media" src={previewData.source.url} controls/>
+      {previewData.transcript_url&&<p><a href={previewData.transcript_url} target="_blank" rel="noreferrer">View transcript</a></p>}
+     </>}
+
+     {previewData.kind==='unsupported'&&<p className="empty">This activity has no structured content to preview here — its title and description above are what&rsquo;s available before assigning it.</p>}
+    </div>}
+    <div className="teacher-preview-actions">
+     <button onClick={assignFromPreview} disabled={busy}>Assign…</button>
+     <button className="teacher-tile-secondary" onClick={closePreview}>Close</button>
+    </div>
+   </div>
   </>}
 
   {toast&&<div className="teacher-toast" role="status">{toast}</div>}

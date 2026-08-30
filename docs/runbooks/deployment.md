@@ -263,6 +263,14 @@ regardless of which repository it belongs to, so the bookmark exists purely so
 caller's own repositories should show up as assignable. `DELETE …/marketplace/imports/{objectId}`
 removes the bookmark without touching the object or anything already assigned from it.
 
+`GET /api/v1/admin/learning-objects/{id}/preview` backs the teacher workspace's preview modal — any
+admin, no repository membership required, same scope as the unfiltered object list above. It mints
+no descriptor and creates no attempt, so opening one leaves no evidence. Only the four data-authored
+kinds (quiz, video, document, audio) return structured content; a code-bundled object comes back
+`"kind": "unsupported"` rather than something rendering its live module here would have to fake. A
+quiz's `correct_option_id` and `explanation` are never included — the same marking-key withholding
+the learner-facing content route already applies.
+
 ## Deploying a new version
 
 1. Apply migrations first: `pnpm db:setup:production`. Migrations here are additive — new tables and

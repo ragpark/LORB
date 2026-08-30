@@ -392,9 +392,19 @@ dd {
   font-size: 0.8rem;
   color: var(--lorb-ink-soft);
 }
-.teacher-tile button {
+.teacher-tile > button {
   margin-top: auto;
   align-self: flex-start;
+}
+.teacher-tile-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: auto;
+}
+.teacher-tile-secondary {
+  background: none;
+  color: var(--lorb-accent-deep);
+  border-color: var(--lorb-line);
 }
 
 .teacher-classes-grid {
@@ -633,6 +643,80 @@ dd {
 .teacher-drawer-summary {
   color: var(--lorb-ink-soft);
   font-size: 0.9rem;
+}
+
+/* The preview modal: foundation.css's `.dialog:not(.drawer)` gives the centred-card shape and the
+ * `.overlay`/`.teacher-scrim` behind it the same dimming every other overlay on this surface uses;
+ * this only widens it (quiz options and a video need more than the 480px default) and styles what
+ * goes inside. */
+.teacher-preview {
+  width: min(40rem, 92vw);
+  max-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  position: relative;
+}
+.teacher-preview .teacher-drawer-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+}
+.teacher-preview h2 {
+  margin: 0 1.5rem 0 0;
+}
+.teacher-preview-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow: auto;
+}
+.teacher-preview-media {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: var(--lorb-radius-md);
+  background: #000;
+}
+audio.teacher-preview-media {
+  aspect-ratio: auto;
+  height: 2.75rem;
+  background: none;
+}
+.teacher-preview-pages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 28rem;
+  overflow: auto;
+}
+.teacher-preview-pages img {
+  width: 100%;
+  border: 1px solid var(--lorb-line);
+  border-radius: var(--lorb-radius-sm);
+}
+.teacher-preview-questions {
+  margin: 0;
+  padding-left: 1.3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.teacher-preview-questions p {
+  margin: 0 0 0.35rem;
+  color: var(--lorb-ink);
+  font-weight: 600;
+}
+.teacher-preview-questions ul {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--lorb-ink-soft);
+}
+.teacher-preview-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--lorb-line);
 }
 
 .teacher-toast {
