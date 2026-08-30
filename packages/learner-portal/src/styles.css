@@ -231,32 +231,88 @@ dd {
   }
 }
 
-/* Teacher administration area — the same quiet surface language as the learner side: white cards
- * on the muted paper, one accent, generous spacing. */
-.admin-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 1rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.75rem;
-}
-.admin-columns {
+/* Teacher workspace — the same quiet surface language as the learner side: white cards on the
+ * muted paper, one accent, generous spacing. A persistent rail separates the two jobs this persona
+ * has: discovering and assigning resources (the default view) versus administering classes,
+ * rosters and results (its own destination) — see admin.tsx for why. */
+.teacher-shell {
   display: grid;
-  grid-template-columns: minmax(16rem, 1fr) minmax(0, 2fr);
-  gap: 1.5rem;
-  align-items: start;
-  margin-top: 1.25rem;
+  grid-template-columns: 15rem 1fr;
+  gap: 0;
+  margin: -2.5rem -2rem;
 }
-.admin-columns > * {
+.teacher-rail {
   background: var(--lorb-surface);
-  border: 1px solid var(--lorb-line);
-  border-radius: var(--lorb-radius-md, 0.75rem);
-  padding: 1.25rem 1.4rem;
-  box-shadow: 0 1px 2px rgb(43 39 60 / 6%);
+  border-right: 1px solid var(--lorb-line);
+  padding: 1.5rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
 }
-.admin h2,
-.admin h3 {
+.teacher-rail-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0 0.4rem;
+}
+.teacher-rail-mark {
+  width: 1.9rem;
+  height: 1.9rem;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--lorb-radius-sm);
+  background: var(--lorb-accent);
+  color: var(--lorb-on-accent);
+  font-weight: 700;
+}
+.teacher-rail-brand strong {
+  display: block;
+  font-size: 0.9rem;
+}
+.teacher-rail-brand span {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--lorb-ink-soft);
+}
+.teacher-rail-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.teacher-rail-link {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--lorb-ink-soft);
+  font-weight: 600;
+  padding: 0.6rem 0.7rem;
+  border-radius: var(--lorb-radius-md);
+}
+.teacher-rail-link:hover {
+  background: var(--lorb-accent-wash);
+  color: var(--lorb-ink);
+}
+.teacher-rail-link[aria-current='true'] {
+  background: var(--lorb-accent);
+  color: var(--lorb-on-accent);
+}
+.teacher-rail-foot {
+  margin-top: auto;
+}
+.teacher-rail-foot button {
+  width: 100%;
+  background: none;
+  border: 1px solid var(--lorb-line);
+  color: var(--lorb-ink-soft);
+}
+.teacher-main {
+  padding: 2rem 2.25rem 3rem;
+  min-width: 0;
+}
+.teacher-shell h2,
+.teacher-shell h3 {
   margin-top: 0;
   color: var(--lorb-ink);
 }
@@ -273,14 +329,90 @@ dd {
   background: #f9eef1;
   border-radius: var(--lorb-radius-sm);
   padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
 }
 .admin-expired p {
   margin: 0;
 }
+
+.teacher-page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+.teacher-page-head .lede {
+  margin: 0.2rem 0 0;
+}
+.teacher-page-head input[type='search'] {
+  width: 16rem;
+  flex: none;
+}
+
+.teacher-course {
+  margin-bottom: 2rem;
+}
+.teacher-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 1rem;
+}
+.teacher-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: var(--lorb-surface);
+  border: 1px solid var(--lorb-line);
+  border-radius: var(--lorb-radius-lg, 0.75rem);
+  padding: 1.1rem 1.2rem;
+}
+.teacher-tile h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.teacher-tile p {
+  margin: 0;
+  color: var(--lorb-ink-soft);
+  font-size: 0.9rem;
+}
+.teacher-tile-kind {
+  align-self: flex-start;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--lorb-accent-deep);
+  background: var(--lorb-accent-wash);
+  border-radius: var(--lorb-radius-sm);
+  padding: 0.2rem 0.5rem;
+}
+.teacher-tile-meta {
+  font-size: 0.8rem;
+  color: var(--lorb-ink-soft);
+}
+.teacher-tile button {
+  margin-top: auto;
+  align-self: flex-start;
+}
+
+.teacher-classes-grid {
+  display: grid;
+  grid-template-columns: minmax(15rem, 1fr) minmax(0, 2.2fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+.teacher-panel {
+  background: var(--lorb-surface);
+  border: 1px solid var(--lorb-line);
+  border-radius: var(--lorb-radius-md, 0.75rem);
+  padding: 1.25rem 1.4rem;
+  box-shadow: 0 1px 2px rgb(43 39 60 / 6%);
+}
 .class-list,
 .learner-list,
-.topic-list,
-.assign-list {
+.topic-list {
   list-style: none;
   padding: 0;
   margin: 0 0 1rem;
@@ -303,8 +435,7 @@ dd {
   background: var(--lorb-accent-wash);
   outline: none;
 }
-.learner-list li,
-.assign-list li {
+.learner-list li {
   display: flex;
   align-items: center;
   gap: 0.75rem;
@@ -319,24 +450,27 @@ dd {
 .learner-list button {
   margin-left: auto;
 }
-.admin .empty {
+.teacher-shell .empty {
   color: var(--lorb-ink-soft);
   font-style: italic;
 }
-.admin form {
+.teacher-shell form {
   display: grid;
   gap: 0.6rem;
   margin-bottom: 1.5rem;
 }
-.admin label {
+.teacher-shell label {
   display: grid;
   gap: 0.25rem;
+  min-width: 0;
   font-weight: 600;
   color: var(--lorb-ink-soft);
 }
-.admin input,
-.admin select,
-.admin textarea {
+.teacher-shell input,
+.teacher-shell select,
+.teacher-shell textarea {
+  width: 100%;
+  box-sizing: border-box;
   border: 1px solid var(--lorb-line);
   border-radius: var(--lorb-radius-sm);
   padding: 0.5rem 0.65rem;
@@ -344,6 +478,30 @@ dd {
   color: var(--lorb-ink);
   background: var(--lorb-surface);
 }
+.teacher-panel {
+  min-width: 0;
+}
+
+.teacher-tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--lorb-line);
+  margin-bottom: 1rem;
+}
+.teacher-tabs button {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--lorb-ink-soft);
+  padding: 0.6rem 0.7rem;
+  margin: 0;
+}
+.teacher-tabs button[aria-selected='true'] {
+  color: var(--lorb-accent-deep);
+  border-bottom-color: var(--lorb-accent);
+}
+
 .results table {
   border-collapse: collapse;
   width: 100%;
@@ -362,7 +520,24 @@ dd {
   letter-spacing: 0.03em;
 }
 @media (max-width: 60rem) {
-  .admin-columns {
+  .teacher-shell {
+    grid-template-columns: 1fr;
+  }
+  .teacher-rail {
+    border-right: 0;
+    border-bottom: 1px solid var(--lorb-line);
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .teacher-rail-nav {
+    flex-direction: row;
+  }
+  .teacher-rail-foot {
+    margin-top: 0;
+    margin-left: auto;
+  }
+  .teacher-classes-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -395,4 +570,81 @@ dd {
   color: var(--lorb-ink-soft);
   max-width: 22rem;
   overflow-wrap: anywhere;
+}
+
+/* The assign drawer: opened from a tile's Assign button, targets one or more of the teacher's own
+ * classes. Same slide-in shape as the shared `.drawer` in foundation.css, but this workspace keeps
+ * its own scoped rule rather than that class — foundation's `.drawer` pads for a diagnostics-style
+ * key/value dump, not a picker list with a footer summary and a primary action. */
+.teacher-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: var(--lorb-overlay);
+}
+.teacher-drawer {
+  position: fixed;
+  z-index: 31;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: min(26rem, 92vw);
+  overflow: auto;
+  background: var(--lorb-surface);
+  box-shadow: -8px 0 30px rgb(0 0 0 / 20%);
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+}
+.teacher-drawer-close {
+  align-self: flex-end;
+  background: none;
+  border: 0;
+  font-size: 1.3rem;
+  line-height: 1;
+  color: var(--lorb-ink-soft);
+  padding: 0.2rem 0.5rem;
+}
+.teacher-picker-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 1rem;
+  flex: 1;
+  overflow: auto;
+}
+.teacher-picker-list li {
+  border-bottom: 1px solid var(--lorb-line);
+}
+.teacher-picker-list label {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.1rem;
+  cursor: pointer;
+}
+.teacher-picker-list label span:first-of-type {
+  display: flex;
+  flex-direction: column;
+}
+.teacher-picker-list input {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+.teacher-drawer-summary {
+  color: var(--lorb-ink-soft);
+  font-size: 0.9rem;
+}
+
+.teacher-toast {
+  position: fixed;
+  z-index: 32;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--lorb-ink);
+  color: #fff;
+  padding: 0.7rem 1.1rem;
+  border-radius: var(--lorb-radius-md);
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 25%);
 }
