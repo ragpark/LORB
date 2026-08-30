@@ -18,6 +18,10 @@ export interface ClassDetail extends ClassSummary{learners:ClassLearner[];topics
 export interface LearnerResult{learner_ref:string;display_name:string;attempted:boolean;completed:boolean;scaled:number|null}
 export interface AgentLink{agent_issuer:string;agent_subject:string;label:string;linked_at:string}
 export interface AssignmentResults{assignment_id:string;object_id:string;assigned_at:string;learner_count:number;attempted_count:number;learners:LearnerResult[]}
+/** A published object another repository has opted in to marketplace discovery. */
+export interface MarketplaceListing{object_id:string;title?:string;kind?:string;publisher_name:string}
+/** One of this teacher's own bookmarks — a marketplace listing they have chosen to make assignable. */
+export interface MarketplaceImport{object_id:string;title?:string;kind?:string;imported_at:string}
 
 /** The roster accepts only identifiers that could round-trip through the identity provider, so a
  *  roster entry and that learner's own sign-in derive the same pseudonym. Enforced again server-side. */
@@ -43,6 +47,7 @@ const adminErrorCopy:Record<string,string>={
  CLASS_EMPTY:'Add at least one learner to the class before assigning work.',
  LEARNER_REF_INVALID:'That learner identifier is not in a supported shape. Use letters, digits, and . _ : - only.',
  LEARNER_NOT_FOUND:'That learner is not in this class.',
+ LEARNING_OBJECT_NOT_FOUND:'That marketplace listing is no longer available. Refresh and try again.',
 };
 export const adminErrorMessage=(code:string)=>adminErrorCopy[code]??`We could not complete that request (${code}).`;
 
@@ -54,6 +59,8 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
  const [results,setResults]=useState<AssignmentResults[]>();
  const [objects,setObjects]=useState<Array<{object_id:string;title?:string;status:string}>>([]);
  const [links,setLinks]=useState<AgentLink[]>([]);
+ const [marketplace,setMarketplace]=useState<MarketplaceListing[]>([]);
+ const [imports,setImports]=useState<MarketplaceImport[]>([]);
  const [error,setError]=useState('');
  const [busy,setBusy]=useState(false);
 
@@ -115,8 +122,14 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
  const fetchResults=async(classId:string)=>{
   setResults((await adminRequest<{items:AssignmentResults[]}>(config,`classes/${encodeURIComponent(classId)}/results`)).items);
  };
+ const fetchMarketplace=async()=>{
+  setMarketplace((await adminRequest<{items:MarketplaceListing[]}>(config,'marketplace')).items);
+ };
+ const fetchImports=async()=>{
+  setImports((await adminRequest<{items:MarketplaceImport[]}>(config,'marketplace/imports')).items);
+ };
  /** Everything the workspace shows, reloaded together after a fresh sign-in. */
- const fetchEverything=async()=>{await fetchClasses();await fetchLinks();await fetchObjects()};
+ const fetchEverything=async()=>{await fetchClasses();await fetchLinks();await fetchObjects();await fetchMarketplace();await fetchImports()};
 
  const loadClasses=()=>run(fetchClasses);
  const openClass=(classId:string)=>run(()=>fetchClass(classId));
@@ -196,7 +209,21 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
   await fetchResults(selected.class_id);
  });
 
+ /** Bookmarks a marketplace listing into this teacher's own assignable set. Nothing is copied — the
+  *  object stays owned by its own repository; this only records the choice to treat it as theirs. */
+ const importListing=(objectId:string)=>run(async()=>{
+  await adminRequest(config,'marketplace/imports',{method:'POST',body:JSON.stringify({object_id:objectId})});
+  await fetchImports();
+  await fetchObjects();
+ });
+
+ const removeImport=(objectId:string)=>run(async()=>{
+  await adminRequest(config,`marketplace/imports/${encodeURIComponent(objectId)}`,{method:'DELETE'});
+  await fetchImports();
+ });
+
  const titleFor=(objectId:string)=>objects.find(o=>o.object_id===objectId)?.title??objectId;
+ const importedObjectIds=new Set(imports.map(i=>i.object_id));
 
  return <section className="admin">
   <div className="admin-head">
@@ -268,6 +295,7 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
      <ul className="assign-list">
       {objects.filter(o=>o.status==='PUBLISHED').map(o=><li key={o.object_id}>
        <span>{o.title??'Untitled activity'}</span>
+       {importedObjectIds.has(o.object_id)&&<span className="marketplace-publisher">from the marketplace</span>}
        <button onClick={()=>void assign(o.object_id)} disabled={busy||selected.learners.length===0}>Assign to class</button>
       </li>)}
      </ul>
@@ -293,6 +321,21 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
     </>}
    </div>
   </div>
+
+  <section className="marketplace-section">
+   <h2>Marketplace</h2>
+   <p className="notice">Objects other repositories have opted in to sharing. Adding one bookmarks it into your own library — nothing is copied, and it becomes assignable to your classes just like your own content.</p>
+   <ul className="link-list">
+    {marketplace.map(item=><li key={item.object_id}>
+     <span>{item.title??'Untitled activity'}</span>
+     <span className="marketplace-publisher">from {item.publisher_name}</span>
+     {importedObjectIds.has(item.object_id)
+      ?<button onClick={()=>void removeImport(item.object_id)} disabled={busy}>Remove from my library</button>
+      :<button onClick={()=>void importListing(item.object_id)} disabled={busy}>Add to my library</button>}
+    </li>)}
+    {marketplace.length===0&&<li className="empty">No repository has listed anything on the marketplace yet.</li>}
+   </ul>
+  </section>
 
   <section className="agent-links">
    <h2>AI assistants</h2>

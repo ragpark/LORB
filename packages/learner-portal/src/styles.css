@@ -396,3 +396,12 @@ dd {
   max-width: 22rem;
   overflow-wrap: anywhere;
 }
+.marketplace-section {
+  margin-top: 2.5rem;
+  border-top: 1px solid var(--lorb-line);
+  padding-top: 1.5rem;
+}
+.marketplace-publisher {
+  color: var(--lorb-ink-soft);
+  font-size: 0.85em;
+}

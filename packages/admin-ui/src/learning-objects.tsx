@@ -1069,6 +1069,41 @@ function VersionShareLink({ objectId, objectVersionId }: { objectId: string; obj
   );
 }
 
+/**
+ * Toggles whether this object is discoverable on the cross-repository marketplace
+ * (GET /api/v1/admin/marketplace) for another repository's administrator to bookmark. Listing
+ * changes nothing else about the object — not its version chain, not its content, not who owns it.
+ */
+function MarketplaceListingControl({ objectId, listed, retired, onChanged }: { objectId: string; listed: boolean; retired: boolean; onChanged: () => void }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const toggle = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await publisher(`learning-objects/${objectId}/marketplace-listing`, { method: 'PUT', body: { listed: !listed } });
+      onChanged();
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <p className="small">
+      Marketplace: {listed
+        ? 'Listed — administrators in other repositories can find and bookmark this object.'
+        : 'Not listed — only this repository can assign it.'}
+      {' '}
+      <button onClick={() => void toggle()} disabled={saving || retired}>
+        {saving ? 'Saving…' : listed ? 'Remove from marketplace' : 'List on marketplace'}
+      </button>
+      {retired && ' A retired learning object cannot be listed.'}
+      {error && <span role="alert" className="error-text"> {error}</span>}
+    </p>
+  );
+}
+
 export function LearningObjectDetail({ objectId, onClosed }: { objectId: string; onClosed: () => void }) {
   const queryClient = useQueryClient();
   const object = useQuery({
@@ -1098,6 +1133,7 @@ export function LearningObjectDetail({ objectId, onClosed }: { objectId: string;
         Status: <span className="status-badge">{status}</span> · Kind: <span className="mono">{String(row.kind)}</span>
         {row.authored_by ? <> · Authored by <span className="mono">{String(row.authored_by)}</span></> : null}
       </p>
+      <MarketplaceListingControl objectId={objectId} listed={row.marketplace_listed === true} retired={status === 'RETIRED'} onChanged={refresh} />
       <div className="version-actions">
         {status === 'PUBLISHED' && (
           <ConfirmedAction
