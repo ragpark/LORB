@@ -167,4 +167,22 @@ describeIfDatabase("Marketplace import", () => {
     expect(assigned.statusCode).toBe(201);
     expect(assigned.json().object_id).toBe(objectId);
   });
+
+  // A bookmark is a discovery record, not evidence: it must never be the reason a never-launched,
+  // never-assigned object cannot be deleted. Without cascading it, `learning_object`'s default
+  // ON DELETE RESTRICT foreign key turned a delete of any bookmarked object into an uncaught
+  // database error (500) rather than the normal 200 the publisher route always returns.
+  it("deletes a bookmarked object cleanly, and removes the bookmark with it", async () => {
+    const { objectId } = await listedObject();
+    expect((await call("POST", "/api/v1/admin/marketplace/imports", { object_id: objectId })).statusCode).toBe(201);
+
+    const suspend = await call("POST", `/api/v1/publisher/learning-objects/${objectId}/suspend`, undefined, publisherToken);
+    expect(suspend.statusCode).toBe(200);
+    const del = await call("DELETE", `/api/v1/publisher/learning-objects/${objectId}`, undefined, publisherToken);
+    expect(del.statusCode).toBe(200);
+    expect(del.json().deleted).toBe(true);
+
+    const rows = await pool.query("select count(*)::int as n from marketplace_import where object_id = $1", [objectId]);
+    expect(rows.rows[0].n).toBe(0);
+  });
 });

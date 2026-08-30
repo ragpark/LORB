@@ -24,7 +24,7 @@ export interface AssignmentResults{assignment_id:string;object_id:string;assigne
 /** One learning object as the assign surface needs it — enough to render a tile and assign it. */
 export interface AssignableObject{object_id:string;repository_id:string;title?:string;description?:string;kind?:string;duration?:string;status:string}
 /** A repository this teacher belongs to, worn as a course label — same grouping the learner-facing catalogue uses. */
-export interface Course{repository_id:string;name:string}
+export interface Course{repository_id:string;slug:string;display_name:string}
 /** A published object another repository has opted in to marketplace discovery. */
 export interface MarketplaceListing{object_id:string;title?:string;description?:string;kind?:string;duration?:string;publisher_name:string}
 /** One of this teacher's own bookmarks — a marketplace listing they have chosen to make assignable. */
@@ -256,13 +256,19 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
  });
  const confirmAssign=()=>run(async()=>{
   if(!drawerObject||drawerClassIds.size===0)return;
-  for(const classId of drawerClassIds){
+  const targets=[...drawerClassIds];
+  for(const classId of targets){
    await adminRequest(config,`classes/${encodeURIComponent(classId)}/assignments`,{method:'POST',body:JSON.stringify({object_id:drawerObject.object_id})});
+   // Dropped as soon as it succeeds, not after the whole loop: if a later class in this same batch
+   // fails (an empty roster, say), the drawer stays open with only the still-unassigned classes
+   // checked, so pressing Assign again does not resubmit — and duplicate — the ones that already went
+   // through. adminRequest mints a fresh idempotency key on every call, so a retried call is never
+   // recognised as a replay of the one that already succeeded.
+   setDrawerClassIds(current=>{const next=new Set(current);next.delete(classId);return next});
+   // The class currently open in Classes & results may be one of the targets — keep its results current.
+   if(selected&&selected.class_id===classId)await fetchResults(classId);
   }
-  const count=drawerClassIds.size;
-  setToast(`Assigned “${drawerObject.title??'this activity'}” to ${count===1?'1 class':`${count} classes`}.`);
-  // The class currently open in Classes & results may be one of the targets — keep its results current.
-  if(selected&&drawerClassIds.has(selected.class_id))await fetchResults(selected.class_id);
+  setToast(`Assigned “${drawerObject.title??'this activity'}” to ${targets.length===1?'1 class':`${targets.length} classes`}.`);
   closeDrawer();
  });
 
@@ -313,7 +319,7 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
     </div>
 
     {courseSections.map(course=><div className="teacher-course" key={course.repository_id}>
-     <h2>{course.name}</h2>
+     <h2>{course.display_name||course.slug||'Course'}</h2>
      <div className="teacher-tiles">
       {course.objects.map(o=><article className="teacher-tile" key={o.object_id}>
        <span className="teacher-tile-kind">{o.kind??'activity'}</span>

@@ -328,6 +328,11 @@ export class PostgresCatalogueStore implements CatalogueStore {
       await client.query("delete from object_version where object_id = $1", [realId]);
       await client.query("delete from smart_link where object_id = $1", [realId]);
       await client.query("delete from package_version where object_id = $1", [realId]);
+      // A bookmark is a discovery record, not evidence — unlike attempt/assignment/class_assignment
+      // above, its presence never refuses this delete, and it does not survive the object it points
+      // at. Left alone, learning_object's default ON DELETE RESTRICT foreign key would turn a delete
+      // of any object someone had merely bookmarked into an uncaught database error.
+      await client.query("delete from marketplace_import where object_id = $1", [realId]);
       await client.query("delete from learning_object where object_id = $1", [realId]);
       await client.query("commit");
       return "DELETED";
