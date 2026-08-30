@@ -36,7 +36,7 @@ export interface MarketplaceImport{object_id:string;title?:string;description?:s
  *  something this workspace would have to fake a launch to render. */
 export type PreviewPayload = {object_id:string;title:string;description?:string;duration?:string} & (
  | {kind:'quiz';questions:Array<{stem:string;options:Array<{id:string;text:string}>}>}
- | {kind:'video';source:{kind:'file';url:string;mime_type:string}|{kind:'youtube';video_id:string};poster_url?:string}
+ | {kind:'video';source:{kind:'file';url:string;mime_type:string}|{kind:'youtube';video_id:string};poster_url?:string;captions_url?:string}
  | {kind:'document';pages:Array<{index:number;image_url:string}>}
  | {kind:'audio';source:{url:string;mime_type:string};transcript_url?:string}
  | {kind:'unsupported'}
@@ -565,14 +565,20 @@ export function AdminWorkspace({config,onSignOut,onSignInAgain}:{config:Config;o
      </ol>}
 
      {previewData.kind==='video'&&(previewData.source.kind==='youtube'
+      // Same privacy-enhanced domain the learner-facing video player embeds through
+      // (packages/video-player/src/App.tsx) — a teacher's preview should carry no more third-party
+      // tracking than the experience they're deciding whether to assign.
       ?<iframe
          className="teacher-preview-media"
-         src={`https://www.youtube.com/embed/${previewData.source.video_id}`}
+         src={`https://www.youtube-nocookie.com/embed/${previewData.source.video_id}`}
          title={previewObject.title??'Video preview'}
          allow="encrypted-media"
          allowFullScreen
         />
-      :<video className="teacher-preview-media" src={previewData.source.url} controls/>)}
+      :<video className="teacher-preview-media" controls poster={previewData.poster_url}>
+         <source src={previewData.source.url} type={previewData.source.mime_type}/>
+         {previewData.captions_url&&<track kind="captions" src={previewData.captions_url} srcLang="en" label="English" default/>}
+        </video>)}
 
      {previewData.kind==='document'&&<div className="teacher-preview-pages">
       {previewData.pages.map(p=><img key={p.index} src={p.image_url} alt={`Page ${p.index+1}`}/>)}

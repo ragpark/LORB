@@ -79,6 +79,18 @@ describe("learning object preview", () => {
     await runtime.app.close();
   });
 
+  it("carries a file video's captions_url into the preview, same as the learner-facing player gets", async () => {
+    const { runtime, call, repositoryId } = await setup();
+    const video = await call("POST", "/api/v1/publisher/learning-objects/videos", {
+      repository_id: repositoryId, title: "Captioned video",
+      source: { kind: "file", url: "https://files.test/lesson.mp4", mime_type: "video/mp4" },
+      captions_url: "https://files.test/lesson.vtt",
+    });
+    const preview = await call("GET", `/api/v1/admin/learning-objects/${video.json().object_id}/preview`);
+    expect(preview.json().captions_url).toBe("https://files.test/lesson.vtt");
+    await runtime.app.close();
+  });
+
   it("reports an unsupported kind for a code-bundled object, rather than pretending to preview it", async () => {
     const { runtime, catalogue, call } = await setup();
     const [seeded] = await catalogue.learningObjects({ status: "PUBLISHED" });

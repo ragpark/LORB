@@ -695,7 +695,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     }
     if (object.content_profile === "video-json-v1" && content && "source" in content) {
       const video = content as VideoContent;
-      return { ...base, kind: "video" as const, source: video.source, poster_url: video.poster_url };
+      return { ...base, kind: "video" as const, source: video.source, poster_url: video.poster_url, captions_url: video.captions_url };
     }
     if (object.content_profile === "document-json-v1" && content && "pages" in content) {
       return { ...base, kind: "document" as const, pages: content.pages };
