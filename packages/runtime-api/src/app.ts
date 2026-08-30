@@ -16,7 +16,7 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import type { KeyLike } from "jose";
-import { launchRequestSchema } from "../../contracts/src/index.js";
+import { launchRequestSchema, type AudioContent, type VideoContent } from "../../contracts/src/index.js";
 import { config as loadRuntimeConfig, loadConfig, type RuntimeConfig } from "./config/index.js";
 import { catalogue as defaultCatalogue, createCatalogue, type CatalogueStore, type LearningObjectRow } from "./catalogue/index.js";
 import { createStore, type RuntimeStore } from "./store/index.js";
@@ -656,6 +656,55 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
       next_cursor: null,
       correlation_id: correlationOf(req),
     };
+  });
+
+  /**
+   * A read-only look at what an object actually delivers — the aid a teacher weighing whether to
+   * assign it needs, without a real launch: no descriptor is minted and no attempt is created, so
+   * previewing never appears in a learner's (or anyone's) evidence.
+   *
+   * Never includes a quiz's marking key: `correct_option_id` and `explanation` are dropped from every
+   * question, the same withholding the learner-facing content route already applies. Everything else
+   * returned here is exactly what an assigned learner would eventually see, so exposing it to any
+   * admin carries no more than the unscoped object list at GET /api/v1/admin/learning-objects
+   * already does.
+   *
+   * Only the four data-authored kinds (quiz, video, document, audio) have anything structured to
+   * preview; a code-bundled object (a packaged module, the seeded example kinds) returns `kind:
+   * "unsupported"` — rendering its module live here would be a real launch in a preview's clothing.
+   */
+  app.get("/api/v1/admin/learning-objects/:objectId/preview", async (req, reply) => {
+    const principal = await requireAdmin(req, reply, adminCtx, "learning_object.preview", "learning_object");
+    if (!principal) return;
+    const correlationValue = correlationOf(req);
+    const objectId = (req as { params: { objectId: string } }).params.objectId;
+    const object = await catalogue.learningObject(objectId);
+    if (!object) return sendAdminError(reply, "LEARNING_OBJECT_NOT_FOUND", correlationValue);
+    if (object.status !== "PUBLISHED") return sendAdminError(reply, "LEARNING_OBJECT_NOT_PUBLISHED", correlationValue);
+
+    const base = {
+      object_id: object.object_id, title: object.title, description: object.description,
+      duration: object.duration, correlation_id: correlationValue,
+    };
+    const content = await catalogue.content(object.object_id);
+    if (object.content_profile === "quiz-json-v1" && content && "questions" in content) {
+      return {
+        ...base, kind: "quiz" as const,
+        questions: content.questions.map((q) => ({ stem: q.stem, options: q.options.map((o) => ({ id: o.id, text: o.text })) })),
+      };
+    }
+    if (object.content_profile === "video-json-v1" && content && "source" in content) {
+      const video = content as VideoContent;
+      return { ...base, kind: "video" as const, source: video.source, poster_url: video.poster_url, captions_url: video.captions_url };
+    }
+    if (object.content_profile === "document-json-v1" && content && "pages" in content) {
+      return { ...base, kind: "document" as const, pages: content.pages };
+    }
+    if (object.content_profile === "audio-json-v1" && content && "source" in content) {
+      const audio = content as AudioContent;
+      return { ...base, kind: "audio" as const, source: audio.source, transcript_url: audio.transcript_url };
+    }
+    return { ...base, kind: "unsupported" as const };
   });
 
   app.post("/api/v1/admin/learning-objects/:objectId/smart-link", async (req, reply) => {
