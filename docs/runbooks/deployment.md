@@ -275,11 +275,43 @@ unsubscribes — it removes the bookmark without touching the object or anything
 
 `GET /api/v1/admin/learning-objects/{id}/preview` backs the teacher workspace's preview modal — any
 admin, no repository membership required, same scope as the unfiltered object list above. It mints
-no descriptor and creates no attempt, so opening one leaves no evidence. Only the four data-authored
-kinds (quiz, video, document, audio) return structured content; a code-bundled object comes back
-`"kind": "unsupported"` rather than something rendering its live module here would have to fake. A
+no descriptor and creates no attempt, so opening one leaves no evidence. The five data-authored
+kinds (quiz, video, document, audio, lti-tool) return structured content; a code-bundled object comes
+back `"kind": "unsupported"` rather than something rendering its live module here would have to fake. A
 quiz's `correct_option_id` and `explanation` are never included — the same marking-key withholding
 the learner-facing content route already applies.
+
+**LTI 1.3 tools** (migration 014) register a third party's own tool as a learning object —
+`POST …/learning-objects/lti-tools` with `{"title", "tool_name", "oidc_login_url",
+"target_link_uri", ["description"]}`, both URLs required to be `https://`. This is the one learning
+object kind that ever points at a URL outside the Player Shell's own origin: every other kind's
+`module_path` stays a relative path under that origin (the invariant `routes/publisher/objects.ts`
+documents at the top), and an lti-tool is launched by a real LTI 1.3 OIDC/id_token handshake instead
+of an iframe embed of an arbitrary origin nobody reviewed. Scope is Resource Link launch only — no
+Assignment & Grades Services (no grade passback), no Deep Linking. Registration is per-object: there
+is no separate platform/tool registry screen, and each registration mints its own `client_id` and
+`deployment_id` server-side, returned once in the response for handing to the tool provider.
+
+The handshake needs its own signing key ring, distinct from the descriptor ring because it signs
+material a third party verifies — configure `LTI_PRIVATE_KEY_PATH` (or `LTI_PRIVATE_KEY_PEM`) and
+`LTI_KID` the same way as the descriptor key in step 2, or `LTI_SIGNING_KEYS` for a rotation.
+Optional even in production: a deployment with no LTI tools registered needs no LTI key configured,
+and an ephemeral one is generated at start-up in its absence, same as the descriptor ring outside
+production.
+
+Two routes exist purely for the tool's own side of the handshake, unauthenticated by design — the
+credential is the launch-scoped `login_hint`, not a caller token:
+
+| Request | What it does |
+| --- | --- |
+| `GET /api/v1/lti/jwks` | The LTI ring's public keys, for the tool to verify the id_token below |
+| `GET /api/v1/lti/authorize` | The OIDC authorization endpoint the tool redirects to after its own `oidc_login_url`; returns an auto-submitting HTML form posting a signed `LtiResourceLinkRequest` id_token to the tool's `redirect_uri`, refused unless it is byte-for-byte the registered `target_link_uri` |
+
+Player Shell recognises an lti-tool launch from the `content_profile` claim on its own launch
+descriptor and never creates the sandboxed module iframe every other kind uses — it renders a launch
+panel instead, and on click navigates its own document through the tool's OIDC flow. The learner
+portal's iframe sandbox is widened only for `kind === "lti-tool"`, to `allow-scripts allow-forms
+allow-same-origin` — every other kind keeps the plain `allow-scripts` sandbox unchanged.
 
 ## Deploying a new version
 

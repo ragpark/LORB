@@ -117,6 +117,7 @@ export function registerInternalLaunchBatchRoutes(
               state_endpoint: `${ctx.publicIssuer}/api/v1/runtime/attempts/${attemptId}/state`,
               package_url: `${ctx.playerOrigin}${object.module_path}`,
               session_config: { expires_at: expiresAt },
+              content_profile: object.content_profile,
             }, { issuer: ctx.publicIssuer, evidenceEndpoint: ctx.evidenceEndpoint });
             const launchId = randomUUID();
             await ctx.store.recordLaunch({

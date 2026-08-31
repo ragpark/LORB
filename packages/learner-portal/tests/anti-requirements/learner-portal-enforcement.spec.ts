@@ -20,7 +20,14 @@ describe('learner portal enforcement',()=>{beforeEach(()=>{vi.restoreAllMocks()}
   expect(sanitise({repository_id:'r1',display_name:'Default repository',name:'hidden'},leak,new Set(['display_name']))).toEqual({repository_id:'r1',display_name:'Default repository'});
   expect(source('src/catalogue.ts')).toContain("new Set(['display_name'])");
  });
- it('uses the restrictive iframe sandbox',()=>{const app=source('src/App.tsx');expect(app).toContain('sandbox="allow-scripts"');expect(app).not.toContain('allow-same-origin')});
+ // Every kind but lti-tool gets the fully restrictive sandbox. An lti-tool launch is the one
+ // deliberate, narrowly-scoped exception — real third-party tools need cookies and same-origin
+ // fetches to function at all, which allow-same-origin grants only inside that one ternary branch —
+ // never as the default, and never allow-top-navigation.
+ it('uses the restrictive iframe sandbox by default, widened only for an lti-tool launch',()=>{const app=source('src/App.tsx');
+  expect(app).toContain('sandbox={selected?.kind===\'lti-tool\'?\'allow-scripts allow-forms allow-same-origin\':\'allow-scripts\'}');
+  expect(app).not.toContain('allow-top-navigation');
+ });
  it('rejects an origin outside the allow-list',()=>{vi.spyOn(console,'warn').mockImplementation(()=>{});expect(acceptPlayerMessage({origin:'https://wrong.test',source:{},data:envelope} as unknown as MessageEvent,new Set(['https://shell.test']),{} as Window)).toBeNull()});
  it('rejects a mismatched frame source',()=>{vi.spyOn(console,'warn').mockImplementation(()=>{});expect(acceptPlayerMessage({origin:'https://shell.test',source:{},data:envelope} as unknown as MessageEvent,new Set(['https://shell.test']),{} as Window)).toBeNull()});
  it('rejects missing and additional envelope fields',()=>{vi.spyOn(console,'warn').mockImplementation(()=>{});const frame={} as Window;expect(acceptPlayerMessage({origin:'https://shell.test',source:frame,data:{...envelope,protocol:undefined}} as unknown as MessageEvent,new Set(['https://shell.test']),frame)).toBeNull();expect(acceptPlayerMessage({origin:'https://shell.test',source:frame,data:{...envelope,extra:true}} as unknown as MessageEvent,new Set(['https://shell.test']),frame)).toBeNull()});

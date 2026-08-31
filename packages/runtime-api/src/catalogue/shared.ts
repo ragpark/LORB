@@ -3,10 +3,12 @@
  */
 import { randomUUID } from "node:crypto";
 import {
-  audioContentSchema, documentContentSchema, quizContentSchema, videoContentSchema,
-  type AudioDraft, type DocumentDraft, type QuizContent, type QuizDraft, type VideoDraft,
+  audioContentSchema, documentContentSchema, ltiToolContentSchema, quizContentSchema, videoContentSchema,
+  type AudioDraft, type DocumentDraft, type LtiToolDraft, type QuizContent, type QuizDraft, type VideoDraft,
 } from "../../../contracts/src/index.js";
-import type { AnyContent, AnyMediaDraft, LearningObjectRow, MediaKind, ObjectContentRevision, PackageVersionRow, RegisteredMedia, RegisteredQuiz } from "./types.js";
+import type {
+  AnyContent, AnyMediaDraft, LearningObjectRow, MediaKind, ObjectContentRevision, PackageVersionRow, RegisteredLtiTool, RegisteredMedia, RegisteredQuiz,
+} from "./types.js";
 
 /**
  * One fixed, already-reviewed player package version shared by every authored quiz. A quiz author —
@@ -83,6 +85,83 @@ export const MEDIA_PLAYER_PACKAGES: Record<MediaKind, PackageVersionRow> = Objec
     }];
   }),
 ) as Record<MediaKind, PackageVersionRow>;
+
+/**
+ * The fixed "player" identifier for an LTI tool launch — a bookkeeping placeholder, not something
+ * ever fetched as an iframe src. An lti-tool-v1 object's descriptor carries `content_profile`, and
+ * the Player Shell recognises that and drives the OIDC launch itself; it never creates the nested
+ * module iframe every other kind uses, so this module_path is never dereferenced as a real page.
+ * A static fallback page lives at that path anyway, in case something ever does load it directly.
+ */
+export const LTI_PLAYER = {
+  package_version_id: "5cbe1b8a-2f2a-4a5c-9f8b-6d1c0a7e4b61",
+  package_id: "5cbe1b8a-2f2a-4a5c-9f8b-6d1c0a7e4b62",
+  semver: "1.0.0",
+  module_path: "/modules/lti-launch/index.html",
+  sha256: "5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+} as const;
+
+export const LTI_PLAYER_PACKAGE: PackageVersionRow = {
+  package_version_id: LTI_PLAYER.package_version_id,
+  object_id: null,
+  semver: LTI_PLAYER.semver,
+  sha256: LTI_PLAYER.sha256,
+  delivery_profile: "native-web-package",
+  status: "PUBLISHED",
+  published_at: "2026-08-30T08:00:00.000Z",
+  module_path: LTI_PLAYER.module_path,
+  shared_player: true,
+};
+
+/**
+ * Builds the rows registering an LTI tool produces. `client_id` and `deployment_id` are minted here
+ * — LORB, acting as the LTI Platform, assigns them; a tool vendor's own configuration is told these
+ * values by whoever registers the tool, never allowed to choose them itself.
+ */
+export function buildLtiToolRegistration(
+  draft: LtiToolDraft,
+  repositoryId: string,
+  authoredBy: string | undefined,
+): { object: LearningObjectRow; content: AnyContent; registered: RegisteredLtiTool; objectVersionSemver: string } {
+  const object_id = randomUUID();
+  const object_version_id = randomUUID();
+  const created_at = new Date().toISOString();
+  const client_id = `lorb-${randomUUID()}`;
+  const deployment_id = randomUUID();
+  const content = ltiToolContentSchema.parse({ ...draft, object_id, content_version: "1", created_at, client_id, deployment_id });
+  const object: LearningObjectRow = {
+    object_id,
+    repository_id: repositoryId,
+    status: "PUBLISHED",
+    active_object_version_id: object_version_id,
+    active_package_version_id: LTI_PLAYER.package_version_id,
+    created_at,
+    title: draft.title,
+    description: draft.description ?? `An LTI 1.3 launch of ${draft.tool_name}.`,
+    duration: "Varies",
+    kind: "lti-tool",
+    module_path: LTI_PLAYER.module_path,
+    content_profile: "lti-tool-v1",
+    lti_client_id: client_id,
+    lti_deployment_id: deployment_id,
+    ...(authoredBy ? { authored_by: authoredBy } : {}),
+  };
+  return {
+    object,
+    content,
+    objectVersionSemver: "1.0.0",
+    registered: {
+      object_id,
+      object_version_id,
+      package_version_id: LTI_PLAYER.package_version_id,
+      package_version: LTI_PLAYER.semver,
+      content_version: content.content_version,
+      title: draft.title,
+      client_id,
+      deployment_id,
+    },
+  };
+}
 
 const MEDIA_SCHEMAS = { video: videoContentSchema, document: documentContentSchema, audio: audioContentSchema } as const;
 
