@@ -151,6 +151,16 @@ describe("LTI tool launch and authorize", () => {
     expect(payload["https://purl.imsglobal.org/spec/lti/claim/version"]).toBe("1.3.0");
     expect(payload["https://purl.imsglobal.org/spec/lti/claim/deployment_id"]).toBe(h.deploymentId);
     expect(payload["https://purl.imsglobal.org/spec/lti/claim/target_link_uri"]).toBe("https://acme.example.com/lti/launch");
+
+    // The route-scoped CSP override: no frame-ancestors restriction (the response has to render
+    // inside whatever frame Player Shell was already navigated in), form submission confined to
+    // https, and the inline submit only runs because it carries the nonce this CSP allows.
+    const csp = response.headers["content-security-policy"];
+    expect(csp).toContain("form-action https:");
+    expect(csp).not.toContain("frame-ancestors");
+    const cspNonce = response.body.match(/<script nonce="([^"]+)"/)?.[1];
+    expect(cspNonce).toBeTruthy();
+    expect(csp).toContain(`'nonce-${cspNonce}'`);
   });
 
   it("refuses a redirect_uri that does not match the registered target_link_uri", async () => {

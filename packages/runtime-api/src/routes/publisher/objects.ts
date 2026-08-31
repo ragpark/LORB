@@ -128,6 +128,15 @@ export interface PublisherContext {
    * up — the upload route refuses cleanly rather than the whole publisher surface failing to start.
    */
   documentConverterUrl?: string;
+  /**
+   * False only in production with no persistent LTI signing key configured. Outside production an
+   * ephemeral key generated at start-up is fine — nothing depends on it surviving a restart or
+   * matching across replicas. In production it would: a login-hint minted by one replica would be
+   * rejected by another, and a tool could fetch JWKS from a replica whose key never signed the
+   * id_token it received. Registration refuses cleanly rather than an LTI launch failing at random
+   * depending on which replica happens to serve it.
+   */
+  ltiKeysConfigured: boolean;
 }
 
 export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherContext): void {
@@ -372,6 +381,7 @@ export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherCont
     const principal = await requireAdmin(req, reply, ctx.adminCtx, "learning_object.author_lti_tool", "learning_object");
     if (!principal) return;
     const correlation = correlationOf(req);
+    if (!ctx.ltiKeysConfigured) return sendAdminError(reply, "LTI_SIGNING_KEY_NOT_CONFIGURED", correlation);
     const idempotencyKey = requireIdempotencyKey(req, reply);
     if (!idempotencyKey) return;
     const body = (req as { body: unknown }).body;

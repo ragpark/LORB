@@ -675,7 +675,25 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
    * No caller authentication beyond the request's own parameters: the `login_hint` is the credential,
    * short-lived and minted specifically for this launch by `signLtiLoginHint`.
    */
-  app.get("/api/v1/lti/authorize", async (req, reply) => {
+  app.get("/api/v1/lti/authorize", {
+    // The global API-wide CSP (`default-src 'none'; frame-ancestors 'none'; form-action 'none'`,
+    // registered above) is right for a JSON API and wrong for this one route: its whole job is to
+    // auto-submit a form to a third party's https origin, from inside whatever frame the browser
+    // was already in when it got here — Player Shell's own iframe, itself commonly nested in a
+    // consumer's. `frame-ancestors 'none'` would make the browser refuse to render this document at
+    // all; `form-action 'none'` would block the submission the response exists to perform. This
+    // override is scoped to this route alone — no plain admin/publisher/runtime JSON route is
+    // affected — and stays as tight as the job allows: no framing restriction beyond that, a
+    // same-scheme floor on where the form may submit, and a per-request nonce for the one inline
+    // script that fires the submit, rather than a blanket 'unsafe-inline'.
+    helmet: {
+      enableCSPNonces: true,
+      contentSecurityPolicy: {
+        useDefaults: false,
+        directives: { defaultSrc: ["'none'"], baseUri: ["'none'"], formAction: ["https:"] },
+      },
+    },
+  } as RouteShorthandOptions, async (req, reply) => {
     const query = (req as { query: Record<string, string | undefined> }).query;
     const fail = (description: string, status = 400) =>
       reply.code(status).type("application/json").send({ error: "invalid_request", error_description: description });
@@ -724,11 +742,17 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
       "https://purl.imsglobal.org/spec/lti/claim/roles": [],
     }, { typ: "JWT" });
 
-    const html = `<!doctype html><html><body onload="document.forms[0].submit()">`
+    // An inline onload="…" attribute is script-src-attr territory, which nothing here allows and a
+    // nonce cannot cover — a nonce only ever authorises a <script> element. The submit fires from one
+    // instead, carrying the nonce @fastify/helmet minted for this response above.
+    const cspNonce = (reply as unknown as { cspNonce?: { script: string } }).cspNonce?.script;
+    const html = `<!doctype html><html><body>`
       + `<form method="POST" action="${escapeHtmlAttribute(redirectUri)}">`
       + `<input type="hidden" name="id_token" value="${escapeHtmlAttribute(idToken)}">`
       + (query.state !== undefined ? `<input type="hidden" name="state" value="${escapeHtmlAttribute(query.state)}">` : "")
-      + `</form></body></html>`;
+      + `</form>`
+      + `<script${cspNonce ? ` nonce="${escapeHtmlAttribute(cspNonce)}"` : ""}>document.forms[0].submit()</script>`
+      + `</body></html>`;
     return reply.type("text/html").send(html);
   });
 
@@ -897,13 +921,16 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
   registerInternalQuizRoutes(app, internalGuard, { store, catalogue });
   registerInternalMediaRoutes(app, internalGuard, { store, catalogue });
   registerInternalLaunchBatchRoutes(app, {
-    serviceToken: internalServiceToken, ring, secret,
+    serviceToken: internalServiceToken, ring, ltiRing, secret,
     identityIssuer: verifier.issuer, publicIssuer, playerOrigin, evidenceEndpoint,
     store, catalogue,
   }, internalGuard);
   registerInternalRosterRoutes(app, internalGuard);
 
-  registerPublisherRoutes(app, { catalogue, store, adminCtx, documentConverterUrl: runtimeConfig.documentConverterUrl });
+  registerPublisherRoutes(app, {
+    catalogue, store, adminCtx, documentConverterUrl: runtimeConfig.documentConverterUrl,
+    ltiKeysConfigured: !runtimeConfig.production || runtimeConfig.ltiSigningKeys.length > 0,
+  });
   registerAdminRepositoryRoutes(app, adminCtx);
   registerAdminMembershipRoutes(app, adminCtx);
   registerAdminPlayerRoutes(app, adminCtx);

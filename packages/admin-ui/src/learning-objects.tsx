@@ -220,7 +220,10 @@ function NewLtiToolForm({ repositories, onCreated }: { repositories: Row[]; onCr
   const [targetLinkUri, setTargetLinkUri] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [registered, setRegistered] = useState<{ client_id: string; deployment_id: string }>();
+  // Registration holds the dialog open on a confirmation view rather than calling onCreated (which
+  // closes the dialog) right away — client_id and deployment_id are minted once, shown here once,
+  // and nowhere else in the workspace, so closing before the admin has copied them loses them for good.
+  const [registered, setRegistered] = useState<{ object_id: string; client_id: string; deployment_id: string }>();
   const submit = async () => {
     setError('');
     setSaving(true);
@@ -236,15 +239,31 @@ function NewLtiToolForm({ repositories, onCreated }: { repositories: Row[]; onCr
           target_link_uri: targetLinkUri,
         },
       });
-      setRegistered({ client_id: created.client_id, deployment_id: created.deployment_id });
-      setTitle(''); setDescription(''); setToolName(''); setOidcLoginUrl(''); setTargetLinkUri('');
-      onCreated(created.object_id);
+      setRegistered(created);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
       setSaving(false);
     }
   };
+  if (registered) {
+    return (
+      <div className="form">
+        <p className="governance-note">
+          Tool registered. Give the tool provider these values now — they are shown only here and are not recorded anywhere else in the workspace.
+        </p>
+        <dl>
+          <dt>client_id</dt>
+          <dd><code>{registered.client_id}</code></dd>
+          <dt>deployment_id</dt>
+          <dd><code>{registered.deployment_id}</code></dd>
+        </dl>
+        <div className="dialog-actions">
+          <button type="button" onClick={() => onCreated(registered.object_id)}>Done</button>
+        </div>
+      </div>
+    );
+  }
   return (
     <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
       <p className="governance-note">
@@ -270,11 +289,6 @@ function NewLtiToolForm({ repositories, onCreated }: { repositories: Row[]; onCr
         <input type="url" value={targetLinkUri} onChange={(e) => setTargetLinkUri(e.target.value)} placeholder="https://tool.example.com/lti/launch" pattern="https://.*" required />
       </label>
       {error && <p role="alert" className="error-text">{error}</p>}
-      {registered && (
-        <p className="governance-note">
-          Give the tool provider these values: client_id <code>{registered.client_id}</code>, deployment_id <code>{registered.deployment_id}</code>.
-        </p>
-      )}
       <div className="dialog-actions">
         <button type="submit" disabled={saving}>{saving ? 'Registering…' : 'Register LTI tool'}</button>
       </div>
