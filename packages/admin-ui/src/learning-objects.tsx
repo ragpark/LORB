@@ -296,6 +296,64 @@ function NewLtiToolForm({ repositories, onCreated }: { repositories: Row[]; onCr
   );
 }
 
+/**
+ * Registering an external embed: a plain iframe embed of a third party's page, for content that
+ * can't do LTI at all — no signed launch, no verification of the embedded page's identity. The only
+ * guardrail is embed_url's origin already being on this deployment's ALLOWED_EXTERNAL_EMBED_ORIGINS
+ * allow-list, which the publisher route checks; a URL outside it is refused there, not here.
+ */
+function NewExternalEmbedForm({ repositories, onCreated }: { repositories: Row[]; onCreated: (objectId: string) => void }) {
+  const [repositoryId, setRepositoryId] = useState('');
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [embedUrl, setEmbedUrl] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    setError('');
+    setSaving(true);
+    try {
+      const created = await publisher<{ object_id: string }>('learning-objects/external-embeds', {
+        method: 'POST',
+        body: {
+          ...(repositoryId ? { repository_id: repositoryId } : {}),
+          title,
+          ...(description ? { description } : {}),
+          embed_url: embedUrl,
+        },
+      });
+      setTitle(''); setDescription(''); setEmbedUrl('');
+      onCreated(created.object_id);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+      <p className="governance-note">
+        This embeds the page directly, with no launch protocol and no verification of what it actually is — weaker than an LTI tool by design. Only origins
+        this deployment has explicitly agreed to trust can be used; an embed_url outside that allow-list is refused when you submit. Prefer the LTI tool tab
+        whenever the third party supports it.
+      </p>
+      <MediaBasics
+        repositoryId={repositoryId} onRepositoryId={setRepositoryId}
+        title={title} onTitle={setTitle} description={description} onDescription={setDescription}
+        repositories={repositories}
+      />
+      <label className="stacked">
+        Embed URL
+        <input type="url" value={embedUrl} onChange={(e) => setEmbedUrl(e.target.value)} placeholder="https://example.com/activity" pattern="https://.*" required />
+      </label>
+      {error && <p role="alert" className="error-text">{error}</p>}
+      <div className="dialog-actions">
+        <button type="submit" disabled={saving}>{saving ? 'Registering…' : 'Register external embed'}</button>
+      </div>
+    </form>
+  );
+}
+
 function NewPackagedObjectForm({ repositories, onCreated }: { repositories: Row[]; onCreated: (objectId: string) => void }) {
   const [form, setForm] = useState({
     repository_id: '', title: '', description: '', duration: '', kind: 'native-web-package',
@@ -646,7 +704,7 @@ function NewLearningObjectDialog({ repositories, onCreated }: { repositories: Ro
         <Dialog.Overlay className="overlay" />
         <Dialog.Content className="dialog wide">
           <Dialog.Title>New learning object</Dialog.Title>
-          <Dialog.Description>Author a quiz, add a video, document, or audio activity, register a third-party tool as an LTI 1.3 launch, or register a packaged module that has already been built and hashed.</Dialog.Description>
+          <Dialog.Description>Author a quiz, add a video, document, or audio activity, register a third-party tool as an LTI 1.3 launch or a plain external embed, or register a packaged module that has already been built and hashed.</Dialog.Description>
           <Tabs.Root defaultValue="quiz">
             <Tabs.List aria-label="What to create">
               <Tabs.Trigger value="quiz">Author a quiz</Tabs.Trigger>
@@ -654,6 +712,7 @@ function NewLearningObjectDialog({ repositories, onCreated }: { repositories: Ro
               <Tabs.Trigger value="document">Add a document</Tabs.Trigger>
               <Tabs.Trigger value="audio">Add audio</Tabs.Trigger>
               <Tabs.Trigger value="lti-tool">Add an LTI tool</Tabs.Trigger>
+              <Tabs.Trigger value="external-embed">Add an external embed</Tabs.Trigger>
               <Tabs.Trigger value="package">Register a packaged module</Tabs.Trigger>
             </Tabs.List>
             <Tabs.Content value="quiz">
@@ -670,6 +729,9 @@ function NewLearningObjectDialog({ repositories, onCreated }: { repositories: Ro
             </Tabs.Content>
             <Tabs.Content value="lti-tool">
               <NewLtiToolForm repositories={repositories} onCreated={created} />
+            </Tabs.Content>
+            <Tabs.Content value="external-embed">
+              <NewExternalEmbedForm repositories={repositories} onCreated={created} />
             </Tabs.Content>
             <Tabs.Content value="package">
               <NewPackagedObjectForm repositories={repositories} onCreated={created} />

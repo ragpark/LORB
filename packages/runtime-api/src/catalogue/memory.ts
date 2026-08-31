@@ -2,14 +2,16 @@
  * In-process catalogue, for the test suites and for `pnpm dev` without a database.
  */
 import { randomUUID } from "node:crypto";
-import type { LaunchContext, LtiToolDraft, QuizDraft } from "../../../contracts/src/index.js";
+import type { ExternalEmbedDraft, LaunchContext, LtiToolDraft, QuizDraft } from "../../../contracts/src/index.js";
 import {
-  buildLtiToolRegistration, buildMediaRegistration, buildMediaRevision, buildQuizRegistration, buildQuizRevision,
-  DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, LTI_PLAYER, LTI_PLAYER_PACKAGE, MEDIA_PLAYERS, MEDIA_PLAYER_PACKAGES, nextMinorSemver, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE,
+  buildExternalEmbedRegistration, buildLtiToolRegistration, buildMediaRegistration, buildMediaRevision, buildQuizRegistration, buildQuizRevision,
+  DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, EXTERNAL_EMBED_PLAYER, EXTERNAL_EMBED_PLAYER_PACKAGE, LTI_PLAYER, LTI_PLAYER_PACKAGE, MEDIA_PLAYERS, MEDIA_PLAYER_PACKAGES,
+  nextMinorSemver, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE,
 } from "./shared.js";
 import type {
   AnyContent, AnyMediaDraft, CatalogueStore, LaunchContextRevision, LearningObjectRow, MarketplacePricing, MediaKind, ObjectContentRevision,
-  ObjectDeletion, ObjectLifecycleStatus, ObjectMetadataPatch, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredLtiTool, RegisteredMedia, RegisteredQuiz, Repository,
+  ObjectDeletion, ObjectLifecycleStatus, ObjectMetadataPatch, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredExternalEmbed, RegisteredLtiTool,
+  RegisteredMedia, RegisteredQuiz, Repository,
 } from "./types.js";
 
 export class MemoryCatalogueStore implements CatalogueStore {
@@ -44,6 +46,7 @@ export class MemoryCatalogueStore implements CatalogueStore {
     });
     this.packages.set(QUIZ_PLAYER_PACKAGE.package_version_id, { ...QUIZ_PLAYER_PACKAGE });
     this.packages.set(LTI_PLAYER_PACKAGE.package_version_id, { ...LTI_PLAYER_PACKAGE });
+    this.packages.set(EXTERNAL_EMBED_PLAYER_PACKAGE.package_version_id, { ...EXTERNAL_EMBED_PLAYER_PACKAGE });
     for (const kind of Object.keys(MEDIA_PLAYER_PACKAGES) as MediaKind[]) {
       this.packages.set(MEDIA_PLAYER_PACKAGES[kind].package_version_id, { ...MEDIA_PLAYER_PACKAGES[kind] });
     }
@@ -362,6 +365,24 @@ export class MemoryCatalogueStore implements CatalogueStore {
     return row ? { ...row } : undefined;
   }
 
+  async registerExternalEmbed(draft: ExternalEmbedDraft, options: { repository_id?: string; authored_by?: string } = {}): Promise<RegisteredExternalEmbed> {
+    const repositoryId = options.repository_id ?? (await this.defaultRepository())?.repository_id ?? DEFAULT_REPOSITORY.repository_id;
+    const built = buildExternalEmbedRegistration(draft, repositoryId, options.authored_by);
+    this.objects.set(built.object.object_id, built.object);
+    this.contents.set(built.object.object_id, built.content);
+    this.contentHistory.set(`${built.object.object_id}:${built.content.content_version}`, built.content);
+    this.versions.set(built.object.active_object_version_id, {
+      object_version_id: built.object.active_object_version_id,
+      object_id: built.object.object_id,
+      semver: built.objectVersionSemver,
+      package_version_id: EXTERNAL_EMBED_PLAYER.package_version_id,
+      status: "PUBLISHED",
+      published_at: built.object.created_at,
+      content_version: built.content.content_version,
+    });
+    return built.registered;
+  }
+
   async reviseMediaContent(objectId: string, kind: MediaKind, draft: AnyMediaDraft): Promise<ObjectContentRevision | undefined> {
     const object = this.objects.get(objectId.toLowerCase());
     if (!object || object.content_profile !== MEDIA_PLAYERS[kind].content_profile) return undefined;
@@ -395,6 +416,9 @@ export class MemoryCatalogueStore implements CatalogueStore {
     }
     if (!this.packages.has(LTI_PLAYER_PACKAGE.package_version_id)) {
       this.packages.set(LTI_PLAYER_PACKAGE.package_version_id, { ...LTI_PLAYER_PACKAGE });
+    }
+    if (!this.packages.has(EXTERNAL_EMBED_PLAYER_PACKAGE.package_version_id)) {
+      this.packages.set(EXTERNAL_EMBED_PLAYER_PACKAGE.package_version_id, { ...EXTERNAL_EMBED_PLAYER_PACKAGE });
     }
     for (const kind of Object.keys(MEDIA_PLAYER_PACKAGES) as MediaKind[]) {
       if (!this.packages.has(MEDIA_PLAYER_PACKAGES[kind].package_version_id)) {

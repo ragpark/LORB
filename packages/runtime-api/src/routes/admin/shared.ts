@@ -59,6 +59,7 @@ const ADMIN_ERROR_STATUS: Record<string, number> = {
   DOCUMENT_CONVERTER_NOT_CONFIGURED: 503,
   DOCUMENT_CONVERSION_FAILED: 502,
   LTI_SIGNING_KEY_NOT_CONFIGURED: 503,
+  EXTERNAL_EMBED_ORIGIN_NOT_ALLOWED: 403,
 };
 
 const ADMIN_ERROR_TITLE: Record<string, string> = {
@@ -88,6 +89,7 @@ const ADMIN_ERROR_TITLE: Record<string, string> = {
   AGENT_LINK_NOT_FOUND: "That assistant is not linked to your account",
   DOCUMENT_CONVERTER_NOT_CONFIGURED: "This deployment has no document converter configured, so a PowerPoint or Word file cannot be converted here",
   LTI_SIGNING_KEY_NOT_CONFIGURED: "This production deployment has no persistent LTI signing key configured (LTI_PRIVATE_KEY_PATH/LTI_PRIVATE_KEY_PEM or LTI_SIGNING_KEYS), so an LTI tool cannot be registered here",
+  EXTERNAL_EMBED_ORIGIN_NOT_ALLOWED: "embed_url's origin is not on this deployment's ALLOWED_EXTERNAL_EMBED_ORIGINS allow-list",
   DOCUMENT_CONVERSION_FAILED: "The document could not be converted — check that the file is a valid PowerPoint or Word file and try again",
 };
 

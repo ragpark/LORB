@@ -10,7 +10,8 @@
  * are real rows: a descriptor binds to the version that was actually published.
  */
 import type {
-  AudioContent, AudioDraft, DocumentContent, DocumentDraft, LaunchContext, LtiToolContent, LtiToolDraft, QuizContent, QuizDraft, VideoContent, VideoDraft,
+  AudioContent, AudioDraft, DocumentContent, DocumentDraft, ExternalEmbedContent, ExternalEmbedDraft, LaunchContext, LtiToolContent, LtiToolDraft,
+  QuizContent, QuizDraft, VideoContent, VideoDraft,
 } from "../../../contracts/src/index.js";
 
 /** The three media kinds registered alongside quizzes, each behind one fixed shared player. */
@@ -30,7 +31,7 @@ export interface MarketplacePricing {
 export type AnyMediaContent = VideoContent | DocumentContent | AudioContent;
 export type AnyMediaDraft = VideoDraft | DocumentDraft | AudioDraft;
 /** Everything a learning object's content route may serve. */
-export type AnyContent = QuizContent | AnyMediaContent | LtiToolContent;
+export type AnyContent = QuizContent | AnyMediaContent | LtiToolContent | ExternalEmbedContent;
 
 export interface Repository {
   repository_id: string;
@@ -53,7 +54,7 @@ export interface LearningObjectRow {
   kind: string;
   module_path: string;
   /** Present only on objects whose content is a JSON payload rather than bundled code. */
-  content_profile?: "quiz-json-v1" | "video-json-v1" | "document-json-v1" | "audio-json-v1" | "lti-tool-v1";
+  content_profile?: "quiz-json-v1" | "video-json-v1" | "document-json-v1" | "audio-json-v1" | "lti-tool-v1" | "external-embed-v1";
   /** Provenance, so an operator can see which objects an agent authored. */
   authored_by?: string;
   /** Whether this repository has opted this object in to cross-repository marketplace discovery.
@@ -139,6 +140,18 @@ export interface RegisteredLtiTool {
   title: string;
   client_id: string;
   deployment_id: string;
+}
+
+/** What registering an external embed produces. No credentials to hand anywhere — unlike an LTI
+ *  tool, nothing here verifies the embedded page's identity, so registration mints nothing to
+ *  identify the launch by beyond the object itself. */
+export interface RegisteredExternalEmbed {
+  object_id: string;
+  object_version_id: string;
+  package_version_id: string;
+  package_version: string;
+  content_version: string;
+  title: string;
 }
 
 /**
@@ -292,6 +305,11 @@ export interface CatalogueStore {
    *  pair names, so it can check the caller's redirect_uri against that object's own target_link_uri.
    *  Undefined for anything that isn't a published lti-tool-v1 object with that exact pair. */
   learningObjectByLtiClient(clientId: string, deploymentId: string): Promise<LearningObjectRow | undefined>;
+
+  /** Registers a plain iframe embed of a third party's page against the shared external-embed launch
+   *  handling in Player Shell. `embed_url`'s origin must already be on the deployment's configured
+   *  allow-list — the caller (a publisher route) is expected to have checked that before calling this. */
+  registerExternalEmbed(draft: ExternalEmbedDraft, options?: { repository_id?: string; authored_by?: string }): Promise<RegisteredExternalEmbed>;
 
   /** Ensures every shared player package row exists (quiz, video, document, audio, LTI launch). Idempotent. */
   ensureSharedPlayer(): Promise<void>;
