@@ -2,7 +2,7 @@ import {createRemoteJWKSet,jwtVerify} from "jose";
 import {postMessageSchema} from "../../contracts/src/index.js";
 import {HANDSHAKE_FRAGMENT_KEY,handshakeAllowed} from "./postmessage.js";
 
-type Descriptor={iss:string;aud:string;attempt_id:string;correlation_id:string;state_endpoint:string;evidence_endpoint:string;package_url:string;sub:string;object_id:string;object_version_id:string;repository_id:string;package_version_id:string;session_config:{expires_at:string}};
+type Descriptor={iss:string;aud:string;attempt_id:string;correlation_id:string;state_endpoint:string;evidence_endpoint:string;package_url:string;sub:string;object_id:string;object_version_id:string;repository_id:string;package_version_id:string;session_config:{expires_at:string};content_profile?:string};
 const frame=document.querySelector<HTMLIFrameElement>("#module")!;
 const status=document.querySelector<HTMLElement>("#status")!;
 const parentOrigin=document.referrer?new URL(document.referrer).origin:"";
@@ -46,7 +46,52 @@ const envelope=(type:string,payload:Record<string,unknown>)=>({protocol:"lorb-pl
 function shellContextPayload(d:Descriptor){return {repository_id:d.repository_id,object_id:d.object_id,object_version_id:d.object_version_id,package_version_id:d.package_version_id,attempt_id:d.attempt_id,correlation_id:d.correlation_id,pseudonym:d.sub,content_url:`${d.iss.replace(/\/$/,"")}/api/v1/runtime/learning-objects/${d.object_id}/content?object_version_id=${encodeURIComponent(d.object_version_id)}`}}
 async function request(url:string,method:string,body?:unknown){const response=await fetch(url,{method,headers:{authorization:`Bearer ${token()}`,'content-type':'application/json','idempotency-key':crypto.randomUUID()},body:body===undefined?undefined:JSON.stringify(body)});if(!response.ok)throw new Error(`Runtime request failed (${response.status})`);return response.json()}
 function token(){return decodeURIComponent(location.hash.match(/(?:^#|&)descriptor=([^&]+)/)?.[1]??"")}
-async function start(){try{const signed=token();if(!signed)throw new Error("Launch descriptor is missing");const unverified=JSON.parse(atob(signed.split('.')[1]!.replace(/-/g,'+').replace(/_/g,'/'))) as Descriptor;const jwks=createRemoteJWKSet(new URL(`${unverified.iss.replace(/\/$/,'')}/api/v1/runtime/jwks`));descriptor=(await jwtVerify(signed,jwks,{issuer:unverified.iss,audience:"lorb-player",algorithms:["ES256"]})).payload as unknown as Descriptor;awaitingInitialLoad=true;frame.src=`${descriptor.package_url}${descriptor.package_url.includes("#")?"&":"#"}${HANDSHAKE_FRAGMENT_KEY}=${handshakeNonce}`;status.textContent="Learning activity loaded"}catch(error){status.textContent="This activity could not be opened.";emit("experience.error",{code:"LAUNCH_INVALID",recoverable:false,detail:error instanceof Error?error.message:"Unknown error"})}}
+// Set only for an lti-tool launch (see signLtiLoginHint in runtime-api/core.ts) — never the launch
+// descriptor itself. The descriptor is a live bearer credential the shell uses for state/evidence
+// calls; handing it to a third-party tool via a URL parameter would leak a working credential through
+// the tool's Referer header, its own logs, and browser history. This token carries nothing but who is
+// launching, which object, and which attempt, and is single-purpose and short-lived.
+function ltiLoginHint(){return decodeURIComponent(location.hash.match(/(?:^#|&)lti_login_hint=([^&]+)/)?.[1]??"")}
+interface LtiToolContent{title:string;description?:string;tool_name:string;oidc_login_url:string;target_link_uri:string;client_id:string;deployment_id:string}
+/**
+ * An lti-tool launch never creates the sandboxed module iframe every other kind uses — the module
+ * protocol requires `allow-forms` for form-post navigation, which the shell cannot grant a nested
+ * iframe without also granting it to arbitrary packaged module content. Instead the shell itself
+ * renders a minimal launch panel and, on click, navigates its own document through the LTI 1.3
+ * OIDC third-party-initiated login flow to the tool's origin — the consuming app's own iframe around
+ * the whole shell is what needs `allow-forms` widened for this one content kind, never the module
+ * sandbox.
+ */
+async function startLtiLaunch(d:Descriptor){
+ frame.remove();
+ const panel=document.querySelector<HTMLElement>("#lti-panel")!;
+ const titleEl=document.querySelector<HTMLElement>("#lti-title")!;
+ const descriptionEl=document.querySelector<HTMLElement>("#lti-description")!;
+ const launchBtn=document.querySelector<HTMLButtonElement>("#lti-launch")!;
+ const completeBtn=document.querySelector<HTMLButtonElement>("#lti-complete")!;
+ try{
+  const contentUrl=`${d.iss.replace(/\/$/,"")}/api/v1/runtime/learning-objects/${d.object_id}/content?object_version_id=${encodeURIComponent(d.object_version_id)}`;
+  const response=await fetch(contentUrl);
+  if(!response.ok)throw new Error(`Could not load tool details (${response.status})`);
+  const content=await response.json() as LtiToolContent;
+  titleEl.textContent=content.tool_name;
+  descriptionEl.textContent=content.description??"";
+  panel.hidden=false;
+  status.textContent="Ready to launch";
+  const hint=ltiLoginHint();
+  launchBtn.addEventListener("click",()=>{
+   if(!hint){status.textContent="This activity could not be opened.";return}
+   const params=new URLSearchParams({iss:d.iss,login_hint:hint,target_link_uri:content.target_link_uri,client_id:content.client_id,lti_deployment_id:content.deployment_id,lti_message_hint:d.object_id});
+   location.href=`${content.oidc_login_url}${content.oidc_login_url.includes("?")?"&":"?"}${params.toString()}`;
+  });
+  completeBtn.addEventListener("click",async()=>{
+   completeBtn.disabled=true;
+   try{await request(d.state_endpoint.replace(/\/state$/,"/complete"),"POST");emit("experience.complete",{});status.textContent="Marked as complete"}
+   catch{completeBtn.disabled=false;status.textContent="Could not mark as complete"}
+  });
+ }catch(error){status.textContent="This activity could not be opened.";emit("experience.error",{code:"LAUNCH_INVALID",recoverable:false,detail:error instanceof Error?error.message:"Unknown error"})}
+}
+async function start(){try{const signed=token();if(!signed)throw new Error("Launch descriptor is missing");const unverified=JSON.parse(atob(signed.split('.')[1]!.replace(/-/g,'+').replace(/_/g,'/'))) as Descriptor;const jwks=createRemoteJWKSet(new URL(`${unverified.iss.replace(/\/$/,'')}/api/v1/runtime/jwks`));descriptor=(await jwtVerify(signed,jwks,{issuer:unverified.iss,audience:"lorb-player",algorithms:["ES256"]})).payload as unknown as Descriptor;if(descriptor.content_profile==="lti-tool-v1"){await startLtiLaunch(descriptor);return}awaitingInitialLoad=true;frame.src=`${descriptor.package_url}${descriptor.package_url.includes("#")?"&":"#"}${HANDSHAKE_FRAGMENT_KEY}=${handshakeNonce}`;status.textContent="Learning activity loaded"}catch(error){status.textContent="This activity could not be opened.";emit("experience.error",{code:"LAUNCH_INVALID",recoverable:false,detail:error instanceof Error?error.message:"Unknown error"})}}
 // Module messages are handled strictly in order. Each handler is async (it makes a Runtime call), so
 // firing them concurrently would let a completion overtake the `state.put` that legally moves the
 // attempt CREATED -> STARTED, or reorder an evidence chain. Serialising costs nothing here and makes

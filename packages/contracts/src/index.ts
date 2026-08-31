@@ -1,7 +1,11 @@
 import { z } from "zod";
 const uuid = z.string().uuid();
 export const launchRequestSchema = z.object({contract_version:z.literal("1.0"),consumer_id:z.string().min(1),repository_id:uuid,object_id:uuid,requested_launch_mode:z.literal("embedded-iframe"),locale:z.literal("en-GB")}).strict();
-export const descriptorSchema = z.object({iss:z.string().url(),aud:z.literal("lorb-player"),iat:z.number().int(),nbf:z.number().int(),exp:z.number().int(),jti:uuid,sub:z.string().regex(/^[a-f\d]{64}$/),tenant_id:z.string().regex(/^[a-z\d][a-z\d-]{1,62}$/),repository_id:uuid,consumer_id:z.string().min(1),object_id:uuid,object_version_id:uuid,package_version_id:uuid,delivery_profile:z.literal("native-web-package"),launch_mode:z.literal("embedded-iframe"),player_ref:z.string().regex(/^[a-z][a-z\d-]*-v\d+$/),correlation_id:uuid,locale:z.literal("en-GB"),attempt_id:uuid,state_endpoint:z.string().url(),evidence_endpoint:z.string().url(),package_url:z.string().url(),session_config:z.object({expires_at:z.string().datetime()}),telemetry_config:z.object({correlation_header:z.literal("X-Correlation-ID")}),contract_version:z.literal("1.0")}).strict().refine((v: {exp:number;iat:number})=>v.exp-v.iat>=60&&v.exp-v.iat<=900,"descriptor lifetime must be between 60 and 900 seconds");
+export const descriptorSchema = z.object({iss:z.string().url(),aud:z.literal("lorb-player"),iat:z.number().int(),nbf:z.number().int(),exp:z.number().int(),jti:uuid,sub:z.string().regex(/^[a-f\d]{64}$/),tenant_id:z.string().regex(/^[a-z\d][a-z\d-]{1,62}$/),repository_id:uuid,consumer_id:z.string().min(1),object_id:uuid,object_version_id:uuid,package_version_id:uuid,delivery_profile:z.literal("native-web-package"),launch_mode:z.literal("embedded-iframe"),player_ref:z.string().regex(/^[a-z][a-z\d-]*-v\d+$/),correlation_id:uuid,locale:z.literal("en-GB"),attempt_id:uuid,state_endpoint:z.string().url(),evidence_endpoint:z.string().url(),package_url:z.string().url(),session_config:z.object({expires_at:z.string().datetime()}),telemetry_config:z.object({correlation_header:z.literal("X-Correlation-ID")}),contract_version:z.literal("1.0"),
+  /** The launched object's content profile, so the Player Shell can recognise an LTI tool launch
+   *  before ever creating the sandboxed module iframe every other kind uses. Optional and additive —
+   *  absent on a descriptor for a code-bundled object, exactly as before this claim existed. */
+  content_profile:z.string().optional()}).strict().refine((v: {exp:number;iat:number})=>v.exp-v.iat>=60&&v.exp-v.iat<=900,"descriptor lifetime must be between 60 and 900 seconds");
 
 // Verb chain accepted by the Evidence API. `completed` is the original MVP verb and is unchanged;
 // `launched` and `answered` were added for the generic quiz player (packages/quiz-player), which
@@ -146,6 +150,41 @@ export const audioContentSchema = audioDraftSchema.extend({
 }).strict();
 export type AudioDraft = z.infer<typeof audioDraftSchema>;
 export type AudioContent = z.infer<typeof audioContentSchema>;
+
+// ---------------------------------------------------------------------------
+// LTI 1.3 tool launch content (Resource Link launch only — no Assignment &
+// Grades Services, no Deep Linking)
+//
+// Not a bundle, and not rendered by a sandboxed "module" iframe the way
+// quiz/video/document/audio are: the Player Shell itself drives the OIDC
+// third-party-login handshake for this content profile, because the launch
+// needs real form submission and redirect navigation a sandboxed module
+// iframe cannot perform. `client_id` and `deployment_id` are assigned by
+// LORB (acting as the LTI Platform) at registration — never accepted from
+// the draft — so a tool vendor's own configuration is told these values,
+// not permitted to choose them.
+// ---------------------------------------------------------------------------
+const httpsUrl = z.string().url().refine((value) => value.startsWith("https://"), "must be an https URL");
+export const ltiToolDraftSchema = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().max(600).optional(),
+  tool_name: z.string().min(1).max(120),
+  /** The tool's own OIDC third-party-initiated login endpoint — where a launch begins. */
+  oidc_login_url: httpsUrl,
+  /** Where the tool actually opens once the launch's id_token has been delivered. Also the exact
+   *  redirect_uri LORB requires the tool's authentication request to name, so a launch cannot be
+   *  redirected anywhere the registering repository did not choose. */
+  target_link_uri: httpsUrl,
+}).strict();
+export const ltiToolContentSchema = ltiToolDraftSchema.extend({
+  object_id: uuid,
+  content_version: z.string().regex(/^\d+$/),
+  created_at: z.string().datetime(),
+  client_id: z.string().min(1).max(120),
+  deployment_id: z.string().min(1).max(120),
+}).strict();
+export type LtiToolDraft = z.infer<typeof ltiToolDraftSchema>;
+export type LtiToolContent = z.infer<typeof ltiToolContentSchema>;
 
 // ---------------------------------------------------------------------------
 // Launch context (publisher-authored, versioned with the object)

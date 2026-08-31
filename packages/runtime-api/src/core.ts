@@ -88,6 +88,48 @@ export async function verifyDescriptor(token: string, ring: SigningKeyRing, issu
 }
 
 /**
+ * What an LTI tool's OIDC login step gets as `login_hint`, in place of the launch descriptor itself.
+ *
+ * The descriptor is a live bearer credential — Player Shell sends it as `Authorization: Bearer` on
+ * every state/evidence call — so handing it to a third-party tool via a URL query parameter would
+ * leak a working credential through the Referer header, the tool's own logs, and browser history.
+ * This token instead carries only what `/api/v1/lti/authorize` needs to resolve the launch: who is
+ * launching, which object, and which attempt. It is minted fresh for the LTI hand-off, signed by a
+ * ring dedicated to that purpose, and short-lived enough that a leaked copy is worth little.
+ */
+export interface LtiLoginHintClaims {
+  sub: string;
+  object_id: string;
+  attempt_id: string;
+}
+
+const LTI_LOGIN_HINT_TTL_SECONDS = 300;
+const LTI_LOGIN_HINT_AUDIENCE = "lorb-lti-login-hint";
+
+export async function signLtiLoginHint(ring: SigningKeyRing, claims: LtiLoginHintClaims, issuer: string): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    ...claims,
+    iss: issuer,
+    aud: LTI_LOGIN_HINT_AUDIENCE,
+    iat: now,
+    nbf: now,
+    exp: now + LTI_LOGIN_HINT_TTL_SECONDS,
+    jti: randomUUID(),
+  };
+  return ring.sign(payload, { typ: "lorb-lti-login-hint+jwt" });
+}
+
+export async function verifyLtiLoginHint(token: string, ring: SigningKeyRing, issuer: string): Promise<LtiLoginHintClaims> {
+  const { payload } = await ring.verify(token, { issuer, audience: LTI_LOGIN_HINT_AUDIENCE });
+  const { sub, object_id, attempt_id } = payload as Record<string, unknown>;
+  if (typeof sub !== "string" || typeof object_id !== "string" || typeof attempt_id !== "string") {
+    throw new Error("malformed LTI login hint");
+  }
+  return { sub, object_id, attempt_id };
+}
+
+/**
  * Two of the enforced anti-requirements, in one function: a postMessage origin is never a wildcard,
  * and never an origin outside the configured allow-list. The source-window and module-origin checks
  * bind the message to the iframe the shell actually created.

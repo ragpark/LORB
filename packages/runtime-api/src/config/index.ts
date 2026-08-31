@@ -78,6 +78,8 @@ export interface RuntimeConfig {
   persistence: "postgres" | "memory";
   pseudonymSecret: Buffer;
   signingKeys: SigningKeyConfig[];
+  /** Signs the LTI 1.3 id_token and the internal login-hint token; see `readLtiSigningKeys`. */
+  ltiSigningKeys: SigningKeyConfig[];
   publicIssuer: string;
   playerOrigin: string;
   evidenceEndpoint: string;
@@ -182,18 +184,32 @@ function readPseudonymSecret(production: boolean, problems: string[]): Buffer {
  * accepted — a single PEM file plus its kid, or a JSON array so a rotation can publish the retiring
  * key alongside the new one.
  */
-function readSigningKeys(production: boolean, problems: string[]): SigningKeyConfig[] {
-  const inline = env("DESCRIPTOR_SIGNING_KEYS");
+/**
+ * Shared shape behind `readSigningKeys` and `readLtiSigningKeys`: a signing key ring can be
+ * configured as either a single PEM plus its kid, or a JSON array so a rotation can publish the
+ * retiring key alongside the new one. `requiredInProduction` is the one behavioural difference
+ * between callers — the descriptor ring backs every launch, so production refuses to start without
+ * one; the LTI ring only matters once an operator registers an LTI tool, so its absence is never
+ * fatal on its own.
+ */
+function readSigningKeyRing(
+  envPrefix: string,
+  label: string,
+  production: boolean,
+  requiredInProduction: boolean,
+  problems: string[],
+): SigningKeyConfig[] {
+  const inline = env(`${envPrefix}_SIGNING_KEYS`);
   if (inline) {
     let parsed: unknown;
     try {
       parsed = JSON.parse(inline);
     } catch {
-      problems.push("DESCRIPTOR_SIGNING_KEYS must be a JSON array of {kid, pem, state} objects");
+      problems.push(`${envPrefix}_SIGNING_KEYS must be a JSON array of {kid, pem, state} objects`);
       return [];
     }
     if (!Array.isArray(parsed) || parsed.length === 0) {
-      problems.push("DESCRIPTOR_SIGNING_KEYS must be a non-empty JSON array");
+      problems.push(`${envPrefix}_SIGNING_KEYS must be a non-empty JSON array`);
       return [];
     }
     const keys: SigningKeyConfig[] = [];
@@ -202,23 +218,23 @@ function readSigningKeys(production: boolean, problems: string[]): SigningKeyCon
       const pem = typeof entry?.pem === "string" ? entry.pem : undefined;
       const state = entry?.state === "RETIRING" ? "RETIRING" : "ACTIVE";
       if (!kid || !pem) {
-        problems.push("every DESCRIPTOR_SIGNING_KEYS entry needs a kid and a pem");
+        problems.push(`every ${envPrefix}_SIGNING_KEYS entry needs a kid and a pem`);
         continue;
       }
       keys.push({ kid, pem: pem.replace(/\\n/g, "\n"), state });
     }
     if (keys.filter((key) => key.state === "ACTIVE").length !== 1) {
-      problems.push("DESCRIPTOR_SIGNING_KEYS must contain exactly one ACTIVE key");
+      problems.push(`${envPrefix}_SIGNING_KEYS must contain exactly one ACTIVE key`);
     }
     return keys;
   }
 
-  const path = env("DESCRIPTOR_PRIVATE_KEY_PATH");
-  const pem = env("DESCRIPTOR_PRIVATE_KEY_PEM");
-  const kid = env("DESCRIPTOR_KID");
+  const path = env(`${envPrefix}_PRIVATE_KEY_PATH`);
+  const pem = env(`${envPrefix}_PRIVATE_KEY_PEM`);
+  const kid = env(`${envPrefix}_KID`);
   if (path || pem) {
     if (!kid) {
-      problems.push("DESCRIPTOR_KID is required alongside a configured descriptor signing key");
+      problems.push(`${envPrefix}_KID is required alongside a configured ${label} signing key`);
       return [];
     }
     let material = pem?.replace(/\\n/g, "\n");
@@ -226,26 +242,40 @@ function readSigningKeys(production: boolean, problems: string[]): SigningKeyCon
       try {
         material = readFileSync(path, "utf8");
       } catch {
-        problems.push(`DESCRIPTOR_PRIVATE_KEY_PATH could not be read (${path})`);
+        problems.push(`${envPrefix}_PRIVATE_KEY_PATH could not be read (${path})`);
         return [];
       }
     }
     if (!material?.includes("PRIVATE KEY")) {
-      problems.push("the descriptor signing key must be a PEM-encoded PKCS#8 private key");
+      problems.push(`the ${label} signing key must be a PEM-encoded PKCS#8 private key`);
       return [];
     }
     const keys: SigningKeyConfig[] = [{ kid, pem: material, state: "ACTIVE" }];
-    const retiringPem = env("DESCRIPTOR_RETIRING_PRIVATE_KEY_PEM")?.replace(/\\n/g, "\n");
-    const retiringKid = env("DESCRIPTOR_RETIRING_KID");
+    const retiringPem = env(`${envPrefix}_RETIRING_PRIVATE_KEY_PEM`)?.replace(/\\n/g, "\n");
+    const retiringKid = env(`${envPrefix}_RETIRING_KID`);
     if (retiringPem && retiringKid) keys.push({ kid: retiringKid, pem: retiringPem, state: "RETIRING" });
     return keys;
   }
 
-  if (production) {
-    problems.push("a descriptor signing key is required in production (DESCRIPTOR_PRIVATE_KEY_PATH, DESCRIPTOR_PRIVATE_KEY_PEM or DESCRIPTOR_SIGNING_KEYS)");
+  if (production && requiredInProduction) {
+    problems.push(`a ${label} signing key is required in production (${envPrefix}_PRIVATE_KEY_PATH, ${envPrefix}_PRIVATE_KEY_PEM or ${envPrefix}_SIGNING_KEYS)`);
   }
-  // Outside production an ephemeral key is generated at start-up by the key service.
+  // Outside production, or when not required, an ephemeral key is generated at start-up by the key service.
   return [];
+}
+
+function readSigningKeys(production: boolean, problems: string[]): SigningKeyConfig[] {
+  return readSigningKeyRing("DESCRIPTOR", "descriptor", production, true, problems);
+}
+
+/**
+ * The LTI signing ring: distinct from the descriptor ring because it signs and publishes material
+ * meant for a third party (the tool's own JWKS fetch verifying our id_token, and the login-hint
+ * token in between) rather than material only LORB's own components ever see. Optional even in
+ * production — a deployment with no LTI tools registered needs no LTI key configured.
+ */
+function readLtiSigningKeys(production: boolean, problems: string[]): SigningKeyConfig[] {
+  return readSigningKeyRing("LTI", "LTI", production, false, problems);
 }
 
 function readIdentity(production: boolean, publicIssuer: string, problems: string[]): IdentityProviderConfig {
@@ -379,6 +409,7 @@ export function loadConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfi
     persistence: databaseUrl ? "postgres" : "memory",
     pseudonymSecret: readPseudonymSecret(production, problems),
     signingKeys: readSigningKeys(production, problems),
+    ltiSigningKeys: readLtiSigningKeys(production, problems),
     publicIssuer,
     playerOrigin,
     evidenceEndpoint: env("EVIDENCE_API_ENDPOINT") ?? `${publicIssuer}/api/v1/evidence/statements`,

@@ -9,15 +9,15 @@
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import {
-  audioContentSchema, documentContentSchema, quizContentSchema, videoContentSchema, type LaunchContext, type QuizDraft,
+  audioContentSchema, documentContentSchema, ltiToolContentSchema, quizContentSchema, videoContentSchema, type LaunchContext, type LtiToolDraft, type QuizDraft,
 } from "../../../contracts/src/index.js";
 import {
-  buildMediaRegistration, buildMediaRevision, buildQuizRegistration, buildQuizRevision,
-  DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, MEDIA_PLAYERS, MEDIA_PLAYER_PACKAGES, nextMinorSemver, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE,
+  buildLtiToolRegistration, buildMediaRegistration, buildMediaRevision, buildQuizRegistration, buildQuizRevision,
+  DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, LTI_PLAYER, LTI_PLAYER_PACKAGE, MEDIA_PLAYERS, MEDIA_PLAYER_PACKAGES, nextMinorSemver, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE,
 } from "./shared.js";
 import type {
   AnyContent, AnyMediaDraft, CatalogueStore, LaunchContextRevision, LearningObjectRow, MarketplacePricing, MediaKind, ObjectContentRevision,
-  ObjectLifecycleStatus, ObjectMetadataPatch, ObjectDeletion, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredMedia, RegisteredQuiz, Repository,
+  ObjectLifecycleStatus, ObjectMetadataPatch, ObjectDeletion, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredLtiTool, RegisteredMedia, RegisteredQuiz, Repository,
 } from "./types.js";
 
 const CONTENT_SCHEMAS = { video: videoContentSchema, document: documentContentSchema, audio: audioContentSchema } as const;
@@ -26,6 +26,7 @@ function parseContent(contentProfile: string | null | undefined, payload: unknow
   const schema = contentProfile === "video-json-v1" ? CONTENT_SCHEMAS.video
     : contentProfile === "document-json-v1" ? CONTENT_SCHEMAS.document
     : contentProfile === "audio-json-v1" ? CONTENT_SCHEMAS.audio
+    : contentProfile === "lti-tool-v1" ? ltiToolContentSchema
     : quizContentSchema; // covers 'quiz-json-v1' and legacy rows written before content_profile was stored on this table
   const parsed = schema.safeParse(payload);
   return parsed.success ? parsed.data : undefined;
@@ -53,6 +54,7 @@ function toObject(row: Record<string, any>): LearningObjectRow {
     marketplace_price_cents: row.marketplace_price_cents ?? null,
     marketplace_currency: row.marketplace_currency ?? null,
     marketplace_billing_period: row.marketplace_billing_period ?? null,
+    ...(row.lti_client_id ? { lti_client_id: row.lti_client_id, lti_deployment_id: row.lti_deployment_id } : {}),
   };
 }
 
@@ -565,6 +567,59 @@ export class PostgresCatalogueStore implements CatalogueStore {
     return built.registered;
   }
 
+  async registerLtiTool(draft: LtiToolDraft, options: { repository_id?: string; authored_by?: string } = {}): Promise<RegisteredLtiTool> {
+    await this.ensureSharedPlayer();
+    const repositoryId = options.repository_id ?? (await this.defaultRepository())?.repository_id;
+    if (!repositoryId) throw new Error("NO_ACTIVE_REPOSITORY");
+    const built = buildLtiToolRegistration(draft, repositoryId, options.authored_by);
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      await client.query(
+        `insert into learning_object (object_id, repository_id, active_object_version_id, active_package_version_id,
+           status, title, description, duration, kind, module_path, content_profile, authored_by, created_at,
+           lti_client_id, lti_deployment_id)
+         values ($1,$2,$3,$4,'PUBLISHED',$5,$6,$7,$8,$9,'lti-tool-v1',$10,$11,$12,$13)`,
+        [built.object.object_id, repositoryId, built.object.active_object_version_id, LTI_PLAYER.package_version_id,
+         built.object.title, built.object.description, built.object.duration, built.object.kind,
+         built.object.module_path, built.object.authored_by ?? null, built.object.created_at,
+         built.object.lti_client_id, built.object.lti_deployment_id],
+      );
+      await client.query(
+        `insert into object_version (object_version_id, object_id, semver, package_version_id, status, published_at, content_version)
+         values ($1,$2,$3,$4,'PUBLISHED', now(), $5)`,
+        [built.object.active_object_version_id, built.object.object_id, built.objectVersionSemver,
+         LTI_PLAYER.package_version_id, built.content.content_version],
+      );
+      await client.query(
+        `insert into learning_object_content (object_id, content_profile, content_version, payload)
+         values ($1,'lti-tool-v1',$2,$3)`,
+        [built.object.object_id, built.content.content_version, JSON.stringify(built.content)],
+      );
+      await client.query(
+        `insert into learning_object_content_version (object_id, content_profile, content_version, payload)
+         values ($1,'lti-tool-v1',$2,$3) on conflict (object_id, content_version) do nothing`,
+        [built.object.object_id, built.content.content_version, JSON.stringify(built.content)],
+      );
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+    return built.registered;
+  }
+
+  async learningObjectByLtiClient(clientId: string, deploymentId: string): Promise<LearningObjectRow | undefined> {
+    const result = await this.pool.query(
+      `select * from learning_object
+       where lti_client_id = $1 and lti_deployment_id = $2 and status = 'PUBLISHED' and content_profile = 'lti-tool-v1'`,
+      [clientId, deploymentId],
+    );
+    return result.rows[0] ? toObject(result.rows[0]) : undefined;
+  }
+
   async ensureSharedPlayer(): Promise<void> {
     await this.pool.query(
       `insert into package_version (package_version_id, package_id, object_id, semver, sha256, delivery_profile,
@@ -585,6 +640,14 @@ export class PostgresCatalogueStore implements CatalogueStore {
          player.module_path, MEDIA_PLAYER_PACKAGES[kind].published_at],
       );
     }
+    await this.pool.query(
+      `insert into package_version (package_version_id, package_id, object_id, semver, sha256, delivery_profile,
+         entry_point, module_path, status, published_at, shared_player)
+       values ($1,$2,null,$3,$4,'native-web-package',$5,$5,'PUBLISHED',$6,true)
+       on conflict (package_version_id) do nothing`,
+      [LTI_PLAYER.package_version_id, LTI_PLAYER.package_id, LTI_PLAYER.semver, LTI_PLAYER.sha256,
+       LTI_PLAYER.module_path, LTI_PLAYER_PACKAGE.published_at],
+    );
   }
 
   /**

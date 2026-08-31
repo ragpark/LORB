@@ -16,11 +16,11 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import type { KeyLike } from "jose";
-import { launchRequestSchema, type AudioContent, type VideoContent } from "../../contracts/src/index.js";
+import { launchRequestSchema, type AudioContent, type LtiToolContent, type VideoContent } from "../../contracts/src/index.js";
 import { config as loadRuntimeConfig, loadConfig, type RuntimeConfig } from "./config/index.js";
 import { catalogue as defaultCatalogue, createCatalogue, type CatalogueStore, type LearningObjectRow } from "./catalogue/index.js";
 import { createStore, type RuntimeStore } from "./store/index.js";
-import { issueDescriptor, sessionExpiresAt, SigningKeyRing } from "./core.js";
+import { issueDescriptor, sessionExpiresAt, signLtiLoginHint, verifyLtiLoginHint, SigningKeyRing } from "./core.js";
 import { requestFingerprint as fingerprint, withIdempotencyClaim } from "./services/idempotency.js";
 import { computePseudonym } from "./services/pseudonym-service.js";
 import { createTokenVerifier, IdentityError, type KeyResolver, type TokenVerifier } from "./services/identity.js";
@@ -62,6 +62,8 @@ export interface RuntimeOptions {
   store?: RuntimeStore;
   catalogue?: CatalogueStore;
   signingKeys?: SigningKeyRing;
+  /** Signs LTI id_tokens and login-hint tokens; distinct ring from `signingKeys`. */
+  ltiSigningKeys?: SigningKeyRing;
   config?: RuntimeConfig;
 }
 
@@ -70,6 +72,7 @@ export interface BuiltRuntime {
   /** The active signing key, kept in the historical shape callers already destructure. */
   keys: { privateKey: KeyLike; publicJwk: unknown; kid: string };
   ring: SigningKeyRing;
+  ltiRing: SigningKeyRing;
   store: RuntimeStore;
   catalogue: CatalogueStore;
   config: RuntimeConfig;
@@ -101,6 +104,10 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     ?? (runtimeConfig.signingKeys.length > 0
       ? await SigningKeyRing.fromConfig(runtimeConfig.signingKeys)
       : await SigningKeyRing.ephemeral());
+  const ltiRing = options.ltiSigningKeys
+    ?? (runtimeConfig.ltiSigningKeys.length > 0
+      ? await SigningKeyRing.fromConfig(runtimeConfig.ltiSigningKeys)
+      : await SigningKeyRing.ephemeral("ephemeral-lti-key"));
   const verifier = createTokenVerifier(runtimeConfig.identity, options.identityKeys ?? (options.iesKey as KeyResolver | undefined));
 
   const app = Fastify({
@@ -442,13 +449,19 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
           state_endpoint: `${publicIssuer}/api/v1/runtime/attempts/${attemptId}/state`,
           package_url: packageUrl,
           session_config: { expires_at: expiresAt },
+          content_profile: object.content_profile,
         }, { issuer: publicIssuer, evidenceEndpoint });
+
+        const hashParams = new URLSearchParams({ descriptor });
+        if (object.content_profile === "lti-tool-v1") {
+          hashParams.set("lti_login_hint", await signLtiLoginHint(ltiRing, { sub: pseudonym, object_id: object.object_id, attempt_id: attemptId }, publicIssuer));
+        }
 
         const response = {
           launch_id: launchId,
           attempt_id: attemptId,
           signed_descriptor: descriptor,
-          player_url: `${playerOrigin}/#descriptor=${encodeURIComponent(descriptor)}`,
+          player_url: `${playerOrigin}/#${hashParams.toString()}`,
           expires_at: expiresAt,
           correlation_id: correlationValue,
         };
@@ -627,13 +640,120 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
       state_endpoint: `${publicIssuer}/api/v1/runtime/attempts/${attemptId}/state`,
       package_url: `${playerOrigin}${deliveredModulePath}`,
       session_config: { expires_at: expiresAt },
+      content_profile: object.content_profile,
     }, { issuer: publicIssuer, evidenceEndpoint });
 
     await store.recordSmartLinkRedemption(link.smart_link_id);
     metrics.smartLinkRedemptions.inc({ outcome: "redeemed" });
     metrics.launches.inc({ outcome: "issued", source: "smart-link" });
+    const hashParams = new URLSearchParams({ descriptor });
+    if (object.content_profile === "lti-tool-v1") {
+      hashParams.set("lti_login_hint", await signLtiLoginHint(ltiRing, { sub: pseudonym, object_id: object.object_id, attempt_id: attemptId }, publicIssuer));
+    }
     return (reply as { redirect: (url: string, code: number) => unknown })
-      .redirect(`${playerOrigin}/#descriptor=${encodeURIComponent(descriptor)}`, 302);
+      .redirect(`${playerOrigin}/#${hashParams.toString()}`, 302);
+  });
+
+  // -------------------------------------------------------------------------
+  // LTI 1.3 (Resource Link launch only — no Assignment & Grades Services, no Deep Linking)
+  // -------------------------------------------------------------------------
+
+  /** Lets a registered tool verify the id_token `/api/v1/lti/authorize` signs for it. */
+  app.get("/api/v1/lti/jwks", async () => ltiRing.jwks());
+
+  function escapeHtmlAttribute(value: string): string {
+    return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  }
+
+  /**
+   * The Platform's OIDC authorization endpoint in LTI 1.3's third-party-initiated login flow. Player
+   * Shell already sent the user agent to the tool's own `oidc_login_url`; the tool responds by
+   * redirecting the browser here with a standard OIDC authorization request. This mints a signed
+   * `LtiResourceLinkRequest` id_token and returns it to the tool via an auto-submitting HTML form, as
+   * `response_mode=form_post` requires — the id_token is never carried on a URL.
+   *
+   * No caller authentication beyond the request's own parameters: the `login_hint` is the credential,
+   * short-lived and minted specifically for this launch by `signLtiLoginHint`.
+   */
+  app.get("/api/v1/lti/authorize", {
+    // The global API-wide CSP (`default-src 'none'; frame-ancestors 'none'; form-action 'none'`,
+    // registered above) is right for a JSON API and wrong for this one route: its whole job is to
+    // auto-submit a form to a third party's https origin, from inside whatever frame the browser
+    // was already in when it got here — Player Shell's own iframe, itself commonly nested in a
+    // consumer's. `frame-ancestors 'none'` would make the browser refuse to render this document at
+    // all; `form-action 'none'` would block the submission the response exists to perform. This
+    // override is scoped to this route alone — no plain admin/publisher/runtime JSON route is
+    // affected — and stays as tight as the job allows: no framing restriction beyond that, a
+    // same-scheme floor on where the form may submit, and a per-request nonce for the one inline
+    // script that fires the submit, rather than a blanket 'unsafe-inline'.
+    helmet: {
+      enableCSPNonces: true,
+      contentSecurityPolicy: {
+        useDefaults: false,
+        directives: { defaultSrc: ["'none'"], baseUri: ["'none'"], formAction: ["https:"] },
+      },
+    },
+  } as RouteShorthandOptions, async (req, reply) => {
+    const query = (req as { query: Record<string, string | undefined> }).query;
+    const fail = (description: string, status = 400) =>
+      reply.code(status).type("application/json").send({ error: "invalid_request", error_description: description });
+
+    if (query.scope !== "openid") return fail("scope must be openid");
+    if (query.response_type !== "id_token") return fail("response_type must be id_token");
+    if (query.response_mode !== "form_post") return fail("response_mode must be form_post");
+    const { client_id: clientId, lti_deployment_id: deploymentId, redirect_uri: redirectUri, login_hint: loginHint, nonce } = query;
+    if (!clientId || !deploymentId || !redirectUri || !loginHint || !nonce) {
+      return fail("client_id, lti_deployment_id, redirect_uri, login_hint and nonce are all required");
+    }
+    if (!redirectUri.startsWith("https://")) return fail("redirect_uri must be an https URL");
+
+    const object = await catalogue.learningObjectByLtiClient(clientId, deploymentId);
+    if (!object || object.status !== "PUBLISHED") return fail("unknown client_id or lti_deployment_id", 401);
+
+    const content = await catalogue.content(object.object_id);
+    if (!content || !("target_link_uri" in content)) return fail("the registered tool has no launch configuration", 500);
+    const tool = content as LtiToolContent;
+    // The redirect_uri is never trusted from the query string alone — it must be exactly the
+    // target_link_uri the admin registered, or a compromised client_id could redirect a signed
+    // id_token to an origin nobody reviewed.
+    if (redirectUri !== tool.target_link_uri) return fail("redirect_uri does not match the tool's registered target_link_uri");
+
+    let hint: Awaited<ReturnType<typeof verifyLtiLoginHint>>;
+    try {
+      hint = await verifyLtiLoginHint(loginHint, ltiRing, publicIssuer);
+    } catch {
+      return fail("login_hint is invalid or expired", 401);
+    }
+    if (hint.object_id !== object.object_id) return fail("login_hint does not match this tool", 401);
+
+    const now = Math.floor(Date.now() / 1000);
+    const idToken = await ltiRing.sign({
+      iss: publicIssuer,
+      aud: clientId,
+      sub: hint.sub,
+      exp: now + 300,
+      iat: now,
+      nonce,
+      "https://purl.imsglobal.org/spec/lti/claim/message_type": "LtiResourceLinkRequest",
+      "https://purl.imsglobal.org/spec/lti/claim/version": "1.3.0",
+      "https://purl.imsglobal.org/spec/lti/claim/deployment_id": deploymentId,
+      "https://purl.imsglobal.org/spec/lti/claim/target_link_uri": tool.target_link_uri,
+      "https://purl.imsglobal.org/spec/lti/claim/resource_link": { id: object.object_id, title: object.title },
+      "https://purl.imsglobal.org/spec/lti/claim/roles": [],
+    }, { typ: "JWT" });
+
+    // An inline onload="…" attribute is script-src-attr territory, which nothing here allows and a
+    // nonce cannot cover — a nonce only ever authorises a <script> element. The submit fires from one
+    // instead, carrying the nonce @fastify/helmet minted for this response above.
+    const cspNonce = (reply as unknown as { cspNonce?: { script: string } }).cspNonce?.script;
+    const html = `<!doctype html><html><body>`
+      + `<form method="POST" action="${escapeHtmlAttribute(redirectUri)}">`
+      + `<input type="hidden" name="id_token" value="${escapeHtmlAttribute(idToken)}">`
+      + (query.state !== undefined ? `<input type="hidden" name="state" value="${escapeHtmlAttribute(query.state)}">` : "")
+      + `</form>`
+      + `<script${cspNonce ? ` nonce="${escapeHtmlAttribute(cspNonce)}"` : ""}>document.forms[0].submit()</script>`
+      + `</body></html>`;
+    return reply.type("text/html").send(html);
   });
 
   // -------------------------------------------------------------------------
@@ -703,6 +823,10 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     if (object.content_profile === "audio-json-v1" && content && "source" in content) {
       const audio = content as AudioContent;
       return { ...base, kind: "audio" as const, source: audio.source, transcript_url: audio.transcript_url };
+    }
+    if (object.content_profile === "lti-tool-v1" && content && "tool_name" in content) {
+      const tool = content as LtiToolContent;
+      return { ...base, kind: "lti-tool" as const, tool_name: tool.tool_name, target_link_uri: tool.target_link_uri };
     }
     return { ...base, kind: "unsupported" as const };
   });
@@ -797,13 +921,16 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
   registerInternalQuizRoutes(app, internalGuard, { store, catalogue });
   registerInternalMediaRoutes(app, internalGuard, { store, catalogue });
   registerInternalLaunchBatchRoutes(app, {
-    serviceToken: internalServiceToken, ring, secret,
+    serviceToken: internalServiceToken, ring, ltiRing, secret,
     identityIssuer: verifier.issuer, publicIssuer, playerOrigin, evidenceEndpoint,
     store, catalogue,
   }, internalGuard);
   registerInternalRosterRoutes(app, internalGuard);
 
-  registerPublisherRoutes(app, { catalogue, store, adminCtx, documentConverterUrl: runtimeConfig.documentConverterUrl });
+  registerPublisherRoutes(app, {
+    catalogue, store, adminCtx, documentConverterUrl: runtimeConfig.documentConverterUrl,
+    ltiKeysConfigured: !runtimeConfig.production || runtimeConfig.ltiSigningKeys.length > 0,
+  });
   registerAdminRepositoryRoutes(app, adminCtx);
   registerAdminMembershipRoutes(app, adminCtx);
   registerAdminPlayerRoutes(app, adminCtx);
@@ -817,6 +944,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     app,
     keys: { privateKey: ring.signingKey, publicJwk: ring.jwks().keys[0], kid: ring.activeKid },
     ring,
+    ltiRing,
     store,
     catalogue,
     config: runtimeConfig,

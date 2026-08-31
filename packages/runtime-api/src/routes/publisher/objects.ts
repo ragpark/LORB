@@ -27,7 +27,7 @@
 import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
-  audioDraftSchema, documentDraftSchema, launchContextSchema, quizDraftSchema, videoDraftSchema,
+  audioDraftSchema, documentDraftSchema, launchContextSchema, ltiToolDraftSchema, quizDraftSchema, videoDraftSchema,
 } from "../../../../contracts/src/index.js";
 import type { CatalogueStore, LearningObjectRow, MediaKind } from "../../catalogue/index.js";
 import type { RuntimeStore } from "../../store/index.js";
@@ -128,6 +128,15 @@ export interface PublisherContext {
    * up — the upload route refuses cleanly rather than the whole publisher surface failing to start.
    */
   documentConverterUrl?: string;
+  /**
+   * False only in production with no persistent LTI signing key configured. Outside production an
+   * ephemeral key generated at start-up is fine — nothing depends on it surviving a restart or
+   * matching across replicas. In production it would: a login-hint minted by one replica would be
+   * rejected by another, and a tool could fetch JWKS from a replica whose key never signed the
+   * id_token it received. Registration refuses cleanly rather than an LTI launch failing at random
+   * depending on which replica happens to serve it.
+   */
+  ltiKeysConfigured: boolean;
 }
 
 export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherContext): void {
@@ -352,6 +361,53 @@ export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherCont
         actorPseudonym: principal.pseudonym, actorRole: principal.role,
         actionType: "learning_object.author_quiz", targetType: "learning_object", targetId: registered.object_id,
         resultingState: { question_count: registered.question_count, content_version: registered.content_version },
+        outcome: "ALLOWED", correlationId: correlation,
+      });
+      const response = { ...registered, repository_id: repository.repository_id, correlation_id: correlation };
+      await complete(201, response);
+      return send(reply, 201, response);
+    });
+  });
+
+  /**
+   * Registering an LTI 1.3 tool: a third party's own content, launched by a real OIDC/id_token
+   * handshake (`/api/v1/lti/authorize`) rather than embedding an arbitrary origin directly. This is
+   * the only learning-object kind that ever points at an external URL — every other kind's
+   * `module_path` stays a relative path under the Player Shell's own origin, per the invariant this
+   * file documents at the top. Registration mints `client_id`/`deployment_id` server-side; there is
+   * no separate platform/tool registry, each LTI object is a fully self-contained registration.
+   */
+  app.post("/api/v1/publisher/learning-objects/lti-tools", async (req, reply) => {
+    const principal = await requireAdmin(req, reply, ctx.adminCtx, "learning_object.author_lti_tool", "learning_object");
+    if (!principal) return;
+    const correlation = correlationOf(req);
+    if (!ctx.ltiKeysConfigured) return sendAdminError(reply, "LTI_SIGNING_KEY_NOT_CONFIGURED", correlation);
+    const idempotencyKey = requireIdempotencyKey(req, reply);
+    if (!idempotencyKey) return;
+    const body = (req as { body: unknown }).body;
+
+    return idempotently(reply, correlation, "publisher-author-lti-tool", idempotencyKey, body, async (complete) => {
+      const envelope = authoringEnvelopeSchema.safeParse(body);
+      if (!envelope.success) return sendAdminError(reply, "ADMIN_REQUEST_INVALID", correlation);
+      const { repository_id: requestedRepository, ...rest } = envelope.data;
+      const draft = ltiToolDraftSchema.safeParse(rest);
+      if (!draft.success) return sendAdminError(reply, "ADMIN_REQUEST_INVALID", correlation);
+
+      const repository = requestedRepository
+        ? await ctx.catalogue.repository(requestedRepository)
+        : await ctx.catalogue.defaultRepository();
+      if (!repository) return sendAdminError(reply, "REPOSITORY_NOT_FOUND", correlation);
+      if (repository.status !== "ACTIVE") return sendAdminError(reply, "REPOSITORY_STATE_INVALID", correlation);
+      if (!await authorised(req, reply, principal, "learning_object.author_lti_tool", repository.repository_id, undefined, "repository_operator")) return;
+
+      const registered = await ctx.catalogue.registerLtiTool(draft.data, {
+        repository_id: repository.repository_id,
+        authored_by: principal.pseudonym,
+      });
+      await audit({
+        actorPseudonym: principal.pseudonym, actorRole: principal.role,
+        actionType: "learning_object.author_lti_tool", targetType: "learning_object", targetId: registered.object_id,
+        resultingState: { client_id: registered.client_id, deployment_id: registered.deployment_id },
         outcome: "ALLOWED", correlationId: correlation,
       });
       const response = { ...registered, repository_id: repository.repository_id, correlation_id: correlation };

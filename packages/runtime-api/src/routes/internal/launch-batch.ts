@@ -10,7 +10,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { issueDescriptor, sessionExpiresAt, type SigningKeyRing } from "../../core.js";
+import { issueDescriptor, sessionExpiresAt, signLtiLoginHint, type SigningKeyRing } from "../../core.js";
 import { requestFingerprint, withIdempotencyClaim } from "../../services/idempotency.js";
 import { computePseudonym } from "../../services/pseudonym-service.js";
 import { sendProblem } from "../../services/problem.js";
@@ -21,6 +21,7 @@ import type { RuntimeStore } from "../../store/index.js";
 export interface LaunchBatchContext {
   serviceToken: string | undefined;
   ring: SigningKeyRing;
+  ltiRing: SigningKeyRing;
   secret: Buffer;
   /** The issuer whose subjects these learner identifiers belong to. */
   identityIssuer: string;
@@ -117,6 +118,7 @@ export function registerInternalLaunchBatchRoutes(
               state_endpoint: `${ctx.publicIssuer}/api/v1/runtime/attempts/${attemptId}/state`,
               package_url: `${ctx.playerOrigin}${object.module_path}`,
               session_config: { expires_at: expiresAt },
+              content_profile: object.content_profile,
             }, { issuer: ctx.publicIssuer, evidenceEndpoint: ctx.evidenceEndpoint });
             const launchId = randomUUID();
             await ctx.store.recordLaunch({
@@ -124,11 +126,15 @@ export function registerInternalLaunchBatchRoutes(
               object_id: object.object_id, consumer_id: "internal-assignment",
               launch_mode: "embedded-iframe", expires_at: expiresAt, correlation_id: correlation,
             });
+            const hashParams = new URLSearchParams({ descriptor });
+            if (object.content_profile === "lti-tool-v1") {
+              hashParams.set("lti_login_hint", await signLtiLoginHint(ctx.ltiRing, { sub: pseudonym, object_id: object.object_id, attempt_id: attemptId }, ctx.publicIssuer));
+            }
             Object.assign(entry, {
               launch_id: launchId,
               attempt_id: attemptId,
               signed_descriptor: descriptor,
-              player_url: `${ctx.playerOrigin}/#descriptor=${encodeURIComponent(descriptor)}`,
+              player_url: `${ctx.playerOrigin}/#${hashParams.toString()}`,
               expires_at: expiresAt,
             });
           }

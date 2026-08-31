@@ -204,6 +204,98 @@ function NewQuizForm({ repositories, onCreated }: { repositories: Row[]; onCreat
   );
 }
 
+/**
+ * Registering an LTI 1.3 tool: the only kind that ever points at a URL outside the Player Shell's
+ * own origin — a real OIDC/id_token handshake stands between the launch and the tool's origin, so
+ * this never becomes an unreviewed iframe embed. Registration mints the tool's client_id and
+ * deployment_id server-side; both are shown once the tool is created so they can be handed to the
+ * tool provider for their own configuration.
+ */
+function NewLtiToolForm({ repositories, onCreated }: { repositories: Row[]; onCreated: (objectId: string) => void }) {
+  const [repositoryId, setRepositoryId] = useState('');
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [toolName, setToolName] = useState('');
+  const [oidcLoginUrl, setOidcLoginUrl] = useState('');
+  const [targetLinkUri, setTargetLinkUri] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  // Registration holds the dialog open on a confirmation view rather than calling onCreated (which
+  // closes the dialog) right away — client_id and deployment_id are minted once, shown here once,
+  // and nowhere else in the workspace, so closing before the admin has copied them loses them for good.
+  const [registered, setRegistered] = useState<{ object_id: string; client_id: string; deployment_id: string }>();
+  const submit = async () => {
+    setError('');
+    setSaving(true);
+    try {
+      const created = await publisher<{ object_id: string; client_id: string; deployment_id: string }>('learning-objects/lti-tools', {
+        method: 'POST',
+        body: {
+          ...(repositoryId ? { repository_id: repositoryId } : {}),
+          title,
+          ...(description ? { description } : {}),
+          tool_name: toolName,
+          oidc_login_url: oidcLoginUrl,
+          target_link_uri: targetLinkUri,
+        },
+      });
+      setRegistered(created);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  if (registered) {
+    return (
+      <div className="form">
+        <p className="governance-note">
+          Tool registered. Give the tool provider these values now — they are shown only here and are not recorded anywhere else in the workspace.
+        </p>
+        <dl>
+          <dt>client_id</dt>
+          <dd><code>{registered.client_id}</code></dd>
+          <dt>deployment_id</dt>
+          <dd><code>{registered.deployment_id}</code></dd>
+        </dl>
+        <div className="dialog-actions">
+          <button type="button" onClick={() => onCreated(registered.object_id)}>Done</button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+      <p className="governance-note">
+        LORB launches this tool through a real LTI 1.3 Resource Link handshake — an id_token signed by LORB and verified by the tool against LORB's published
+        JWKS — rather than embedding the tool's origin directly. No Assignment &amp; Grades Services and no Deep Linking are supported; a learner opens the
+        tool and marks the activity complete themselves.
+      </p>
+      <MediaBasics
+        repositoryId={repositoryId} onRepositoryId={setRepositoryId}
+        title={title} onTitle={setTitle} description={description} onDescription={setDescription}
+        repositories={repositories}
+      />
+      <label className="stacked">
+        Tool name
+        <input value={toolName} onChange={(e) => setToolName(e.target.value)} maxLength={120} required />
+      </label>
+      <label className="stacked">
+        OIDC login URL
+        <input type="url" value={oidcLoginUrl} onChange={(e) => setOidcLoginUrl(e.target.value)} placeholder="https://tool.example.com/lti/login" pattern="https://.*" required />
+      </label>
+      <label className="stacked">
+        Target link URI
+        <input type="url" value={targetLinkUri} onChange={(e) => setTargetLinkUri(e.target.value)} placeholder="https://tool.example.com/lti/launch" pattern="https://.*" required />
+      </label>
+      {error && <p role="alert" className="error-text">{error}</p>}
+      <div className="dialog-actions">
+        <button type="submit" disabled={saving}>{saving ? 'Registering…' : 'Register LTI tool'}</button>
+      </div>
+    </form>
+  );
+}
+
 function NewPackagedObjectForm({ repositories, onCreated }: { repositories: Row[]; onCreated: (objectId: string) => void }) {
   const [form, setForm] = useState({
     repository_id: '', title: '', description: '', duration: '', kind: 'native-web-package',
@@ -554,13 +646,14 @@ function NewLearningObjectDialog({ repositories, onCreated }: { repositories: Ro
         <Dialog.Overlay className="overlay" />
         <Dialog.Content className="dialog wide">
           <Dialog.Title>New learning object</Dialog.Title>
-          <Dialog.Description>Author a quiz, add a video, document, or audio activity, or register a packaged module that has already been built and hashed.</Dialog.Description>
+          <Dialog.Description>Author a quiz, add a video, document, or audio activity, register a third-party tool as an LTI 1.3 launch, or register a packaged module that has already been built and hashed.</Dialog.Description>
           <Tabs.Root defaultValue="quiz">
             <Tabs.List aria-label="What to create">
               <Tabs.Trigger value="quiz">Author a quiz</Tabs.Trigger>
               <Tabs.Trigger value="video">Add a video</Tabs.Trigger>
               <Tabs.Trigger value="document">Add a document</Tabs.Trigger>
               <Tabs.Trigger value="audio">Add audio</Tabs.Trigger>
+              <Tabs.Trigger value="lti-tool">Add an LTI tool</Tabs.Trigger>
               <Tabs.Trigger value="package">Register a packaged module</Tabs.Trigger>
             </Tabs.List>
             <Tabs.Content value="quiz">
@@ -574,6 +667,9 @@ function NewLearningObjectDialog({ repositories, onCreated }: { repositories: Ro
             </Tabs.Content>
             <Tabs.Content value="audio">
               <NewAudioForm repositories={repositories} onCreated={created} />
+            </Tabs.Content>
+            <Tabs.Content value="lti-tool">
+              <NewLtiToolForm repositories={repositories} onCreated={created} />
             </Tabs.Content>
             <Tabs.Content value="package">
               <NewPackagedObjectForm repositories={repositories} onCreated={created} />

@@ -10,7 +10,7 @@
  * are real rows: a descriptor binds to the version that was actually published.
  */
 import type {
-  AudioContent, AudioDraft, DocumentContent, DocumentDraft, LaunchContext, QuizContent, QuizDraft, VideoContent, VideoDraft,
+  AudioContent, AudioDraft, DocumentContent, DocumentDraft, LaunchContext, LtiToolContent, LtiToolDraft, QuizContent, QuizDraft, VideoContent, VideoDraft,
 } from "../../../contracts/src/index.js";
 
 /** The three media kinds registered alongside quizzes, each behind one fixed shared player. */
@@ -30,7 +30,7 @@ export interface MarketplacePricing {
 export type AnyMediaContent = VideoContent | DocumentContent | AudioContent;
 export type AnyMediaDraft = VideoDraft | DocumentDraft | AudioDraft;
 /** Everything a learning object's content route may serve. */
-export type AnyContent = QuizContent | AnyMediaContent;
+export type AnyContent = QuizContent | AnyMediaContent | LtiToolContent;
 
 export interface Repository {
   repository_id: string;
@@ -53,13 +53,18 @@ export interface LearningObjectRow {
   kind: string;
   module_path: string;
   /** Present only on objects whose content is a JSON payload rather than bundled code. */
-  content_profile?: "quiz-json-v1" | "video-json-v1" | "document-json-v1" | "audio-json-v1";
+  content_profile?: "quiz-json-v1" | "video-json-v1" | "document-json-v1" | "audio-json-v1" | "lti-tool-v1";
   /** Provenance, so an operator can see which objects an agent authored. */
   authored_by?: string;
   /** Whether this repository has opted this object in to cross-repository marketplace discovery.
    *  Absent (or false) means the object is reachable only within its own repository, same as every
    *  object registered before the marketplace existed. */
   marketplace_listed?: boolean;
+  /** Present only on an `lti-tool-v1` object — the values GET /api/v1/lti/authorize looks a launch up
+   *  by. Denormalised out of the content JSON purely so that lookup can be an indexed column read
+   *  instead of a JSON scan; the content row remains the source of truth an edit rewrites. */
+  lti_client_id?: string;
+  lti_deployment_id?: string;
   /** What the listing repository charges another repository's administrator to subscribe. Absent or
    *  all-null means free. Informational — see MarketplacePricing. */
   marketplace_price_cents?: number | null;
@@ -121,6 +126,19 @@ export interface RegisteredMedia {
   package_version: string;
   content_version: string;
   title: string;
+}
+
+/** What registering an LTI tool produces — includes the client_id and deployment_id LORB assigned it,
+ *  which the caller must hand to the tool vendor's own configuration for the launch to ever verify. */
+export interface RegisteredLtiTool {
+  object_id: string;
+  object_version_id: string;
+  package_version_id: string;
+  package_version: string;
+  content_version: string;
+  title: string;
+  client_id: string;
+  deployment_id: string;
 }
 
 /**
@@ -266,6 +284,15 @@ export interface CatalogueStore {
    * pre-rasterised page image URLs — see packages/document-converter. */
   registerMedia(kind: MediaKind, draft: AnyMediaDraft, options?: { repository_id?: string; authored_by?: string }): Promise<RegisteredMedia>;
 
-  /** Ensures every shared player package row exists (quiz, video, document, audio). Idempotent. */
+  /** Registers a third-party LTI 1.3 tool against the shared LTI launch handling in the Player Shell.
+   *  `client_id` and `deployment_id` are minted here, never accepted from the draft. */
+  registerLtiTool(draft: LtiToolDraft, options?: { repository_id?: string; authored_by?: string }): Promise<RegisteredLtiTool>;
+
+  /** The one lookup GET /api/v1/lti/authorize needs: which object a tool's (client_id, deployment_id)
+   *  pair names, so it can check the caller's redirect_uri against that object's own target_link_uri.
+   *  Undefined for anything that isn't a published lti-tool-v1 object with that exact pair. */
+  learningObjectByLtiClient(clientId: string, deploymentId: string): Promise<LearningObjectRow | undefined>;
+
+  /** Ensures every shared player package row exists (quiz, video, document, audio, LTI launch). Idempotent. */
   ensureSharedPlayer(): Promise<void>;
 }
