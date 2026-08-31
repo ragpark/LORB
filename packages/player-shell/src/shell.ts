@@ -91,7 +91,37 @@ async function startLtiLaunch(d:Descriptor){
   });
  }catch(error){status.textContent="This activity could not be opened.";emit("experience.error",{code:"LAUNCH_INVALID",recoverable:false,detail:error instanceof Error?error.message:"Unknown error"})}
 }
-async function start(){try{const signed=token();if(!signed)throw new Error("Launch descriptor is missing");const unverified=JSON.parse(atob(signed.split('.')[1]!.replace(/-/g,'+').replace(/_/g,'/'))) as Descriptor;const jwks=createRemoteJWKSet(new URL(`${unverified.iss.replace(/\/$/,'')}/api/v1/runtime/jwks`));descriptor=(await jwtVerify(signed,jwks,{issuer:unverified.iss,audience:"lorb-player",algorithms:["ES256"]})).payload as unknown as Descriptor;if(descriptor.content_profile==="lti-tool-v1"){await startLtiLaunch(descriptor);return}awaitingInitialLoad=true;frame.src=`${descriptor.package_url}${descriptor.package_url.includes("#")?"&":"#"}${HANDSHAKE_FRAGMENT_KEY}=${handshakeNonce}`;status.textContent="Learning activity loaded"}catch(error){status.textContent="This activity could not be opened.";emit("experience.error",{code:"LAUNCH_INVALID",recoverable:false,detail:error instanceof Error?error.message:"Unknown error"})}}
+interface ExternalEmbedContent{title:string;description?:string;embed_url:string}
+/**
+ * An external-embed launch, like lti-tool, never speaks the module postMessage protocol — the
+ * embedded page is somebody else's, unmodified, and cannot be expected to send `module.hello`. Unlike
+ * an lti-tool launch there is no signed handshake to drive first: the page loads straight into the
+ * existing module iframe, just with its sandbox widened to allow-same-origin/allow-forms, since
+ * arbitrary external content generally needs cookies and same-origin storage to function at all —
+ * the same reasoning startLtiLaunch's widening documents. No HANDSHAKE_FRAGMENT_KEY is appended, so
+ * the existing module.hello origin/nonce check above still refuses anything the embedded page tries
+ * to send as if it were a real module.
+ */
+async function startExternalEmbed(d:Descriptor){
+ try{
+  const contentUrl=`${d.iss.replace(/\/$/,"")}/api/v1/runtime/learning-objects/${d.object_id}/content?object_version_id=${encodeURIComponent(d.object_version_id)}`;
+  const response=await fetch(contentUrl);
+  if(!response.ok)throw new Error(`Could not load embed details (${response.status})`);
+  const content=await response.json() as ExternalEmbedContent;
+  frame.setAttribute("sandbox","allow-scripts allow-forms allow-same-origin");
+  awaitingInitialLoad=true;
+  frame.src=content.embed_url;
+  status.textContent="Learning activity loaded";
+  const completeBtn=document.querySelector<HTMLButtonElement>("#mark-complete")!;
+  completeBtn.hidden=false;
+  completeBtn.addEventListener("click",async()=>{
+   completeBtn.disabled=true;
+   try{await request(d.state_endpoint.replace(/\/state$/,"/complete"),"POST");emit("experience.complete",{});completeBtn.textContent="Completed"}
+   catch{completeBtn.disabled=false}
+  });
+ }catch(error){status.textContent="This activity could not be opened.";emit("experience.error",{code:"LAUNCH_INVALID",recoverable:false,detail:error instanceof Error?error.message:"Unknown error"})}
+}
+async function start(){try{const signed=token();if(!signed)throw new Error("Launch descriptor is missing");const unverified=JSON.parse(atob(signed.split('.')[1]!.replace(/-/g,'+').replace(/_/g,'/'))) as Descriptor;const jwks=createRemoteJWKSet(new URL(`${unverified.iss.replace(/\/$/,'')}/api/v1/runtime/jwks`));descriptor=(await jwtVerify(signed,jwks,{issuer:unverified.iss,audience:"lorb-player",algorithms:["ES256"]})).payload as unknown as Descriptor;if(descriptor.content_profile==="lti-tool-v1"){await startLtiLaunch(descriptor);return}if(descriptor.content_profile==="external-embed-v1"){await startExternalEmbed(descriptor);return}awaitingInitialLoad=true;frame.src=`${descriptor.package_url}${descriptor.package_url.includes("#")?"&":"#"}${HANDSHAKE_FRAGMENT_KEY}=${handshakeNonce}`;status.textContent="Learning activity loaded"}catch(error){status.textContent="This activity could not be opened.";emit("experience.error",{code:"LAUNCH_INVALID",recoverable:false,detail:error instanceof Error?error.message:"Unknown error"})}}
 // Module messages are handled strictly in order. Each handler is async (it makes a Runtime call), so
 // firing them concurrently would let a completion overtake the `state.put` that legally moves the
 // attempt CREATED -> STARTED, or reorder an evidence chain. Serialising costs nothing here and makes

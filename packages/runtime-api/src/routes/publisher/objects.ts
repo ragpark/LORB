@@ -27,7 +27,7 @@
 import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
-  audioDraftSchema, documentDraftSchema, launchContextSchema, ltiToolDraftSchema, quizDraftSchema, videoDraftSchema,
+  audioDraftSchema, documentDraftSchema, externalEmbedDraftSchema, launchContextSchema, ltiToolDraftSchema, quizDraftSchema, videoDraftSchema,
 } from "../../../../contracts/src/index.js";
 import type { CatalogueStore, LearningObjectRow, MediaKind } from "../../catalogue/index.js";
 import type { RuntimeStore } from "../../store/index.js";
@@ -137,6 +137,10 @@ export interface PublisherContext {
    * depending on which replica happens to serve it.
    */
   ltiKeysConfigured: boolean;
+  /** Origins a packaged "external embed" object may point at. Empty means the deployment has not
+   *  opted in to external-embed content — registration refuses every embed_url, not just unlisted
+   *  ones, rather than silently trusting whatever an admin pastes in. */
+  allowedExternalEmbedOrigins: string[];
 }
 
 export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherContext): void {
@@ -408,6 +412,57 @@ export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherCont
         actorPseudonym: principal.pseudonym, actorRole: principal.role,
         actionType: "learning_object.author_lti_tool", targetType: "learning_object", targetId: registered.object_id,
         resultingState: { client_id: registered.client_id, deployment_id: registered.deployment_id },
+        outcome: "ALLOWED", correlationId: correlation,
+      });
+      const response = { ...registered, repository_id: repository.repository_id, correlation_id: correlation };
+      await complete(201, response);
+      return send(reply, 201, response);
+    });
+  });
+
+  /**
+   * Registering an external embed: a plain iframe embed of a third party's page that speaks no
+   * launch protocol at all — not LTI, not the module postMessage handshake. Weaker than an lti-tool
+   * launch by design (no signed launch, no verification of the embedded page's identity), so the only
+   * guardrail is that `embed_url`'s origin must already be on this deployment's configured
+   * ALLOWED_EXTERNAL_EMBED_ORIGINS — an admin cannot point a launch at an origin nobody at the
+   * deployment level agreed to trust, the same reasoning `native-web-package`'s `module_path`
+   * invariant applies to bundled code. Reach for the lti-tool route above instead whenever the third
+   * party can do LTI.
+   */
+  app.post("/api/v1/publisher/learning-objects/external-embeds", async (req, reply) => {
+    const principal = await requireAdmin(req, reply, ctx.adminCtx, "learning_object.author_external_embed", "learning_object");
+    if (!principal) return;
+    const correlation = correlationOf(req);
+    const idempotencyKey = requireIdempotencyKey(req, reply);
+    if (!idempotencyKey) return;
+    const body = (req as { body: unknown }).body;
+
+    return idempotently(reply, correlation, "publisher-author-external-embed", idempotencyKey, body, async (complete) => {
+      const envelope = authoringEnvelopeSchema.safeParse(body);
+      if (!envelope.success) return sendAdminError(reply, "ADMIN_REQUEST_INVALID", correlation);
+      const { repository_id: requestedRepository, ...rest } = envelope.data;
+      const draft = externalEmbedDraftSchema.safeParse(rest);
+      if (!draft.success) return sendAdminError(reply, "ADMIN_REQUEST_INVALID", correlation);
+      if (!ctx.allowedExternalEmbedOrigins.includes(new URL(draft.data.embed_url).origin)) {
+        return sendAdminError(reply, "EXTERNAL_EMBED_ORIGIN_NOT_ALLOWED", correlation);
+      }
+
+      const repository = requestedRepository
+        ? await ctx.catalogue.repository(requestedRepository)
+        : await ctx.catalogue.defaultRepository();
+      if (!repository) return sendAdminError(reply, "REPOSITORY_NOT_FOUND", correlation);
+      if (repository.status !== "ACTIVE") return sendAdminError(reply, "REPOSITORY_STATE_INVALID", correlation);
+      if (!await authorised(req, reply, principal, "learning_object.author_external_embed", repository.repository_id, undefined, "repository_operator")) return;
+
+      const registered = await ctx.catalogue.registerExternalEmbed(draft.data, {
+        repository_id: repository.repository_id,
+        authored_by: principal.pseudonym,
+      });
+      await audit({
+        actorPseudonym: principal.pseudonym, actorRole: principal.role,
+        actionType: "learning_object.author_external_embed", targetType: "learning_object", targetId: registered.object_id,
+        resultingState: { embed_origin: new URL(draft.data.embed_url).origin },
         outcome: "ALLOWED", correlationId: correlation,
       });
       const response = { ...registered, repository_id: repository.repository_id, correlation_id: correlation };

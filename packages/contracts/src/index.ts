@@ -187,6 +187,27 @@ export type LtiToolDraft = z.infer<typeof ltiToolDraftSchema>;
 export type LtiToolContent = z.infer<typeof ltiToolContentSchema>;
 
 // ---------------------------------------------------------------------------
+// External embed: a plain iframe embed of a third party's page, for content that speaks no launch
+// protocol at all — not LTI, not a postMessage handshake. No signed launch, no client_id, no
+// verification that the embedded page is who it claims to be: the only guardrail is that its origin
+// must already be on the deployment's configured allow-list (ALLOWED_EXTERNAL_EMBED_ORIGINS), so an
+// admin cannot point a launch at an origin nobody at the deployment level agreed to trust. Weaker
+// than an lti-tool launch by design — reach for lti-tool instead whenever the third party can do LTI.
+// ---------------------------------------------------------------------------
+export const externalEmbedDraftSchema = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().max(600).optional(),
+  embed_url: httpsUrl,
+}).strict();
+export const externalEmbedContentSchema = externalEmbedDraftSchema.extend({
+  object_id: uuid,
+  content_version: z.string().regex(/^\d+$/),
+  created_at: z.string().datetime(),
+}).strict();
+export type ExternalEmbedDraft = z.infer<typeof externalEmbedDraftSchema>;
+export type ExternalEmbedContent = z.infer<typeof externalEmbedContentSchema>;
+
+// ---------------------------------------------------------------------------
 // Launch context (publisher-authored, versioned with the object)
 //
 // Configuration a published object carries into its own launch: which theme

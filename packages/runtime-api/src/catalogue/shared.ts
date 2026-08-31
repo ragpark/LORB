@@ -3,11 +3,12 @@
  */
 import { randomUUID } from "node:crypto";
 import {
-  audioContentSchema, documentContentSchema, ltiToolContentSchema, quizContentSchema, videoContentSchema,
-  type AudioDraft, type DocumentDraft, type LtiToolDraft, type QuizContent, type QuizDraft, type VideoDraft,
+  audioContentSchema, documentContentSchema, externalEmbedContentSchema, ltiToolContentSchema, quizContentSchema, videoContentSchema,
+  type AudioDraft, type DocumentDraft, type ExternalEmbedDraft, type LtiToolDraft, type QuizContent, type QuizDraft, type VideoDraft,
 } from "../../../contracts/src/index.js";
 import type {
-  AnyContent, AnyMediaDraft, LearningObjectRow, MediaKind, ObjectContentRevision, PackageVersionRow, RegisteredLtiTool, RegisteredMedia, RegisteredQuiz,
+  AnyContent, AnyMediaDraft, LearningObjectRow, MediaKind, ObjectContentRevision, PackageVersionRow, RegisteredExternalEmbed, RegisteredLtiTool,
+  RegisteredMedia, RegisteredQuiz,
 } from "./types.js";
 
 /**
@@ -159,6 +160,76 @@ export function buildLtiToolRegistration(
       title: draft.title,
       client_id,
       deployment_id,
+    },
+  };
+}
+
+/**
+ * The fixed "player" identifier for an external embed launch — same bookkeeping-placeholder role as
+ * LTI_PLAYER above, and never dereferenced as a real page for the same reason: Player Shell
+ * recognises `content_profile: "external-embed-v1"` on the descriptor and renders the embed itself
+ * rather than creating the sandboxed module iframe every other kind uses.
+ */
+export const EXTERNAL_EMBED_PLAYER = {
+  package_version_id: "5cbe1b8a-2f2a-4a5c-9f8b-6d1c0a7e4b71",
+  package_id: "5cbe1b8a-2f2a-4a5c-9f8b-6d1c0a7e4b72",
+  semver: "1.0.0",
+  module_path: "/modules/external-embed/index.html",
+  sha256: "6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e",
+} as const;
+
+export const EXTERNAL_EMBED_PLAYER_PACKAGE: PackageVersionRow = {
+  package_version_id: EXTERNAL_EMBED_PLAYER.package_version_id,
+  object_id: null,
+  semver: EXTERNAL_EMBED_PLAYER.semver,
+  sha256: EXTERNAL_EMBED_PLAYER.sha256,
+  delivery_profile: "native-web-package",
+  status: "PUBLISHED",
+  published_at: "2026-08-31T08:00:00.000Z",
+  module_path: EXTERNAL_EMBED_PLAYER.module_path,
+  shared_player: true,
+};
+
+/**
+ * Builds the rows registering an external embed produces. Unlike an LTI tool, nothing here mints a
+ * credential — the caller (a publisher route) is responsible for having already checked embed_url's
+ * origin against the deployment's configured allow-list before this is called.
+ */
+export function buildExternalEmbedRegistration(
+  draft: ExternalEmbedDraft,
+  repositoryId: string,
+  authoredBy: string | undefined,
+): { object: LearningObjectRow; content: AnyContent; registered: RegisteredExternalEmbed; objectVersionSemver: string } {
+  const object_id = randomUUID();
+  const object_version_id = randomUUID();
+  const created_at = new Date().toISOString();
+  const content = externalEmbedContentSchema.parse({ ...draft, object_id, content_version: "1", created_at });
+  const object: LearningObjectRow = {
+    object_id,
+    repository_id: repositoryId,
+    status: "PUBLISHED",
+    active_object_version_id: object_version_id,
+    active_package_version_id: EXTERNAL_EMBED_PLAYER.package_version_id,
+    created_at,
+    title: draft.title,
+    description: draft.description ?? `An embedded page from ${new URL(draft.embed_url).origin}.`,
+    duration: "Varies",
+    kind: "external-embed",
+    module_path: EXTERNAL_EMBED_PLAYER.module_path,
+    content_profile: "external-embed-v1",
+    ...(authoredBy ? { authored_by: authoredBy } : {}),
+  };
+  return {
+    object,
+    content,
+    objectVersionSemver: "1.0.0",
+    registered: {
+      object_id,
+      object_version_id,
+      package_version_id: EXTERNAL_EMBED_PLAYER.package_version_id,
+      package_version: EXTERNAL_EMBED_PLAYER.semver,
+      content_version: content.content_version,
+      title: draft.title,
     },
   };
 }

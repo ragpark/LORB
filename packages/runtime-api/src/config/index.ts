@@ -88,6 +88,10 @@ export interface RuntimeConfig {
    * deployed — only the .../documents/upload publisher route needs it. */
   documentConverterUrl?: string;
   allowedConsumerOrigins: string[];
+  /** Origins a packaged "external embed" object may point at. Empty means the deployment has not
+   *  opted in to external-embed content at all — registration refuses rather than accepting any
+   *  https URL, since nothing here has been reviewed the way this platform's other content has. */
+  allowedExternalEmbedOrigins: string[];
   identity: IdentityProviderConfig;
   lrs: LrsConfig;
   forwarder: ForwarderConfig;
@@ -387,6 +391,11 @@ export function loadConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfi
     problems.push("ALLOWED_CONSUMER_ORIGINS must list at least one origin in production");
   }
 
+  // No development default here, unlike allowedConsumerOrigins above: an empty list means the
+  // deployment has not opted in to external-embed content, which is the right default everywhere,
+  // dev included — nothing forces a test suite or a local run to trust an origin it never chose.
+  const allowedExternalEmbedOrigins = parseOrigins(env("ALLOWED_EXTERNAL_EMBED_ORIGINS"), problems, "ALLOWED_EXTERNAL_EMBED_ORIGINS");
+
   const internalServiceToken = env("RUNTIME_INTERNAL_SERVICE_TOKEN");
   if (production && !internalServiceToken) {
     problems.push("RUNTIME_INTERNAL_SERVICE_TOKEN is required in production");
@@ -416,6 +425,7 @@ export function loadConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfi
     packageUrl: env("PACKAGE_PUBLIC_URL") ?? `${playerOrigin}/module/index.html`,
     documentConverterUrl: readDocumentConverterUrl(production, problems),
     allowedConsumerOrigins,
+    allowedExternalEmbedOrigins,
     identity: readIdentity(production, publicIssuer, problems),
     lrs: readLrs(production, problems),
     forwarder: {

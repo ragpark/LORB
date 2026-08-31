@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<title>External embed</title>
+</head>
+<body>
+<!--
+  Defense-in-depth only. An external-embed object's `module_path` names this URL for consistency
+  with every other kind, but Player Shell recognises `content_profile: "external-embed-v1"` on the
+  descriptor before it ever creates the module iframe with this document — this page is never the
+  primary path. If it renders at all, something upstream skipped that check, so it says nothing more
+  than that.
+-->
+<p>This learning activity is embedded by Player Shell directly and has no content of its own here.</p>
+</body>
+</html>

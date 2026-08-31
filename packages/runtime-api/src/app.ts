@@ -16,7 +16,7 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import type { KeyLike } from "jose";
-import { launchRequestSchema, type AudioContent, type LtiToolContent, type VideoContent } from "../../contracts/src/index.js";
+import { launchRequestSchema, type AudioContent, type ExternalEmbedContent, type LtiToolContent, type VideoContent } from "../../contracts/src/index.js";
 import { config as loadRuntimeConfig, loadConfig, type RuntimeConfig } from "./config/index.js";
 import { catalogue as defaultCatalogue, createCatalogue, type CatalogueStore, type LearningObjectRow } from "./catalogue/index.js";
 import { createStore, type RuntimeStore } from "./store/index.js";
@@ -59,6 +59,8 @@ export interface RuntimeOptions {
   packageUrl?: string;
   internalServiceToken?: string;
   documentConverterUrl?: string;
+  /** Test seam for the external-embed allow-list, so a suite need not set ALLOWED_EXTERNAL_EMBED_ORIGINS. */
+  allowedExternalEmbedOrigins?: string[];
   store?: RuntimeStore;
   catalogue?: CatalogueStore;
   signingKeys?: SigningKeyRing;
@@ -93,6 +95,7 @@ function applyOverrides(base: RuntimeConfig, options: RuntimeOptions): RuntimeCo
     ...(options.packageUrl ? { packageUrl: options.packageUrl } : {}),
     ...(options.internalServiceToken ? { internalServiceToken: options.internalServiceToken } : {}),
     ...(options.documentConverterUrl ? { documentConverterUrl: options.documentConverterUrl } : {}),
+    ...(options.allowedExternalEmbedOrigins ? { allowedExternalEmbedOrigins: options.allowedExternalEmbedOrigins } : {}),
   };
 }
 
@@ -828,6 +831,10 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
       const tool = content as LtiToolContent;
       return { ...base, kind: "lti-tool" as const, tool_name: tool.tool_name, target_link_uri: tool.target_link_uri };
     }
+    if (object.content_profile === "external-embed-v1" && content && "embed_url" in content) {
+      const embed = content as ExternalEmbedContent;
+      return { ...base, kind: "external-embed" as const, embed_url: embed.embed_url };
+    }
     return { ...base, kind: "unsupported" as const };
   });
 
@@ -930,6 +937,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
   registerPublisherRoutes(app, {
     catalogue, store, adminCtx, documentConverterUrl: runtimeConfig.documentConverterUrl,
     ltiKeysConfigured: !runtimeConfig.production || runtimeConfig.ltiSigningKeys.length > 0,
+    allowedExternalEmbedOrigins: runtimeConfig.allowedExternalEmbedOrigins,
   });
   registerAdminRepositoryRoutes(app, adminCtx);
   registerAdminMembershipRoutes(app, adminCtx);

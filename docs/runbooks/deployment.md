@@ -275,8 +275,8 @@ unsubscribes — it removes the bookmark without touching the object or anything
 
 `GET /api/v1/admin/learning-objects/{id}/preview` backs the teacher workspace's preview modal — any
 admin, no repository membership required, same scope as the unfiltered object list above. It mints
-no descriptor and creates no attempt, so opening one leaves no evidence. The five data-authored
-kinds (quiz, video, document, audio, lti-tool) return structured content; a code-bundled object comes
+no descriptor and creates no attempt, so opening one leaves no evidence. The six data-authored
+kinds (quiz, video, document, audio, lti-tool, external-embed) return structured content; a code-bundled object comes
 back `"kind": "unsupported"` rather than something rendering its live module here would have to fake. A
 quiz's `correct_option_id` and `explanation` are never included — the same marking-key withholding
 the learner-facing content route already applies.
@@ -312,6 +312,26 @@ descriptor and never creates the sandboxed module iframe every other kind uses �
 panel instead, and on click navigates its own document through the tool's OIDC flow. The learner
 portal's iframe sandbox is widened only for `kind === "lti-tool"`, to `allow-scripts allow-forms
 allow-same-origin` — every other kind keeps the plain `allow-scripts` sandbox unchanged.
+
+**External embeds** (migration 015) register a plain iframe embed of a third party's page —
+`POST …/learning-objects/external-embeds` with `{"title", "embed_url", ["description"]}`,
+`embed_url` required to be `https://`. Like an lti-tool, this is the one other learning-object kind
+that points at a URL outside the Player Shell's own origin — the `native-web-package` `module_path`
+invariant is still never touched. Unlike an lti-tool launch, there is no signed handshake and no
+verification of the embedded page's identity at all: the only guardrail is that `embed_url`'s origin
+must already be on `ALLOWED_EXTERNAL_EMBED_ORIGINS`, configured at the deployment level (not
+admin-editable — changing the list is a redeploy). Registration refuses every `embed_url` outright
+when that list is empty, which is the default, so a deployment that hasn't opted in to external
+embeds can't accidentally accept one. Prefer registering a tool as `lti-tool` instead whenever the
+third party can do LTI — it is the stronger guarantee.
+
+Player Shell recognises `content_profile: "external-embed-v1"` the same way it recognises an
+lti-tool launch, but stays in the ordinary module-iframe layout rather than replacing itself: it
+widens that iframe's sandbox to `allow-scripts allow-forms allow-same-origin`, sets its `src`
+directly to `embed_url` (no module handshake — the embedded page is somebody else's and won't send
+one), and shows a "Mark as complete" button in its header, since nothing about a plain embed can
+signal completion on the learner's behalf. The learner portal's own iframe sandbox is widened the
+same way for `kind === "external-embed"`, alongside `lti-tool`.
 
 ## Deploying a new version
 

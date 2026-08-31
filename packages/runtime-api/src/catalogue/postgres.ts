@@ -9,15 +9,18 @@
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import {
-  audioContentSchema, documentContentSchema, ltiToolContentSchema, quizContentSchema, videoContentSchema, type LaunchContext, type LtiToolDraft, type QuizDraft,
+  audioContentSchema, documentContentSchema, externalEmbedContentSchema, ltiToolContentSchema, quizContentSchema, videoContentSchema,
+  type ExternalEmbedDraft, type LaunchContext, type LtiToolDraft, type QuizDraft,
 } from "../../../contracts/src/index.js";
 import {
-  buildLtiToolRegistration, buildMediaRegistration, buildMediaRevision, buildQuizRegistration, buildQuizRevision,
-  DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, LTI_PLAYER, LTI_PLAYER_PACKAGE, MEDIA_PLAYERS, MEDIA_PLAYER_PACKAGES, nextMinorSemver, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE,
+  buildExternalEmbedRegistration, buildLtiToolRegistration, buildMediaRegistration, buildMediaRevision, buildQuizRegistration, buildQuizRevision,
+  DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, EXTERNAL_EMBED_PLAYER, EXTERNAL_EMBED_PLAYER_PACKAGE, LTI_PLAYER, LTI_PLAYER_PACKAGE, MEDIA_PLAYERS, MEDIA_PLAYER_PACKAGES,
+  nextMinorSemver, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE,
 } from "./shared.js";
 import type {
   AnyContent, AnyMediaDraft, CatalogueStore, LaunchContextRevision, LearningObjectRow, MarketplacePricing, MediaKind, ObjectContentRevision,
-  ObjectLifecycleStatus, ObjectMetadataPatch, ObjectDeletion, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredLtiTool, RegisteredMedia, RegisteredQuiz, Repository,
+  ObjectLifecycleStatus, ObjectMetadataPatch, ObjectDeletion, ObjectRegistration, ObjectVersionRow, PackageVersionRow, RegisteredExternalEmbed, RegisteredLtiTool,
+  RegisteredMedia, RegisteredQuiz, Repository,
 } from "./types.js";
 
 const CONTENT_SCHEMAS = { video: videoContentSchema, document: documentContentSchema, audio: audioContentSchema } as const;
@@ -27,6 +30,7 @@ function parseContent(contentProfile: string | null | undefined, payload: unknow
     : contentProfile === "document-json-v1" ? CONTENT_SCHEMAS.document
     : contentProfile === "audio-json-v1" ? CONTENT_SCHEMAS.audio
     : contentProfile === "lti-tool-v1" ? ltiToolContentSchema
+    : contentProfile === "external-embed-v1" ? externalEmbedContentSchema
     : quizContentSchema; // covers 'quiz-json-v1' and legacy rows written before content_profile was stored on this table
   const parsed = schema.safeParse(payload);
   return parsed.success ? parsed.data : undefined;
@@ -620,6 +624,48 @@ export class PostgresCatalogueStore implements CatalogueStore {
     return result.rows[0] ? toObject(result.rows[0]) : undefined;
   }
 
+  async registerExternalEmbed(draft: ExternalEmbedDraft, options: { repository_id?: string; authored_by?: string } = {}): Promise<RegisteredExternalEmbed> {
+    await this.ensureSharedPlayer();
+    const repositoryId = options.repository_id ?? (await this.defaultRepository())?.repository_id;
+    if (!repositoryId) throw new Error("NO_ACTIVE_REPOSITORY");
+    const built = buildExternalEmbedRegistration(draft, repositoryId, options.authored_by);
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      await client.query(
+        `insert into learning_object (object_id, repository_id, active_object_version_id, active_package_version_id,
+           status, title, description, duration, kind, module_path, content_profile, authored_by, created_at)
+         values ($1,$2,$3,$4,'PUBLISHED',$5,$6,$7,$8,$9,'external-embed-v1',$10,$11)`,
+        [built.object.object_id, repositoryId, built.object.active_object_version_id, EXTERNAL_EMBED_PLAYER.package_version_id,
+         built.object.title, built.object.description, built.object.duration, built.object.kind,
+         built.object.module_path, built.object.authored_by ?? null, built.object.created_at],
+      );
+      await client.query(
+        `insert into object_version (object_version_id, object_id, semver, package_version_id, status, published_at, content_version)
+         values ($1,$2,$3,$4,'PUBLISHED', now(), $5)`,
+        [built.object.active_object_version_id, built.object.object_id, built.objectVersionSemver,
+         EXTERNAL_EMBED_PLAYER.package_version_id, built.content.content_version],
+      );
+      await client.query(
+        `insert into learning_object_content (object_id, content_profile, content_version, payload)
+         values ($1,'external-embed-v1',$2,$3)`,
+        [built.object.object_id, built.content.content_version, JSON.stringify(built.content)],
+      );
+      await client.query(
+        `insert into learning_object_content_version (object_id, content_profile, content_version, payload)
+         values ($1,'external-embed-v1',$2,$3) on conflict (object_id, content_version) do nothing`,
+        [built.object.object_id, built.content.content_version, JSON.stringify(built.content)],
+      );
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+    return built.registered;
+  }
+
   async ensureSharedPlayer(): Promise<void> {
     await this.pool.query(
       `insert into package_version (package_version_id, package_id, object_id, semver, sha256, delivery_profile,
@@ -647,6 +693,14 @@ export class PostgresCatalogueStore implements CatalogueStore {
        on conflict (package_version_id) do nothing`,
       [LTI_PLAYER.package_version_id, LTI_PLAYER.package_id, LTI_PLAYER.semver, LTI_PLAYER.sha256,
        LTI_PLAYER.module_path, LTI_PLAYER_PACKAGE.published_at],
+    );
+    await this.pool.query(
+      `insert into package_version (package_version_id, package_id, object_id, semver, sha256, delivery_profile,
+         entry_point, module_path, status, published_at, shared_player)
+       values ($1,$2,null,$3,$4,'native-web-package',$5,$5,'PUBLISHED',$6,true)
+       on conflict (package_version_id) do nothing`,
+      [EXTERNAL_EMBED_PLAYER.package_version_id, EXTERNAL_EMBED_PLAYER.package_id, EXTERNAL_EMBED_PLAYER.semver, EXTERNAL_EMBED_PLAYER.sha256,
+       EXTERNAL_EMBED_PLAYER.module_path, EXTERNAL_EMBED_PLAYER_PACKAGE.published_at],
     );
   }
 
