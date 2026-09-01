@@ -11,7 +11,9 @@ import rateLimit from "@fastify/rate-limit";
 import { generateKeyPair } from "jose";
 import { describe, expect, it, vi } from "vitest";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
-import { registerRelayRoutes, endpointsFromEnvironment } from "../../packages/experience-relay/src/app.js";
+import {
+  registerRelayRoutes, endpointsFromEnvironment, stubPriorPerformance, performanceTier, resolveEndpointName,
+} from "../../packages/experience-relay/src/app.js";
 import { issueIesToken } from "../../packages/dev-identity/src/issuer.js";
 import { MemoryRuntimeStore } from "../../packages/runtime-api/src/store/index.js";
 import { MemoryCatalogueStore } from "../../packages/runtime-api/src/catalogue/index.js";
@@ -59,6 +61,13 @@ const turn = (endpoint = "demo") => ({
   messages: [{ role: "learner", content: "I think photosynthesis makes oxygen at night." }],
   context: { topic: "photosynthesis" },
 });
+
+/** Reads `sub` out of a descriptor without verifying it — the test only needs to know which
+ *  pseudonym the relay will see, not to re-prove the signature `setup()` already produced. */
+function decodeSub(jwt: string): string {
+  const payload = JSON.parse(Buffer.from(jwt.split(".")[1]!, "base64url").toString("utf8")) as { sub: string };
+  return payload.sub;
+}
 
 describe("coach relay", () => {
   it("refuses a request without a valid descriptor", async () => {
@@ -147,5 +156,74 @@ describe("coach relay", () => {
     });
     expect(endpointsFromEnvironment("not json")).toEqual({});
     expect(endpointsFromEnvironment(undefined)).toEqual({});
+  });
+
+  it("routes to the tiered endpoint variant matching the learner's own stub performance", async () => {
+    const fetchSpy = vi.fn(async (url: string) => new Response(JSON.stringify({ reply: `hello from ${url}` }), { status: 200 }));
+    const { runtime, relay, descriptor } = await setup({
+      endpoints: {
+        "coach-default-new": { url: "https://provider.example/new" },
+        "coach-default-support": { url: "https://provider.example/support" },
+        "coach-default-stretch": { url: "https://provider.example/stretch" },
+      },
+      fetchImpl: fetchSpy as never,
+    });
+    const expectedTier = performanceTier(stubPriorPerformance(decodeSub(descriptor)));
+
+    const response = await relay(turn("coach-default"));
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().endpoint).toBe(`coach-default-${expectedTier}`);
+    expect(response.json().routing).toMatchObject({
+      requestedEndpoint: "coach-default", resolvedEndpoint: `coach-default-${expectedTier}`, tier: expectedTier,
+    });
+    expect(fetchSpy.mock.calls[0]![0]).toBe(`https://provider.example/${expectedTier}`);
+    await runtime.app.close();
+  });
+
+  it("falls back to exactly the requested endpoint when no tiered variant is configured", async () => {
+    const fetchSpy = vi.fn(async (url: string) => new Response(JSON.stringify({ reply: "ok" }), { status: 200 }));
+    const { runtime, relay } = await setup({
+      endpoints: { "coach-default": { url: "https://provider.example/coach" } },
+      fetchImpl: fetchSpy as never,
+    });
+
+    const response = await relay(turn("coach-default"));
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().endpoint).toBe("coach-default");
+    expect(fetchSpy.mock.calls[0]![0]).toBe("https://provider.example/coach");
+    await runtime.app.close();
+  });
+
+  it("surfaces the routing decision even on the built-in demo endpoint", async () => {
+    const { runtime, relay } = await setup();
+
+    const response = await relay(turn());
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().routing).toMatchObject({ requestedEndpoint: "demo" });
+    expect(response.json().reply).toContain("Routing:");
+    await runtime.app.close();
+  });
+});
+
+describe("prior-performance stub routing", () => {
+  it("is deterministic for the same pseudonym", () => {
+    expect(stubPriorPerformance("pseudo-a")).toEqual(stubPriorPerformance("pseudo-a"));
+  });
+
+  it("treats no prior attempts as tier \"new\", regardless of score", () => {
+    expect(performanceTier({ priorAttempts: 0, averageScore: null })).toBe("new");
+  });
+
+  it("splits attempted learners into \"support\" and \"stretch\" by the threshold", () => {
+    expect(performanceTier({ priorAttempts: 3, averageScore: 0.3 })).toBe("support");
+    expect(performanceTier({ priorAttempts: 3, averageScore: 0.9 })).toBe("stretch");
+  });
+
+  it("falls back to the requested name when no tiered variant exists, and prefers one when it does", () => {
+    expect(resolveEndpointName("coach-default", "stretch", {})).toBe("coach-default");
+    expect(resolveEndpointName("coach-default", "stretch", { "coach-default-stretch": { url: "https://x.example" } })).toBe("coach-default-stretch");
   });
 });

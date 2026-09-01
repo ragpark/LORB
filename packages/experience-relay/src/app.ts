@@ -16,8 +16,15 @@
  * A built-in `demo` endpoint answers locally with a canned coaching turn, so the whole experience —
  * launch, chat, evidence, completion — can be exercised before any provider exists. It is labelled
  * in its own replies and calls nothing.
+ *
+ * The endpoint a module names is a *category*, not necessarily the concrete provider called: this
+ * route also resolves a performance tier for the calling pseudonym (`stubPriorPerformance` — a
+ * deterministic stand-in for a real query against attempt/evidence history) and prefers a
+ * `<category>-<tier>` variant when one is configured, falling back to exactly the category name
+ * otherwise. Two learners launching the same object version can land on different configured
+ * providers without the module itself ever deciding that, or knowing it happened.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { coachRelayRequestSchema, type CoachRelayRequest } from "../../contracts/src/index.js";
 import { verifyDescriptor, type SigningKeyRing } from "../../runtime-api/src/core.js";
@@ -74,13 +81,71 @@ export function endpointsFromEnvironment(raw = process.env.RELAY_COACH_ENDPOINTS
  * exists so the full journey can be demonstrated — and tested — before a real provider is
  * configured, and it deliberately sounds like scaffolding rather than pretending to be a tutor.
  */
-function demoReply(request: CoachRelayRequest): string {
+function demoReply(request: CoachRelayRequest, routing: RoutingDecision): string {
   const lastLearnerTurn = [...request.messages].reverse().find((message) => message.role === "learner");
   const topic = typeof request.context?.topic === "string" ? request.context.topic : undefined;
   const opening = topic ? `Thinking about ${topic}: ` : "";
   return `${opening}you said “${(lastLearnerTurn?.content ?? "").slice(0, 200)}”. `
     + "What makes you say that? Try explaining your reasoning step by step — I'll follow up on whatever you find hardest. "
-    + "(This is the built-in demo coach: no provider is configured for this endpoint yet, so replies are canned.)";
+    + "(This is the built-in demo coach: no provider is configured for this endpoint yet, so replies are canned. "
+    + `Routing: ${describeRouting(routing)})`;
+}
+
+/**
+ * STUB — prior performance, for demonstrating endpoint routing by "what a learner has done before"
+ * ahead of a real query against attempt/evidence history. Deterministic per pseudonym only so a
+ * demo is repeatable across turns and across a room of people signing in with different learners;
+ * it is not a real signal and must not be mistaken for one. Replace with a real read of the
+ * learner's own attempt/evidence history before this carries any actual routing decision.
+ */
+export interface PriorPerformance {
+  priorAttempts: number;
+  /** 0–1 scaled, matching xAPI's result.score.scaled elsewhere in this platform. null with no prior attempts. */
+  averageScore: number | null;
+}
+
+export function stubPriorPerformance(pseudonym: string): PriorPerformance {
+  const hash = createHash("sha256").update(pseudonym).digest();
+  const priorAttempts = hash[0]! % 5;
+  const averageScore = priorAttempts === 0 ? null : Math.round((hash[1]! % 101)) / 100;
+  return { priorAttempts, averageScore };
+}
+
+/**
+ * The tiers a prior-performance stub can route to. "new" (no prior attempts) and "support" (a low
+ * prior average) are deliberately distinct — a learner who has never attempted this content is not
+ * the same as one who tried and struggled, even though both might reasonably want a gentler model.
+ */
+export type PerformanceTier = "new" | "support" | "stretch";
+const SUPPORT_THRESHOLD = 0.6;
+
+export function performanceTier(prior: PriorPerformance): PerformanceTier {
+  if (prior.priorAttempts === 0 || prior.averageScore === null) return "new";
+  return prior.averageScore < SUPPORT_THRESHOLD ? "support" : "stretch";
+}
+
+/**
+ * Resolves the concrete endpoint to call: the module names a category (e.g. "coach-default"), and
+ * this appends the learner's performance tier to look for a configured variant — "coach-default-
+ * support", "coach-default-stretch". Falls back to exactly the name the module asked for when no
+ * tiered variant is configured, so a deployment that hasn't set any up behaves exactly as it did
+ * before this existed.
+ */
+export function resolveEndpointName(requested: string, tier: PerformanceTier, endpoints: Record<string, RelayEndpoint>): string {
+  const tiered = `${requested}-${tier}`;
+  return endpoints[tiered] ? tiered : requested;
+}
+
+interface RoutingDecision {
+  requestedEndpoint: string;
+  resolvedEndpoint: string;
+  tier: PerformanceTier;
+  prior: PriorPerformance;
+}
+
+function describeRouting(routing: RoutingDecision): string {
+  const scoreText = routing.prior.averageScore === null ? "no prior attempts" : `${Math.round(routing.prior.averageScore * 100)}% average over ${routing.prior.priorAttempts} prior attempt${routing.prior.priorAttempts === 1 ? "" : "s"}`;
+  return `tier "${routing.tier}" (${scoreText}) → ${routing.resolvedEndpoint}`;
 }
 
 /** What the relay accepts back from a provider: a reply string under one of the obvious keys. */
@@ -119,11 +184,19 @@ export function registerRelayRoutes(app: FastifyInstance, ring: SigningKeyRing, 
     if (!parsed.success) return sendProblem(reply, "RELAY_REQUEST_INVALID", descriptor.correlation_id, 400);
     const body = parsed.data;
 
-    if (body.endpoint === "demo" && !endpoints.demo) {
-      return reply.code(200).send({ endpoint: "demo", reply: demoReply(body), correlation_id: descriptor.correlation_id });
+    // STUB routing — see stubPriorPerformance above. The module still names a category; this is
+    // what decides which configured variant of it actually gets called, based on what "has happened
+    // before" for this pseudonym.
+    const prior = stubPriorPerformance(descriptor.sub);
+    const tier = performanceTier(prior);
+    const resolvedEndpointName = resolveEndpointName(body.endpoint, tier, endpoints);
+    const routing: RoutingDecision = { requestedEndpoint: body.endpoint, resolvedEndpoint: resolvedEndpointName, tier, prior };
+
+    if (resolvedEndpointName === "demo" && !endpoints.demo) {
+      return reply.code(200).send({ endpoint: "demo", reply: demoReply(body, routing), correlation_id: descriptor.correlation_id, routing });
     }
 
-    const endpoint = endpoints[body.endpoint];
+    const endpoint = endpoints[resolvedEndpointName];
     if (!endpoint) return sendProblem(reply, "RELAY_ENDPOINT_UNKNOWN", descriptor.correlation_id, 404);
 
     // What the provider learns about the learner: a pseudonym and the attempt identifiers — the
@@ -156,7 +229,7 @@ export function registerRelayRoutes(app: FastifyInstance, ring: SigningKeyRing, 
       if (!response.ok) return sendProblem(reply, "RELAY_UPSTREAM_FAILED", descriptor.correlation_id, 502);
       const answer = replyFrom(await response.json().catch(() => undefined));
       if (!answer) return sendProblem(reply, "RELAY_UPSTREAM_FAILED", descriptor.correlation_id, 502);
-      return reply.code(200).send({ endpoint: body.endpoint, reply: answer, correlation_id: descriptor.correlation_id });
+      return reply.code(200).send({ endpoint: resolvedEndpointName, reply: answer, correlation_id: descriptor.correlation_id, routing });
     } catch {
       return sendProblem(reply, "RELAY_UPSTREAM_FAILED", descriptor.correlation_id, 502);
     } finally {
