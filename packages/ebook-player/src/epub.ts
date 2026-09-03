@@ -18,6 +18,20 @@ const NS_DC = "http://purl.org/dc/elements/1.1/";
 const NS_OPS = "http://www.idpf.org/2007/ops";
 const NS_XLINK = "http://www.w3.org/1999/xlink";
 
+/**
+ * Bounds on what the reader will unpack. It runs on the learner's main thread inside the sandbox,
+ * so a book is refused before it can exhaust the tab: the download itself, the number of entries,
+ * and the cumulative declared size of what those entries expand to. Generous for a textbook with
+ * images; nowhere near what a crafted archive needs to be a problem.
+ */
+export const LIMITS = {
+  /** Compressed archive, as downloaded. */
+  archiveBytes: 64 * 1024 * 1024,
+  entries: 2000,
+  /** Cumulative declared (uncompressed) size across all entries. */
+  unpackedBytes: 256 * 1024 * 1024,
+} as const;
+
 export interface EpubChapter {
   id: string;
   /** Archive path of the content document, already resolved against the package document. */
@@ -55,6 +69,15 @@ const DROPPED_ELEMENTS = new Set([
   "script", "iframe", "object", "embed", "applet", "form", "input", "button", "select", "textarea",
   "link", "meta", "base", "style", "template", "noscript", "audio", "video", "source", "track", "portal",
 ]);
+
+/** Attributes that name a resource to fetch or a place to send something. On anything but the
+ *  image elements and links handled specially below, an off-archive value is removed. */
+const URL_ATTRIBUTES = new Set([
+  "href", "xlink:href", "src", "srcset", "poster", "data", "background", "ping", "formaction", "action",
+  "cite", "longdesc", "usemap", "manifest", "codebase", "archive",
+]);
+
+const hasScheme = (value: string): boolean => /^[a-z][a-z\d+.-]*:/i.test(value) || value.startsWith("//");
 
 function dirnameOf(path: string): string {
   const slash = path.lastIndexOf("/");
@@ -107,15 +130,33 @@ function allByLocalName(root: ParentNode, ns: string | null, localName: string):
 export async function loadEpub(url: string): Promise<EpubBook> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`The book could not be fetched (${response.status})`);
-  return openEpub(new Uint8Array(await response.arrayBuffer()));
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (declared > LIMITS.archiveBytes) throw new Error("The book is larger than this reader will open");
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength > LIMITS.archiveBytes) throw new Error("The book is larger than this reader will open");
+  return openEpub(bytes);
 }
 
 /** Opens EPUB bytes already in hand — the part of loadEpub that needs no network. */
 export function openEpub(bytes: Uint8Array): EpubBook {
+  if (bytes.byteLength > LIMITS.archiveBytes) throw new Error("The book is larger than this reader will open");
   let files: Record<string, Uint8Array>;
+  let entries = 0;
+  let unpacked = 0;
+  const tooBig = new Error("The book expands to more than this reader will open");
   try {
-    files = unzipSync(bytes);
-  } catch {
+    files = unzipSync(bytes, {
+      // Checked per entry, before that entry is inflated, against what the archive declares — so a
+      // bomb is refused on its directory, not discovered after the allocation it was built to cause.
+      filter: (entry) => {
+        entries += 1;
+        unpacked += entry.originalSize;
+        if (entries > LIMITS.entries || unpacked > LIMITS.unpackedBytes) throw tooBig;
+        return true;
+      },
+    });
+  } catch (error) {
+    if (error === tooBig) throw error;
     throw new Error("The file is not a readable EPUB archive");
   }
   const mimetype = files["mimetype"] ? strFromU8(files["mimetype"]).trim() : "";
@@ -215,6 +256,26 @@ export function scopeCss(css: string, scope: string): string {
   return out;
 }
 
+const CSS_URL = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)'"\s]*))\s*\)/gi;
+
+/**
+ * Rewrites every `url()` in a stylesheet or style attribute so that nothing in it can leave the
+ * archive: an in-archive target becomes a blob URL, a fragment reference stays, and anything else —
+ * an absolute URL, a data: or blob: value, a target the archive doesn't contain — becomes `none`.
+ * `@import` is removed outright. CSS is the one place a book could otherwise fetch from the network
+ * (a `background: url(https://…)` beacon carries whatever the book wants to send), and the sandbox
+ * does not restrict that, so the rewrite is the boundary.
+ */
+export function sanitizeCssUrls(css: string, fromDir: string, blobFor: (path: string) => string | undefined): string {
+  return css.replace(/@import\b[^;{]*;?/gi, "").replace(CSS_URL, (_match, dq?: string, sq?: string, bare?: string) => {
+    const target = (dq ?? sq ?? bare ?? "").trim();
+    if (target.startsWith("#")) return `url("${target.replace(/"/g, "")}")`;
+    if (!target || hasScheme(target)) return "none";
+    const url = blobFor(resolveArchivePath(fromDir, target));
+    return url ? `url("${url}")` : "none";
+  });
+}
+
 function matchingBrace(source: string, open: number): number {
   let depth = 0;
   for (let i = open; i < source.length; i += 1) {
@@ -232,21 +293,6 @@ export function renderChapter(book: EpubBook, chapterIndex: number, scope: strin
   const chapterDir = dirnameOf(chapter.href);
   const blobUrls: string[] = [];
 
-  // Stylesheets the document links to from inside the archive, plus its own <style> blocks.
-  const cssParts: string[] = [];
-  for (const link of Array.from(doc.querySelectorAll("link"))) {
-    const rel = (link.getAttribute("rel") ?? "").toLowerCase().split(/\s+/);
-    if (!rel.includes("stylesheet")) continue;
-    const href = link.getAttribute("href");
-    const data = href ? book.files[resolveArchivePath(chapterDir, href)] : undefined;
-    if (data) cssParts.push(strFromU8(data));
-  }
-  for (const style of Array.from(doc.querySelectorAll("style"))) cssParts.push(style.textContent ?? "");
-
-  const body = doc.querySelector("body") ?? doc.documentElement;
-  const container = document.createElement("div");
-  for (const child of Array.from(body.childNodes)) container.appendChild(document.importNode(child, true));
-
   const blobFor = (path: string): string | undefined => {
     const data = book.files[path];
     if (!data) return undefined;
@@ -256,6 +302,25 @@ export function renderChapter(book: EpubBook, chapterIndex: number, scope: strin
     return url;
   };
 
+  // Stylesheets the document links to from inside the archive, plus its own <style> blocks — each
+  // with its url() references resolved relative to where that stylesheet lives, and rewritten so
+  // none can leave the archive.
+  const cssParts: string[] = [];
+  for (const link of Array.from(doc.querySelectorAll("link"))) {
+    const rel = (link.getAttribute("rel") ?? "").toLowerCase().split(/\s+/);
+    if (!rel.includes("stylesheet")) continue;
+    const href = link.getAttribute("href");
+    if (!href || hasScheme(href)) continue;
+    const path = resolveArchivePath(chapterDir, href);
+    const data = book.files[path];
+    if (data) cssParts.push(sanitizeCssUrls(strFromU8(data), dirnameOf(path), blobFor));
+  }
+  for (const style of Array.from(doc.querySelectorAll("style"))) cssParts.push(sanitizeCssUrls(style.textContent ?? "", chapterDir, blobFor));
+
+  const body = doc.querySelector("body") ?? doc.documentElement;
+  const container = document.createElement("div");
+  for (const child of Array.from(body.childNodes)) container.appendChild(document.importNode(child, true));
+
   for (const element of Array.from(container.querySelectorAll("*"))) {
     const name = element.localName.toLowerCase();
     if (DROPPED_ELEMENTS.has(name)) { element.remove(); continue; }
@@ -263,10 +328,13 @@ export function renderChapter(book: EpubBook, chapterIndex: number, scope: strin
       const attributeName = attribute.name.toLowerCase();
       const value = attribute.value.trim();
       if (attributeName.startsWith("on")) { element.removeAttribute(attribute.name); continue; }
-      if ((attributeName === "href" || attributeName === "xlink:href" || attributeName === "src" || attributeName === "srcset" || attributeName === "poster" || attributeName === "data")
-        && /^\s*(javascript|data|vbscript|blob):/i.test(value)) {
-        element.removeAttribute(attribute.name);
-      }
+      if (attributeName === "style") { element.setAttribute("style", sanitizeCssUrls(value, chapterDir, blobFor)); continue; }
+      if (!URL_ATTRIBUTES.has(attributeName)) continue;
+      if (/^\s*(javascript|data|vbscript|blob):/i.test(value)) { element.removeAttribute(attribute.name); continue; }
+      // Image elements and links are resolved below; anything else pointing off the archive goes.
+      const handledBelow = (name === "img" || name === "image") && (attributeName === "src" || attributeName === "href" || attributeName === "xlink:href");
+      if (name === "a" && attributeName === "href") continue;
+      if (!handledBelow && (hasScheme(value) || attributeName === "srcset")) element.removeAttribute(attribute.name);
     }
     if (name === "img" || name === "image") {
       const source = element.getAttribute("src") ?? element.getAttributeNS(NS_XLINK, "href") ?? element.getAttribute("href");

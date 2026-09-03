@@ -782,10 +782,12 @@ export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherCont
       const existing = await openObject(req, reply, principal, correlation, "learning_object.publish_version", "repository_operator");
       if (!existing) return;
       if (existing.status === "RETIRED") return sendAdminError(reply, "LEARNING_OBJECT_NOT_PUBLISHED", correlation);
-      // An authored quiz is data on a shared, already-reviewed player. Publishing a code package for
-      // one would silently repoint it at a bundle that cannot read its content, so the edit it
-      // actually wants — new questions — is the one offered instead.
-      if (existing.content_profile === "quiz-json-v1") return sendAdminError(reply, "LEARNING_OBJECT_CONTENT_UNSUPPORTED", correlation);
+      // A data-authored object — a quiz, a video/document/audio/ebook, an LTI tool, an external embed —
+      // is content on a shared, already-reviewed player, which is what its content_profile records.
+      // Publishing a code package for one would silently repoint it at a bundle that cannot read its
+      // content, so every profile is refused here, and the edit such an object actually wants — new
+      // content — is the one offered instead.
+      if (existing.content_profile) return sendAdminError(reply, "LEARNING_OBJECT_CONTENT_UNSUPPORTED", correlation);
 
       const updated = await ctx.catalogue.publishObjectVersion(objectId, parsed.data);
       if (!updated) return sendAdminError(reply, "LEARNING_OBJECT_NOT_FOUND", correlation);

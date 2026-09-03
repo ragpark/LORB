@@ -20,9 +20,15 @@ Instead (`src/epub.ts`):
    `audio`/`video`, `link`, `meta`, `base`, `style`-in-body, `on*` attributes, and `javascript:` /
    `data:` URLs. What survives is text, structure, images from inside the archive (handed to the DOM
    as blob URLs) and the `epub:type` semantics.
-4. The book's own stylesheets are scoped under the reading pane before they are applied, so a book
-   can style its pages and nothing of the reader around them. `@font-face` and `@import` are
-   dropped.
+4. The book's own stylesheets (linked, embedded, and `style` attributes) are scoped under the
+   reading pane before they are applied, so a book can style its pages and nothing of the reader
+   around them — and every `url()` in them is rewritten: an in-archive target becomes a blob URL,
+   anything else becomes `none`. CSS is the one place a book could otherwise reach the network
+   (a `background: url(https://…)` beacon), so that rewrite is part of the boundary, not a nicety.
+   `@font-face` and `@import` are dropped.
+5. Bounds are enforced before anything is inflated (`LIMITS` in `src/epub.ts`): the download
+   (64 MiB), the entry count (2,000) and the cumulative declared unpacked size (256 MiB). A book past
+   any of them is refused with an error rather than allowed to exhaust the tab.
 
 Scripted EPUBs therefore run nothing here. That is the trust model, not a gap: the reader is the
 code that was reviewed; every book is data it displays.

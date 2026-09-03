@@ -19,6 +19,8 @@ import { ebookDraftSchema } from "../../packages/contracts/src/index.js";
 import { buildExemplar, entriesOf, EXEMPLAR_FILE_NAME } from "../../packages/ebook-player/scripts/build-exemplar.mjs";
 
 const SERVICE_TOKEN = "ebook-test-service-token-0123456789";
+const catalogues = new WeakMap<object, MemoryCatalogueStore>();
+const catalogueOf = (runtime: object) => catalogues.get(runtime)!;
 
 async function setup() {
   const ies = await generateKeyPair("ES256");
@@ -32,6 +34,7 @@ async function setup() {
   const adminToken = await issueIesToken(ies.privateKey, "ebook-admin", "lorb-runtime", issuer, { role: "admin" });
   const learnerToken = await issueIesToken(ies.privateKey, "ebook-learner", "lorb-runtime", issuer, {});
   const repository = (await catalogue.defaultRepository())!;
+  catalogues.set(runtime, catalogue);
   const post = (url: string, payload: unknown, token = adminToken) =>
     runtime.app.inject({
       method: "POST", url,
@@ -90,6 +93,22 @@ describe("ebook registration", () => {
     const { runtime, post, repositoryId } = await setup();
     const response = await post("/api/v1/publisher/learning-objects/ebooks", { repository_id: repositoryId, title: "Plain http", epub_url: "http://books.test/a.epub" });
     expect(response.statusCode).toBe(400);
+    await runtime.app.close();
+  });
+
+  it("refuses to publish a code package version over an ebook — or any other data-authored object", async () => {
+    const { runtime, post, repositoryId } = await setup();
+    const video = await post("/api/v1/publisher/learning-objects/videos", { repository_id: repositoryId, title: "Cell division", source: { kind: "youtube", video_id: "dQw4w9WgXcQ" } });
+    expect(video.statusCode).toBe(201);
+    for (const objectId of [EXAMPLE_EBOOK.object.object_id, video.json().object_id as string]) {
+      const rejected = await post(`/api/v1/publisher/learning-objects/${objectId}/versions`, {
+        semver: "2.0.0", module_path: "/modules/something-else/index.html", sha256: "a".repeat(64),
+      });
+      expect(rejected.statusCode, objectId).toBe(409);
+      expect(rejected.json().code).toBe("LEARNING_OBJECT_CONTENT_UNSUPPORTED");
+    }
+    // The reader binding is untouched.
+    expect((await catalogueOf(runtime).learningObject(EXAMPLE_EBOOK.object.object_id))?.module_path).toBe(MEDIA_PLAYERS.ebook.module_path);
     await runtime.app.close();
   });
 
