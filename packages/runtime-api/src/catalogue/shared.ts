@@ -3,12 +3,13 @@
  */
 import { randomUUID } from "node:crypto";
 import {
-  audioContentSchema, documentContentSchema, externalEmbedContentSchema, ltiToolContentSchema, quizContentSchema, videoContentSchema,
-  type AudioDraft, type DocumentDraft, type ExternalEmbedDraft, type LtiToolDraft, type QuizContent, type QuizDraft, type VideoDraft,
+  audioContentSchema, documentContentSchema, ebookContentSchema, externalEmbedContentSchema, ltiToolContentSchema, quizContentSchema, videoContentSchema,
+  type AudioDraft, type DocumentDraft, type EbookContent, type EbookDraft, type ExternalEmbedDraft, type LtiToolDraft, type QuizContent, type QuizDraft,
+  type VideoDraft,
 } from "../../../contracts/src/index.js";
 import type {
-  AnyContent, AnyMediaDraft, LearningObjectRow, MediaKind, ObjectContentRevision, PackageVersionRow, RegisteredExternalEmbed, RegisteredLtiTool,
-  RegisteredMedia, RegisteredQuiz,
+  AnyContent, AnyMediaDraft, LearningObjectRow, MediaKind, ObjectContentRevision, ObjectVersionRow, PackageVersionRow, RegisteredExternalEmbed,
+  RegisteredLtiTool, RegisteredMedia, RegisteredQuiz,
 } from "./types.js";
 
 /**
@@ -39,9 +40,14 @@ export const QUIZ_PLAYER_PACKAGE: PackageVersionRow = {
 
 /**
  * One fixed, already-reviewed player package version per media kind, shared by every video,
- * document, or audio learning object of that kind — same reasoning as QUIZ_PLAYER: an author
+ * document, audio, or ebook learning object of that kind — same reasoning as QUIZ_PLAYER: an author
  * supplies JSON content, never a bundle, so registering media adds no per-object code-injection
  * surface. Bumping a semver here is a content-model change, same as for the quiz player.
+ *
+ * The ebook reader is the one whose "content" is itself a file (an EPUB 3 archive), but the trust
+ * model holds: the reader unpacks the archive in the browser and renders each content document
+ * with script and every other active element stripped, so a book is data it displays, never code
+ * the sandbox runs.
  */
 export const MEDIA_PLAYERS = {
   video: {
@@ -67,6 +73,14 @@ export const MEDIA_PLAYERS = {
     module_path: "/modules/audio-player/index.html",
     sha256: "3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b",
     content_profile: "audio-json-v1",
+  },
+  ebook: {
+    package_version_id: "5cbe1b8a-2f2a-4a5c-9f8b-6d1c0a7e4b81",
+    package_id: "5cbe1b8a-2f2a-4a5c-9f8b-6d1c0a7e4b82",
+    semver: "1.0.0",
+    module_path: "/modules/ebook-player/index.html",
+    sha256: "4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c",
+    content_profile: "ebook-json-v1",
   },
 } as const satisfies Record<MediaKind, { package_version_id: string; package_id: string; semver: string; module_path: string; sha256: string; content_profile: string }>;
 
@@ -234,17 +248,25 @@ export function buildExternalEmbedRegistration(
   };
 }
 
-const MEDIA_SCHEMAS = { video: videoContentSchema, document: documentContentSchema, audio: audioContentSchema } as const;
+const MEDIA_SCHEMAS = { video: videoContentSchema, document: documentContentSchema, audio: audioContentSchema, ebook: ebookContentSchema } as const;
 
 function defaultDurationFor(kind: MediaKind, draft: AnyMediaDraft): string {
   if (kind === "document") return `${Math.max(1, Math.round((draft as DocumentDraft).pages?.length ? (draft as DocumentDraft).pages.length * 0.5 : 5))} minutes`;
+  if (kind === "ebook") {
+    const minutes = (draft as EbookDraft).reading_minutes;
+    return minutes ? `${minutes} minutes` : "Self-paced";
+  }
   const seconds = (draft as VideoDraft | AudioDraft).duration_seconds;
   return seconds ? `${Math.max(1, Math.round(seconds / 60))} minutes` : "a few minutes";
 }
 
-/** Builds the rows registering a video, document, or audio object produces — the media analogue of
- * buildQuizRegistration, generalised over the three kinds since all three follow the same shape:
- * one JSON content payload bound to one fixed shared player. */
+function defaultDescriptionFor(kind: MediaKind): string {
+  return kind === "ebook" ? "An EPUB 3 book read in the shared ebook reader." : `A ${kind} activity rendered by the shared ${kind} player.`;
+}
+
+/** Builds the rows registering a video, document, audio, or ebook object produces — the media
+ * analogue of buildQuizRegistration, generalised over the four kinds since all four follow the same
+ * shape: one JSON content payload bound to one fixed shared player. */
 export function buildMediaRegistration(
   kind: MediaKind,
   draft: AnyMediaDraft,
@@ -264,7 +286,7 @@ export function buildMediaRegistration(
     active_package_version_id: player.package_version_id,
     created_at,
     title: draft.title,
-    description: draft.description ?? `A ${kind} activity rendered by the shared ${kind} player.`,
+    description: draft.description ?? defaultDescriptionFor(kind),
     duration: defaultDurationFor(kind, draft),
     kind: `${kind}-json`,
     module_path: player.module_path,
@@ -328,6 +350,59 @@ export const DEFAULT_REPOSITORY = {
   slug: "default",
   display_name: "Default repository",
 } as const;
+
+/**
+ * The exemplar EPUB 3 educational book, published into the default repository alongside the other
+ * bundled examples (same SEED_EXAMPLE_CONTENT gate). Unlike EXAMPLE_OBJECTS it is a data-authored
+ * object — content bound to the shared ebook reader, not a package of its own — so seeding it means
+ * writing a content row and a content-versioned object version, exactly what registerMedia("ebook")
+ * would have written. The book file itself ships with the reader: packages/ebook-player builds it from
+ * exemplar/ and Dockerfile.player-shell serves it at the path epub_url names, on the Player Shell's
+ * origin, so no deployment hostname is baked in here.
+ */
+export const EXAMPLE_EBOOK_EPUB_PATH = "/modules/ebook-player/exemplar/photosynthesis-reader.epub";
+export const EXAMPLE_EBOOK: { object: LearningObjectRow; content: EbookContent; version: ObjectVersionRow } = (() => {
+  const object_id = "3b7e2c41-9d5a-4f68-b2c3-8e1f0a6d5c94";
+  const object_version_id = "4c8f3d52-ae6b-4079-83d4-9f2a1b7e6da5";
+  const created_at = "2026-09-01T09:00:00.000Z";
+  const content = ebookContentSchema.parse({
+    title: "Photosynthesis: how plants make food",
+    description: "A three-page EPUB 3 educational reader: what photosynthesis is, what happens inside a leaf, and a short self-check.",
+    epub_url: EXAMPLE_EBOOK_EPUB_PATH,
+    author: "LORB exemplar content",
+    language: "en-GB",
+    reading_minutes: 12,
+    object_id,
+    content_version: "1",
+    created_at,
+  });
+  return {
+    object: {
+      object_id,
+      repository_id: DEFAULT_REPOSITORY.repository_id,
+      status: "PUBLISHED",
+      active_object_version_id: object_version_id,
+      active_package_version_id: MEDIA_PLAYERS.ebook.package_version_id,
+      created_at,
+      title: content.title,
+      description: content.description!,
+      duration: "12 minutes",
+      kind: "ebook-json",
+      module_path: MEDIA_PLAYERS.ebook.module_path,
+      content_profile: MEDIA_PLAYERS.ebook.content_profile,
+    },
+    content,
+    version: {
+      object_version_id,
+      object_id,
+      semver: "1.0.0",
+      package_version_id: MEDIA_PLAYERS.ebook.package_version_id,
+      status: "PUBLISHED",
+      published_at: created_at,
+      content_version: content.content_version,
+    },
+  };
+})();
 
 /** Builds the rows a quiz registration produces, so both backends agree on their shape. */
 export function buildQuizRegistration(

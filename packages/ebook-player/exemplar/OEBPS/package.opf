@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id" xml:lang="en-GB" prefix="schema: http://schema.org/">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="pub-id">urn:uuid:3b7e2c41-9d5a-4f68-b2c3-8e1f0a6d5c94</dc:identifier>
+    <dc:title>Photosynthesis: how plants make food</dc:title>
+    <dc:creator>LORB exemplar content</dc:creator>
+    <dc:language>en-GB</dc:language>
+    <dc:subject>Science</dc:subject>
+    <dc:subject>Biology</dc:subject>
+    <dc:description>A three-page EPUB 3 educational reader for Key Stage 3 science: what photosynthesis is, what happens inside a leaf, and a short self-check.</dc:description>
+    <meta property="dcterms:modified">2026-09-01T09:00:00Z</meta>
+    <meta property="schema:learningResourceType">reading</meta>
+    <meta property="schema:educationalUse">self-study</meta>
+    <meta property="schema:typicalAgeRange">11-14</meta>
+    <meta property="schema:accessMode">textual</meta>
+    <meta property="schema:accessMode">visual</meta>
+    <meta property="schema:accessModeSufficient">textual</meta>
+    <meta property="schema:accessibilityFeature">structuralNavigation</meta>
+    <meta property="schema:accessibilityFeature">alternativeText</meta>
+    <meta property="schema:accessibilityHazard">none</meta>
+    <meta property="schema:accessibilitySummary">Three short reflowable pages with headings, one labelled figure with alternative text, and a self-check whose answers are revealed on demand.</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="css" href="styles/book.css" media-type="text/css"/>
+    <item id="leaf" href="images/leaf.svg" media-type="image/svg+xml"/>
+    <item id="ch01" href="text/ch01.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch02" href="text/ch02.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch03" href="text/ch03.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch01"/>
+    <itemref idref="ch02"/>
+    <itemref idref="ch03"/>
+  </spine>
+</package>

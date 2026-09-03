@@ -1,5 +1,5 @@
 /**
- * Internal service surface for registering authored video, document, and audio *content* as
+ * Internal service surface for registering authored video, document, audio, and ebook *content* as
  * learning objects — the media analogue of internal/quizzes.ts.
  *
  * As with quizzes, there is no code-upload path here: a caller supplies a structured JSON draft
@@ -9,7 +9,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { audioDraftSchema, documentDraftSchema, videoDraftSchema } from "../../../../contracts/src/index.js";
+import { audioDraftSchema, documentDraftSchema, ebookDraftSchema, videoDraftSchema } from "../../../../contracts/src/index.js";
 import type { CatalogueStore } from "../../catalogue/index.js";
 import type { MediaKind } from "../../catalogue/types.js";
 import type { RuntimeStore } from "../../store/index.js";
@@ -24,11 +24,12 @@ export interface InternalMediaContext {
   catalogue: CatalogueStore;
 }
 
-const DRAFT_SCHEMAS = { video: videoDraftSchema, document: documentDraftSchema, audio: audioDraftSchema } as const;
+const DRAFT_SCHEMAS = { video: videoDraftSchema, document: documentDraftSchema, audio: audioDraftSchema, ebook: ebookDraftSchema } as const;
 const ROUTE_PATHS: Record<MediaKind, string> = {
   video: "/api/v1/internal/runtime/videos",
   document: "/api/v1/internal/runtime/documents",
   audio: "/api/v1/internal/runtime/audio",
+  ebook: "/api/v1/internal/runtime/ebooks",
 };
 
 export function registerInternalMediaRoutes(

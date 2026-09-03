@@ -5,3 +5,6 @@ keys/
 coverage/
 test-results/
 playwright-report/
+
+# Built at build time by packages/ebook-player/scripts/build-exemplar.mjs
+packages/ebook-player/public/

@@ -616,6 +616,74 @@ function NewAudioForm({ repositories, onCreated }: { repositories: Row[]; onCrea
   );
 }
 
+function NewEbookForm({ repositories, onCreated }: { repositories: Row[]; onCreated: (objectId: string) => void }) {
+  const [repositoryId, setRepositoryId] = useState('');
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [epubUrl, setEpubUrl] = useState('');
+  const [author, setAuthor] = useState('');
+  const [readingMinutes, setReadingMinutes] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    setError('');
+    setSaving(true);
+    try {
+      const minutes = Number.parseInt(readingMinutes, 10);
+      const created = await publisher<{ object_id: string }>('learning-objects/ebooks', {
+        method: 'POST',
+        body: {
+          ...(repositoryId ? { repository_id: repositoryId } : {}),
+          title,
+          ...(description ? { description } : {}),
+          epub_url: epubUrl.trim(),
+          ...(author ? { author } : {}),
+          ...(Number.isFinite(minutes) && minutes > 0 ? { reading_minutes: minutes } : {}),
+        },
+      });
+      setTitle(''); setDescription(''); setEpubUrl(''); setAuthor(''); setReadingMinutes('');
+      onCreated(created.object_id);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+      <p className="governance-note">
+        An EPUB 3 book is opened in the shared ebook reader, which unpacks it in the learner's browser and renders each page with scripts and other
+        active content stripped. The file must already be hosted somewhere the browser can fetch it (with CORS), or be a path on the Player Shell
+        origin such as the bundled exemplar at <span className="mono">/modules/ebook-player/exemplar/photosynthesis-reader.epub</span> — this form
+        registers a pointer to it, not the file itself.
+      </p>
+      <MediaBasics
+        repositoryId={repositoryId} onRepositoryId={setRepositoryId}
+        title={title} onTitle={setTitle} description={description} onDescription={setDescription}
+        repositories={repositories}
+      />
+      <label className="stacked">
+        EPUB file URL
+        <input value={epubUrl} onChange={(e) => setEpubUrl(e.target.value)} placeholder="https://… or /modules/…/book.epub" required />
+      </label>
+      <div className="form">
+        <label>
+          Author (optional)
+          <input value={author} onChange={(e) => setAuthor(e.target.value)} maxLength={200} />
+        </label>
+        <label>
+          Reading time in minutes (optional)
+          <input type="number" min={1} max={6000} value={readingMinutes} onChange={(e) => setReadingMinutes(e.target.value)} />
+        </label>
+      </div>
+      {error && <p role="alert" className="error-text">{error}</p>}
+      <div className="dialog-actions">
+        <button type="submit" disabled={saving}>{saving ? 'Registering…' : 'Register ebook'}</button>
+      </div>
+    </form>
+  );
+}
+
 /** File → base64, without the data: URL prefix the request schema doesn't want. */
 async function fileToBase64(file: File): Promise<string> {
   const buffer = await file.arrayBuffer();
@@ -704,13 +772,14 @@ function NewLearningObjectDialog({ repositories, onCreated }: { repositories: Ro
         <Dialog.Overlay className="overlay" />
         <Dialog.Content className="dialog wide">
           <Dialog.Title>New learning object</Dialog.Title>
-          <Dialog.Description>Author a quiz, add a video, document, or audio activity, register a third-party tool as an LTI 1.3 launch or a plain external embed, or register a packaged module that has already been built and hashed.</Dialog.Description>
+          <Dialog.Description>Author a quiz, add a video, document, audio, or EPUB 3 ebook activity, register a third-party tool as an LTI 1.3 launch or a plain external embed, or register a packaged module that has already been built and hashed.</Dialog.Description>
           <Tabs.Root defaultValue="quiz">
             <Tabs.List aria-label="What to create">
               <Tabs.Trigger value="quiz">Author a quiz</Tabs.Trigger>
               <Tabs.Trigger value="video">Add a video</Tabs.Trigger>
               <Tabs.Trigger value="document">Add a document</Tabs.Trigger>
               <Tabs.Trigger value="audio">Add audio</Tabs.Trigger>
+              <Tabs.Trigger value="ebook">Add an ebook</Tabs.Trigger>
               <Tabs.Trigger value="lti-tool">Add an LTI tool</Tabs.Trigger>
               <Tabs.Trigger value="external-embed">Add an external embed</Tabs.Trigger>
               <Tabs.Trigger value="package">Register a packaged module</Tabs.Trigger>
@@ -726,6 +795,9 @@ function NewLearningObjectDialog({ repositories, onCreated }: { repositories: Ro
             </Tabs.Content>
             <Tabs.Content value="audio">
               <NewAudioForm repositories={repositories} onCreated={created} />
+            </Tabs.Content>
+            <Tabs.Content value="ebook">
+              <NewEbookForm repositories={repositories} onCreated={created} />
             </Tabs.Content>
             <Tabs.Content value="lti-tool">
               <NewLtiToolForm repositories={repositories} onCreated={created} />

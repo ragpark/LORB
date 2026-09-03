@@ -208,6 +208,41 @@ export type ExternalEmbedDraft = z.infer<typeof externalEmbedDraftSchema>;
 export type ExternalEmbedContent = z.infer<typeof externalEmbedContentSchema>;
 
 // ---------------------------------------------------------------------------
+// Ebook content payloads (packages/ebook-player)
+//
+// An EPUB 3 publication — an "educational book" in the EDUPUB sense — read in
+// one fixed, already-reviewed reader. The book is data the reader unpacks in
+// the browser: each XHTML content document in the spine is parsed, stripped of
+// script and every other active element, and rendered inline, so a book can
+// carry EDUPUB semantics (learning objectives, assessments, keywords) but never
+// code the sandbox would run. `epub_url` is either an https URL the learner's
+// browser can fetch with CORS, or a path under the Player Shell's own origin
+// (`/modules/…`) — how the bundled exemplar is addressed without the seed
+// knowing a deployment's hostname.
+// ---------------------------------------------------------------------------
+const epubLocation = z.string().max(2048).refine((value) => {
+  if (/^\/modules\/[A-Za-z\d][A-Za-z\d._\-\/]*\.epub$/.test(value)) return true;
+  if (!value.startsWith("https://")) return false;
+  try { new URL(value); return true; } catch { return false; }
+}, "an https URL, or a /modules/… path on the Player Shell origin, ending in .epub");
+export const ebookDraftSchema = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().max(600).optional(),
+  epub_url: epubLocation,
+  /** Display metadata only — the reader shows what the book's own package document declares. */
+  author: z.string().max(200).optional(),
+  language: z.string().regex(/^[a-z]{2,3}(-[A-Za-z\d]{2,8})*$/).optional(),
+  reading_minutes: z.number().int().positive().max(6000).optional(),
+}).strict();
+export const ebookContentSchema = ebookDraftSchema.extend({
+  object_id: uuid,
+  content_version: z.string().regex(/^\d+$/),
+  created_at: z.string().datetime(),
+}).strict();
+export type EbookDraft = z.infer<typeof ebookDraftSchema>;
+export type EbookContent = z.infer<typeof ebookContentSchema>;
+
+// ---------------------------------------------------------------------------
 // Launch context (publisher-authored, versioned with the object)
 //
 // Configuration a published object carries into its own launch: which theme

@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { ExternalEmbedDraft, LaunchContext, LtiToolDraft, QuizDraft } from "../../../contracts/src/index.js";
 import {
   buildExternalEmbedRegistration, buildLtiToolRegistration, buildMediaRegistration, buildMediaRevision, buildQuizRegistration, buildQuizRevision,
-  DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, EXTERNAL_EMBED_PLAYER, EXTERNAL_EMBED_PLAYER_PACKAGE, LTI_PLAYER, LTI_PLAYER_PACKAGE, MEDIA_PLAYERS, MEDIA_PLAYER_PACKAGES,
+  DEFAULT_REPOSITORY, EXAMPLE_EBOOK, EXAMPLE_OBJECTS, EXTERNAL_EMBED_PLAYER, EXTERNAL_EMBED_PLAYER_PACKAGE, LTI_PLAYER, LTI_PLAYER_PACKAGE, MEDIA_PLAYERS, MEDIA_PLAYER_PACKAGES,
   nextMinorSemver, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE,
 } from "./shared.js";
 import type {
@@ -63,6 +63,10 @@ export class MemoryCatalogueStore implements CatalogueStore {
         published_at: example.package.published_at,
       });
     }
+    this.objects.set(EXAMPLE_EBOOK.object.object_id, { ...EXAMPLE_EBOOK.object });
+    this.contents.set(EXAMPLE_EBOOK.object.object_id, EXAMPLE_EBOOK.content);
+    this.contentHistory.set(`${EXAMPLE_EBOOK.object.object_id}:${EXAMPLE_EBOOK.content.content_version}`, EXAMPLE_EBOOK.content);
+    this.versions.set(EXAMPLE_EBOOK.version.object_version_id, { ...EXAMPLE_EBOOK.version });
   }
 
   /**

@@ -8,6 +8,7 @@ COPY packages/quiz-player/package.json ./packages/quiz-player/package.json
 COPY packages/video-player/package.json ./packages/video-player/package.json
 COPY packages/document-player/package.json ./packages/document-player/package.json
 COPY packages/audio-player/package.json ./packages/audio-player/package.json
+COPY packages/ebook-player/package.json ./packages/ebook-player/package.json
 RUN pnpm install --no-frozen-lockfile
 COPY packages/player-shell ./packages/player-shell
 COPY packages/contracts ./packages/contracts
@@ -19,6 +20,7 @@ COPY packages/coach-player ./packages/coach-player
 COPY packages/video-player ./packages/video-player
 COPY packages/document-player ./packages/document-player
 COPY packages/audio-player ./packages/audio-player
+COPY packages/ebook-player ./packages/ebook-player
 COPY tsconfig.json ./
 # Explicit, because Vite hands NODE_ENV straight to React and React treats anything that is not
 # "production" as a development build — development-only behaviour shipped to learners, in a
@@ -31,6 +33,7 @@ RUN pnpm --filter quiz-player build
 RUN pnpm --filter video-player build
 RUN pnpm --filter document-player build
 RUN pnpm --filter audio-player build
+RUN pnpm --filter ebook-player build
 FROM nginx:1.27-alpine
 RUN printf 'server { listen 8080; root /usr/share/nginx/html; add_header Access-Control-Allow-Origin "*" always; location = /health { default_type application/json; return 200 "{\"status\":\"ok\"}"; } location = /index.html { add_header Access-Control-Allow-Origin "*" always; add_header Cache-Control "no-store"; } location / { try_files $uri $uri/ /index.html; } }' >/etc/nginx/conf.d/default.conf
 COPY --from=build /app/packages/player-shell/dist /usr/share/nginx/html
@@ -44,4 +47,5 @@ COPY --from=build /app/packages/coach-player/src /usr/share/nginx/html/modules/c
 COPY --from=build /app/packages/video-player/dist /usr/share/nginx/html/modules/video-player
 COPY --from=build /app/packages/document-player/dist /usr/share/nginx/html/modules/document-player
 COPY --from=build /app/packages/audio-player/dist /usr/share/nginx/html/modules/audio-player
+COPY --from=build /app/packages/ebook-player/dist /usr/share/nginx/html/modules/ebook-player
 EXPOSE 8080

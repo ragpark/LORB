@@ -236,16 +236,27 @@ membership of the object's repository:
 Suspension, retirement and deletion also revoke the object's smart link: a withdrawn object must not
 stay reachable through a link that needs no sign-in.
 
-Video, document (PowerPoint/Word-as-slides) and audio content register the same way quizzes do:
-structured JSON against a fixed shared player, never a bundle. Two surfaces reach the same
+Video, document (PowerPoint/Word-as-slides), audio and ebook content register the same way quizzes
+do: structured JSON against a fixed shared player, never a bundle. Two surfaces reach the same
 `registerMedia` call: the Administration workspace's "New learning object" dialog (video, document,
-and audio tabs alongside quiz and packaged module — an administrator, repository membership, the
-same trust model as authoring a quiz there), and the internal service surface
-(`POST …/internal/runtime/videos` \| `/documents` \| `/audio`, the pre-shared service credential
-from step 5, not an admin token) the agent connector uses. The workspace's document tab uploads a
-file and converts it through step 6b's document-converter service in one action; the internal
-surface expects `pages` (image URLs) already assembled, since an agent has usually produced or
-fetched those itself.
+audio and ebook tabs alongside quiz and packaged module — an administrator, repository membership,
+the same trust model as authoring a quiz there), and the internal service surface
+(`POST …/internal/runtime/videos` \| `/documents` \| `/audio` \| `/ebooks`, the pre-shared service
+credential from step 5, not an admin token) the agent connector uses. The workspace's document tab
+uploads a file and converts it through step 6b's document-converter service in one action; the
+internal surface expects `pages` (image URLs) already assembled, since an agent has usually produced
+or fetched those itself.
+
+**Ebooks** (migration 016) are EPUB 3 files opened in the shared reader at
+`/modules/ebook-player/` on the Player Shell origin. The reader unpacks the archive in the browser and
+renders each content document with scripts and every other active element stripped, so a book — and
+its EDUPUB semantics (learning objectives, assessments, keywords) — is data it displays, never code the
+sandbox runs. `epub_url` is either an https URL the learner's browser can fetch with CORS, or a
+`/modules/…` path served by the Player Shell itself. A three-page exemplar,
+*Photosynthesis: how plants make food*, ships with the reader at
+`/modules/ebook-player/exemplar/photosynthesis-reader.epub` and is published into the default
+repository wherever `SEED_EXAMPLE_CONTENT` is on; a production deployment (where that flag is refused)
+registers it through the ebook tab with that same path.
 
 **Marketplace listing** (migration 012) lets a repository opt an already-published object in to
 cross-repository discovery — `PUT …/learning-objects/{id}/marketplace-listing` with `{"listed":
@@ -275,9 +286,10 @@ unsubscribes — it removes the bookmark without touching the object or anything
 
 `GET /api/v1/admin/learning-objects/{id}/preview` backs the teacher workspace's preview modal — any
 admin, no repository membership required, same scope as the unfiltered object list above. It mints
-no descriptor and creates no attempt, so opening one leaves no evidence. The six data-authored
-kinds (quiz, video, document, audio, lti-tool, external-embed) return structured content; a code-bundled object comes
-back `"kind": "unsupported"` rather than something rendering its live module here would have to fake. A
+no descriptor and creates no attempt, so opening one leaves no evidence. The seven data-authored
+kinds (quiz, video, document, audio, ebook, lti-tool, external-embed) return structured content; a code-bundled object comes
+back `"kind": "unsupported"` rather than something rendering its live module here would have to fake. An
+ebook preview returns `epub_url` and the display metadata, not the book itself. A
 quiz's `correct_option_id` and `explanation` are never included — the same marking-key withholding
 the learner-facing content route already applies.
 
