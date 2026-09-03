@@ -18,6 +18,20 @@ const NS_DC = "http://purl.org/dc/elements/1.1/";
 const NS_OPS = "http://www.idpf.org/2007/ops";
 const NS_XLINK = "http://www.w3.org/1999/xlink";
 
+/**
+ * Bounds on what the reader will unpack. It runs on the learner's main thread inside the sandbox,
+ * so a book is refused before it can exhaust the tab: the download itself, the number of entries,
+ * and the cumulative declared size of what those entries expand to. Generous for a textbook with
+ * images; nowhere near what a crafted archive needs to be a problem.
+ */
+export const LIMITS = {
+  /** Compressed archive, as downloaded. */
+  archiveBytes: 64 * 1024 * 1024,
+  entries: 2000,
+  /** Cumulative declared (uncompressed) size across all entries. */
+  unpackedBytes: 256 * 1024 * 1024,
+} as const;
+
 export interface EpubChapter {
   id: string;
   /** Archive path of the content document, already resolved against the package document. */
@@ -55,6 +69,15 @@ const DROPPED_ELEMENTS = new Set([
   "script", "iframe", "object", "embed", "applet", "form", "input", "button", "select", "textarea",
   "link", "meta", "base", "style", "template", "noscript", "audio", "video", "source", "track", "portal",
 ]);
+
+/** Attributes that name a resource to fetch or a place to send something. On anything but the
+ *  image elements and links handled specially below, an off-archive value is removed. */
+const URL_ATTRIBUTES = new Set([
+  "href", "xlink:href", "src", "srcset", "poster", "data", "background", "ping", "formaction", "action",
+  "cite", "longdesc", "usemap", "manifest", "codebase", "archive",
+]);
+
+const hasScheme = (value: string): boolean => /^[a-z][a-z\d+.-]*:/i.test(value) || value.startsWith("//");
 
 function dirnameOf(path: string): string {
   const slash = path.lastIndexOf("/");
@@ -107,15 +130,55 @@ function allByLocalName(root: ParentNode, ns: string | null, localName: string):
 export async function loadEpub(url: string): Promise<EpubBook> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`The book could not be fetched (${response.status})`);
-  return openEpub(new Uint8Array(await response.arrayBuffer()));
+  const tooLarge = new Error("The book is larger than this reader will open");
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (declared > LIMITS.archiveBytes) throw tooLarge;
+  // Read incrementally and stop at the bound: a server that omits Content-Length, or understates
+  // it, must not get to hand the tab an arbitrarily large body before the size is ever checked.
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > LIMITS.archiveBytes) throw tooLarge;
+    return openEpub(bytes);
+  }
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > LIMITS.archiveBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw tooLarge;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return openEpub(bytes);
 }
 
 /** Opens EPUB bytes already in hand — the part of loadEpub that needs no network. */
 export function openEpub(bytes: Uint8Array): EpubBook {
+  if (bytes.byteLength > LIMITS.archiveBytes) throw new Error("The book is larger than this reader will open");
   let files: Record<string, Uint8Array>;
+  let entries = 0;
+  let unpacked = 0;
+  const tooBig = new Error("The book expands to more than this reader will open");
   try {
-    files = unzipSync(bytes);
-  } catch {
+    files = unzipSync(bytes, {
+      // Checked per entry, before that entry is inflated, against what the archive declares — so a
+      // bomb is refused on its directory, not discovered after the allocation it was built to cause.
+      filter: (entry) => {
+        entries += 1;
+        unpacked += entry.originalSize;
+        if (entries > LIMITS.entries || unpacked > LIMITS.unpackedBytes) throw tooBig;
+        return true;
+      },
+    });
+  } catch (error) {
+    if (error === tooBig) throw error;
     throw new Error("The file is not a readable EPUB archive");
   }
   const mimetype = files["mimetype"] ? strFromU8(files["mimetype"]).trim() : "";
@@ -183,45 +246,97 @@ export function openEpub(bytes: Uint8Array): EpubBook {
 }
 
 /**
- * Prefixes every selector in `css` with `scope`, so a book's stylesheet reaches its own pages and
- * nothing of the reader around them. `html` and `body` selectors become the scope itself. At-rules
- * with nested blocks (@media, @supports) are scoped recursively; other at-rules (@font-face, @import,
- * @page) are dropped — @import would reach outside the archive, and the rest have no scoped meaning.
+ * A book's CSS, made safe to inject.
+ *
+ * Text-level rewriting is not enough here: CSS has more than one way to name a resource
+ * (`image-set("…")`, an escaped function name like `u\72l(…)`, a `var()` carrying either), and the
+ * sandbox does not stop the fetch such a declaration causes once it is rendered. So the browser's own
+ * parser does the reading. The stylesheet is parsed into a constructed CSSStyleSheet — which fetches
+ * nothing, is never adopted, and drops @import — and rebuilt declaration by declaration from the
+ * parser's canonical serialisation, in which every resource reference is a plain `url("…")` and
+ * function names carry no escapes. Each `url()` is then rewritten (in-archive → blob URL, fragment
+ * kept, anything else → `none`), and a declaration that still carries anything that could resolve
+ * outside the archive — a remaining non-blob `url()`, a `//`, a `var()` or custom property that could
+ * smuggle one, a backslash escape — is dropped whole. Only style rules and @media/@supports blocks
+ * survive; everything else (@font-face, @import, @namespace, @property, …) is discarded.
+ *
+ * Scoping uses CSS nesting: the rebuilt rules are wrapped in `scope { … }`, so a selector list is
+ * never split by hand, and `html`/`body` selectors become the scope itself.
  */
-export function scopeCss(css: string, scope: string): string {
-  const source = css.replace(/\/\*[\s\S]*?\*\//g, "");
+const CSS_URL = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)'"\s]*))\s*\)/gi;
+
+function rewriteUrls(value: string, fromDir: string, blobFor: (path: string) => string | undefined): string {
+  return value.replace(CSS_URL, (_match, dq?: string, sq?: string, bare?: string) => {
+    const target = (dq ?? sq ?? bare ?? "").trim();
+    if (target.startsWith("#")) return `url("${target.replace(/"/g, "")}")`;
+    if (!target || hasScheme(target)) return "none";
+    const url = blobFor(resolveArchivePath(fromDir, target));
+    return url ? `url("${url}")` : "none";
+  });
+}
+
+/** A declaration value, after rewriting, is kept only if nothing in it could still name a resource
+ *  outside the archive. Conservative on purpose: a dropped declaration costs a book some styling,
+ *  a kept one could cost a learner a beacon. */
+function valueIsContained(value: string): boolean {
+  if (/\\/.test(value)) return false;
+  if (/var\(/i.test(value)) return false;
+  if (/\/\//.test(value)) return false;
+  const urls = Array.from(value.matchAll(CSS_URL)).map((m) => (m[1] ?? m[2] ?? m[3] ?? "").trim());
+  if (urls.some((target) => !(target.startsWith("blob:") || target.startsWith("#")))) return false;
+  // Any other function that takes a resource or a string the parser did not fold into url().
+  if (/(?:^|[^a-z-])(?:image-set|-webkit-image-set|src|element|-moz-element|paint|image|cross-fade|-webkit-cross-fade)\s*\(/i.test(value)) return false;
+  return true;
+}
+
+function sanitizeDeclarations(style: CSSStyleDeclaration, fromDir: string, blobFor: (path: string) => string | undefined): string {
+  const out: string[] = [];
+  for (let i = 0; i < style.length; i += 1) {
+    const property = style.item(i);
+    if (!property || property.startsWith("--")) continue;
+    const rewritten = rewriteUrls(style.getPropertyValue(property), fromDir, blobFor);
+    if (!valueIsContained(rewritten)) continue;
+    const priority = style.getPropertyPriority(property);
+    out.push(`${property}:${rewritten}${priority ? ` !${priority}` : ""}`);
+  }
+  return out.join(";");
+}
+
+function sanitizeRules(rules: CSSRuleList, fromDir: string, blobFor: (path: string) => string | undefined): string {
   let out = "";
-  let i = 0;
-  while (i < source.length) {
-    const open = source.indexOf("{", i);
-    if (open === -1) break;
-    const prelude = source.slice(i, open).trim();
-    const close = matchingBrace(source, open);
-    const body = source.slice(open + 1, close);
-    i = close + 1;
-    if (!prelude) continue;
-    if (prelude.startsWith("@")) {
-      if (/^@(media|supports)\b/.test(prelude)) out += `${prelude}{${scopeCss(body, scope)}}`;
-      continue;
+  for (const rule of Array.from(rules)) {
+    if (rule instanceof CSSStyleRule) {
+      const selector = rule.selectorText.split(",").map((part) => part.trim()).map((part) => (/^(html|body)$/i.test(part) ? "&" : part.replace(/^(html|body)\s+/i, ""))).join(",");
+      const body = sanitizeDeclarations(rule.style, fromDir, blobFor);
+      if (body) out += `${selector}{${body}}`;
+    } else if (rule instanceof CSSMediaRule || rule instanceof CSSSupportsRule) {
+      const inner = sanitizeRules(rule.cssRules, fromDir, blobFor);
+      const keyword = rule instanceof CSSMediaRule ? "@media" : "@supports";
+      if (inner) out += `${keyword} ${rule.conditionText}{${inner}}`;
     }
-    const selectors = prelude.split(",").map((selector) => {
-      const trimmed = selector.trim();
-      if (/^(html|body)$/i.test(trimmed)) return scope;
-      const stripped = trimmed.replace(/^(html|body)\s+/i, "");
-      return `${scope} ${stripped}`;
-    });
-    out += `${selectors.join(",")}{${body.trim()}}`;
+    // Every other rule kind is discarded.
   }
   return out;
 }
 
-function matchingBrace(source: string, open: number): number {
-  let depth = 0;
-  for (let i = open; i < source.length; i += 1) {
-    if (source[i] === "{") depth += 1;
-    else if (source[i] === "}") { depth -= 1; if (depth === 0) return i; }
+/** A stylesheet from the archive (or an embedded <style>), sanitised and scoped under `scope`. */
+export function sanitizeStylesheet(css: string, fromDir: string, blobFor: (path: string) => string | undefined, scope: string): string {
+  const sheet = new CSSStyleSheet();
+  try {
+    sheet.replaceSync(css);
+  } catch {
+    return "";
   }
-  return source.length;
+  const rules = sanitizeRules(sheet.cssRules, fromDir, blobFor);
+  return rules ? `${scope}{${rules}}` : "";
+}
+
+/** A `style` attribute's value, sanitised the same way. Parsed on a detached element, so no
+ *  resource it names is fetched while it is being read. */
+export function sanitizeStyleAttribute(value: string, fromDir: string, blobFor: (path: string) => string | undefined): string {
+  const probe = document.createElement("span");
+  probe.setAttribute("style", value);
+  return sanitizeDeclarations(probe.style, fromDir, blobFor);
 }
 
 /** Renders one spine item to scoped CSS plus sanitised HTML. */
@@ -232,21 +347,6 @@ export function renderChapter(book: EpubBook, chapterIndex: number, scope: strin
   const chapterDir = dirnameOf(chapter.href);
   const blobUrls: string[] = [];
 
-  // Stylesheets the document links to from inside the archive, plus its own <style> blocks.
-  const cssParts: string[] = [];
-  for (const link of Array.from(doc.querySelectorAll("link"))) {
-    const rel = (link.getAttribute("rel") ?? "").toLowerCase().split(/\s+/);
-    if (!rel.includes("stylesheet")) continue;
-    const href = link.getAttribute("href");
-    const data = href ? book.files[resolveArchivePath(chapterDir, href)] : undefined;
-    if (data) cssParts.push(strFromU8(data));
-  }
-  for (const style of Array.from(doc.querySelectorAll("style"))) cssParts.push(style.textContent ?? "");
-
-  const body = doc.querySelector("body") ?? doc.documentElement;
-  const container = document.createElement("div");
-  for (const child of Array.from(body.childNodes)) container.appendChild(document.importNode(child, true));
-
   const blobFor = (path: string): string | undefined => {
     const data = book.files[path];
     if (!data) return undefined;
@@ -256,6 +356,25 @@ export function renderChapter(book: EpubBook, chapterIndex: number, scope: strin
     return url;
   };
 
+  // Stylesheets the document links to from inside the archive, plus its own <style> blocks — each
+  // parsed, sanitised and scoped (see sanitizeStylesheet), with url() references resolved relative
+  // to where that stylesheet lives.
+  const cssParts: string[] = [];
+  for (const link of Array.from(doc.querySelectorAll("link"))) {
+    const rel = (link.getAttribute("rel") ?? "").toLowerCase().split(/\s+/);
+    if (!rel.includes("stylesheet")) continue;
+    const href = link.getAttribute("href");
+    if (!href || hasScheme(href)) continue;
+    const path = resolveArchivePath(chapterDir, href);
+    const data = book.files[path];
+    if (data) cssParts.push(sanitizeStylesheet(strFromU8(data), dirnameOf(path), blobFor, scope));
+  }
+  for (const style of Array.from(doc.querySelectorAll("style"))) cssParts.push(sanitizeStylesheet(style.textContent ?? "", chapterDir, blobFor, scope));
+
+  const body = doc.querySelector("body") ?? doc.documentElement;
+  const container = document.createElement("div");
+  for (const child of Array.from(body.childNodes)) container.appendChild(document.importNode(child, true));
+
   for (const element of Array.from(container.querySelectorAll("*"))) {
     const name = element.localName.toLowerCase();
     if (DROPPED_ELEMENTS.has(name)) { element.remove(); continue; }
@@ -263,10 +382,17 @@ export function renderChapter(book: EpubBook, chapterIndex: number, scope: strin
       const attributeName = attribute.name.toLowerCase();
       const value = attribute.value.trim();
       if (attributeName.startsWith("on")) { element.removeAttribute(attribute.name); continue; }
-      if ((attributeName === "href" || attributeName === "xlink:href" || attributeName === "src" || attributeName === "srcset" || attributeName === "poster" || attributeName === "data")
-        && /^\s*(javascript|data|vbscript|blob):/i.test(value)) {
-        element.removeAttribute(attribute.name);
+      if (attributeName === "style") {
+        const safe = sanitizeStyleAttribute(value, chapterDir, blobFor);
+        if (safe) element.setAttribute("style", safe); else element.removeAttribute("style");
+        continue;
       }
+      if (!URL_ATTRIBUTES.has(attributeName)) continue;
+      if (/^\s*(javascript|data|vbscript|blob):/i.test(value)) { element.removeAttribute(attribute.name); continue; }
+      // Image elements and links are resolved below; anything else pointing off the archive goes.
+      const handledBelow = (name === "img" || name === "image") && (attributeName === "src" || attributeName === "href" || attributeName === "xlink:href");
+      if (name === "a" && attributeName === "href") continue;
+      if (!handledBelow && (hasScheme(value) || attributeName === "srcset")) element.removeAttribute(attribute.name);
     }
     if (name === "img" || name === "image") {
       const source = element.getAttribute("src") ?? element.getAttributeNS(NS_XLINK, "href") ?? element.getAttribute("href");
@@ -305,7 +431,7 @@ export function renderChapter(book: EpubBook, chapterIndex: number, scope: strin
 
   return {
     html: container.innerHTML,
-    css: scopeCss(cssParts.join("\n"), scope),
+    css: cssParts.join("\n"),
     revoke: () => { for (const url of blobUrls) URL.revokeObjectURL(url); },
   };
 }

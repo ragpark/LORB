@@ -77,7 +77,16 @@ test("a book's script never runs: an EPUB carrying one renders its text with the
   const epub = packEpub({
     "META-INF/container.xml": '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
     "book.opf": '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="u"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="u">urn:x</dc:identifier><dc:title>Scripted</dc:title><dc:language>en</dc:language><meta property="dcterms:modified">2026-01-01T00:00:00Z</meta></metadata><manifest><item id="p" href="p.xhtml" media-type="application/xhtml+xml" properties="scripted"/></manifest><spine><itemref idref="p"/></spine></package>',
-    "p.xhtml": '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>p</title><script>document.title="pwned";window.__epubRan=true;</script></head><body><h1 onclick="window.__epubRan=true">Only text</h1><p>Body copy.</p><script>window.__epubRan=true;</script><iframe src="https://example.invalid/"></iframe><a href="https://example.invalid/away">an external link</a></body></html>',
+    "p.xhtml": '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>p</title><script>document.title="pwned";window.__epubRan=true;</script>'
+      + '<link rel="stylesheet" href="https://example.invalid/remote.css"/><link rel="stylesheet" href="local.css"/>'
+      + '<style>p{background:url("https://example.invalid/style-beacon")} p{background-image:image-set("https://example.invalid/imageset-beacon" 1x)} '
+      + 'p{background-image:u\\72l("https://example.invalid/escaped-beacon")} :root{--b:url(https://example.invalid/var-beacon)} p{border-image:var(--b)} '
+      + '@font-face{font-family:x;src:url(https://example.invalid/font-beacon)} @import url("https://example.invalid/import2.css"); p{color:rgb(4, 5, 6)}</style></head>'
+      + '<body><h1 onclick="window.__epubRan=true" style="color:rgb(1, 2, 3);background:url(https://example.invalid/attr-beacon)">Only text</h1><p>Body copy.</p>'
+      + '<script>window.__epubRan=true;</script><iframe src="https://example.invalid/"></iframe><img src="https://example.invalid/img-beacon.png" alt="remote"/>'
+      + '<a href="https://example.invalid/away">an external link</a></body></html>',
+    "local.css": '@import url("https://example.invalid/import.css"); h1{background-image:url(https://example.invalid/sheet-beacon)} body{background:url(bg.svg)}',
+    "bg.svg": '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" fill="#0f0"/></svg>',
   });
   await mkdir(join(harness.playerRoot, "modules/ebook-player/fixtures"), { recursive: true });
   await writeFile(join(harness.playerRoot, "modules/ebook-player/fixtures/scripted.epub"), epub);
@@ -90,12 +99,31 @@ test("a book's script never runs: an EPUB carrying one renders its text with the
   expect(registered.statusCode).toBe(201);
   const { attemptId, playerUrl } = await launch(registered.json().object_id as string);
 
+  // Every request the page makes while the book is open: none may leave for the book's beacons.
+  const requested: string[] = [];
+  page.on("request", (request) => requested.push(request.url()));
   await page.goto(playerUrl, { waitUntil: "networkidle" });
   const module = page.frameLocator("#module");
   const pane = module.locator(".epub-body");
   await expect(pane.locator("h1")).toHaveText("Only text", { timeout: 15000 });
   await pane.locator("h1").click();
   expect(await pane.locator("script, iframe").count()).toBe(0);
+  // CSS is sanitised wherever it appears: the attribute keeps its colour, loses its beacon; the
+  // linked sheet's in-archive image became a blob URL, its off-archive one and its @import are gone.
+  // (The parser rebuilds the attribute from longhands, hence background-image rather than background.)
+  await expect(pane.locator("h1")).toHaveAttribute("style", /color:\s*rgb\(1, 2, 3\)/);
+  await expect(pane.locator("h1")).toHaveAttribute("style", /background-image:\s*none/);
+  await expect(pane.locator("h1")).not.toHaveAttribute("style", /example\.invalid/);
+  expect(await pane.locator("h1").evaluate((el) => getComputedStyle(el).backgroundImage)).toBe("none");
+  expect(await pane.evaluate((el) => getComputedStyle(el).backgroundImage)).toMatch(/^url\("blob:/);
+  const paragraph = pane.locator("p").first();
+  expect(await paragraph.evaluate((el) => getComputedStyle(el).backgroundImage)).toBe("none");
+  expect(await paragraph.evaluate((el) => getComputedStyle(el).borderImageSource)).toBe("none");
+  // …while a harmless declaration from the same sheet still applies.
+  expect(await paragraph.evaluate((el) => getComputedStyle(el).color)).toBe("rgb(4, 5, 6)");
+  await expect(pane.locator("img")).not.toHaveAttribute("src", /./);
+  await page.waitForTimeout(500);
+  expect(requested.filter((url) => url.includes("example.invalid"))).toEqual([]);
   expect(await module.locator("body").evaluate(() => (window as unknown as { __epubRan?: boolean }).__epubRan ?? false)).toBe(false);
   // The external link is text with its destination shown, never a navigable href.
   const external = pane.locator("a[data-epub-external]");
@@ -103,4 +131,55 @@ test("a book's script never runs: an EPUB carrying one renders its text with the
   expect(await external.getAttribute("href")).toBeNull();
   // A one-page book completes on display.
   await expect.poll(async () => (await harness.store.getAttempt(attemptId))?.status, { timeout: 15000 }).toBe("COMPLETED");
+});
+
+test("an archive past the reader's bounds is refused before it is unpacked", async ({ page }) => {
+  const { writeFile, mkdir } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  // Well-formed, but 2,001 entries: one over LIMITS.entries. Refused on the directory, no inflation.
+  const entries: Record<string, string> = {
+    "META-INF/container.xml": '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
+    "book.opf": '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="u"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="u">urn:y</dc:identifier><dc:title>Many</dc:title><dc:language>en</dc:language></metadata><manifest><item id="p" href="p.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="p"/></spine></package>',
+    "p.xhtml": '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>p</title></head><body><h1>Should not render</h1></body></html>',
+  };
+  for (let i = 0; i < 1998; i += 1) entries[`pad/${i}.txt`] = "x";
+  await mkdir(join(harness.playerRoot, "modules/ebook-player/fixtures"), { recursive: true });
+  await writeFile(join(harness.playerRoot, "modules/ebook-player/fixtures/many.epub"), packEpub(entries));
+
+  const registered = await harness.runtime.app.inject({
+    method: "POST", url: "/api/v1/internal/runtime/ebooks",
+    headers: { authorization: "Bearer browser-suite-internal-service-token-0001", "idempotency-key": randomUUID() },
+    payload: { title: "Too many entries", epub_url: "/modules/ebook-player/fixtures/many.epub" } as never,
+  });
+  expect(registered.statusCode).toBe(201);
+  const { attemptId, playerUrl } = await launch(registered.json().object_id as string);
+
+  await page.goto(playerUrl, { waitUntil: "networkidle" });
+  const module = page.frameLocator("#module");
+  await expect(module.getByRole("alert")).toHaveText(/expands to more than this reader will open/, { timeout: 15000 });
+  expect(await module.locator(".epub-body").count()).toBe(0);
+  expect((await harness.store.getAttempt(attemptId))?.status).not.toBe("COMPLETED");
+});
+
+test("a download past the archive bound is stopped while it streams, with no Content-Length to trust", async ({ page }) => {
+  const { writeFile, mkdir } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  // The harness's static server streams files chunked, without Content-Length — exactly the case
+  // where the bound has to be enforced on the bytes actually received. 65 MiB of a non-EPUB.
+  await mkdir(join(harness.playerRoot, "modules/ebook-player/fixtures"), { recursive: true });
+  await writeFile(join(harness.playerRoot, "modules/ebook-player/fixtures/huge.epub"), Buffer.alloc(65 * 1024 * 1024, 0x41));
+
+  const registered = await harness.runtime.app.inject({
+    method: "POST", url: "/api/v1/internal/runtime/ebooks",
+    headers: { authorization: "Bearer browser-suite-internal-service-token-0001", "idempotency-key": randomUUID() },
+    payload: { title: "Too large", epub_url: "/modules/ebook-player/fixtures/huge.epub" } as never,
+  });
+  expect(registered.statusCode).toBe(201);
+  const { attemptId, playerUrl } = await launch(registered.json().object_id as string);
+
+  await page.goto(playerUrl, { waitUntil: "networkidle" });
+  const module = page.frameLocator("#module");
+  await expect(module.getByRole("alert")).toHaveText(/larger than this reader will open/, { timeout: 30000 });
+  expect(await module.locator(".epub-body").count()).toBe(0);
+  expect((await harness.store.getAttempt(attemptId))?.status).not.toBe("COMPLETED");
 });
