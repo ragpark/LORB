@@ -16,7 +16,9 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import type { KeyLike } from "jose";
-import { launchRequestSchema, type AudioContent, type ExternalEmbedContent, type LtiToolContent, type VideoContent } from "../../contracts/src/index.js";
+import {
+  launchRequestSchema, type AudioContent, type EbookContent, type ExternalEmbedContent, type LtiToolContent, type VideoContent,
+} from "../../contracts/src/index.js";
 import { config as loadRuntimeConfig, loadConfig, type RuntimeConfig } from "./config/index.js";
 import { catalogue as defaultCatalogue, createCatalogue, type CatalogueStore, type LearningObjectRow } from "./catalogue/index.js";
 import { createStore, type RuntimeStore } from "./store/index.js";
@@ -826,6 +828,10 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     if (object.content_profile === "audio-json-v1" && content && "source" in content) {
       const audio = content as AudioContent;
       return { ...base, kind: "audio" as const, source: audio.source, transcript_url: audio.transcript_url };
+    }
+    if (object.content_profile === "ebook-json-v1" && content && "epub_url" in content) {
+      const ebook = content as EbookContent;
+      return { ...base, kind: "ebook" as const, epub_url: ebook.epub_url, author: ebook.author, language: ebook.language, reading_minutes: ebook.reading_minutes };
     }
     if (object.content_profile === "lti-tool-v1" && content && "tool_name" in content) {
       const tool = content as LtiToolContent;

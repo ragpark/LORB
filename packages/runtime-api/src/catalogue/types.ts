@@ -10,12 +10,13 @@
  * are real rows: a descriptor binds to the version that was actually published.
  */
 import type {
-  AudioContent, AudioDraft, DocumentContent, DocumentDraft, ExternalEmbedContent, ExternalEmbedDraft, LaunchContext, LtiToolContent, LtiToolDraft,
-  QuizContent, QuizDraft, VideoContent, VideoDraft,
+  AudioContent, AudioDraft, DocumentContent, DocumentDraft, EbookContent, EbookDraft, ExternalEmbedContent, ExternalEmbedDraft, LaunchContext,
+  LtiToolContent, LtiToolDraft, QuizContent, QuizDraft, VideoContent, VideoDraft,
 } from "../../../contracts/src/index.js";
 
-/** The three media kinds registered alongside quizzes, each behind one fixed shared player. */
-export type MediaKind = "video" | "document" | "audio";
+/** The four media kinds registered alongside quizzes, each behind one fixed shared player. An ebook
+ *  is an EPUB 3 file read by the shared reader — data, like the other three, never a bundle. */
+export type MediaKind = "video" | "document" | "audio" | "ebook";
 
 /**
  * What a repository charges for cross-repository access to a marketplace-listed object — informational
@@ -28,8 +29,8 @@ export interface MarketplacePricing {
   currency: string | null;
   billing_period: "one_time" | "month" | "year" | null;
 }
-export type AnyMediaContent = VideoContent | DocumentContent | AudioContent;
-export type AnyMediaDraft = VideoDraft | DocumentDraft | AudioDraft;
+export type AnyMediaContent = VideoContent | DocumentContent | AudioContent | EbookContent;
+export type AnyMediaDraft = VideoDraft | DocumentDraft | AudioDraft | EbookDraft;
 /** Everything a learning object's content route may serve. */
 export type AnyContent = QuizContent | AnyMediaContent | LtiToolContent | ExternalEmbedContent;
 
@@ -54,7 +55,7 @@ export interface LearningObjectRow {
   kind: string;
   module_path: string;
   /** Present only on objects whose content is a JSON payload rather than bundled code. */
-  content_profile?: "quiz-json-v1" | "video-json-v1" | "document-json-v1" | "audio-json-v1" | "lti-tool-v1" | "external-embed-v1";
+  content_profile?: "quiz-json-v1" | "video-json-v1" | "document-json-v1" | "audio-json-v1" | "ebook-json-v1" | "lti-tool-v1" | "external-embed-v1";
   /** Provenance, so an operator can see which objects an agent authored. */
   authored_by?: string;
   /** Whether this repository has opted this object in to cross-repository marketplace discovery.
@@ -232,7 +233,7 @@ export interface CatalogueStore {
   packageVersions(filter?: { object_id?: string }): Promise<PackageVersionRow[]>;
   packageVersion(packageVersionId: string): Promise<PackageVersionRow | undefined>;
 
-  /** Learner-facing structured content, including any marking key. Quiz, video, document, or audio. */
+  /** Learner-facing structured content, including any marking key. Quiz, video, document, audio, or ebook. */
   content(objectId: string): Promise<AnyContent | undefined>;
   /** One historical content version, so a superseded attempt can still be read against what it was delivered. */
   contentRevision(objectId: string, contentVersion: string): Promise<AnyContent | undefined>;
@@ -292,7 +293,7 @@ export interface CatalogueStore {
   /** Registers agent-authored quiz content against the shared, already-reviewed quiz player. */
   registerQuiz(draft: QuizDraft, options?: { repository_id?: string; authored_by?: string }): Promise<RegisteredQuiz>;
 
-  /** Registers agent- or publisher-authored video/document/audio content against the shared,
+  /** Registers agent- or publisher-authored video/document/audio/ebook content against the shared,
    * already-reviewed player for that kind. The document-player expects `draft` to already carry
    * pre-rasterised page image URLs — see packages/document-converter. */
   registerMedia(kind: MediaKind, draft: AnyMediaDraft, options?: { repository_id?: string; authored_by?: string }): Promise<RegisteredMedia>;
@@ -311,6 +312,6 @@ export interface CatalogueStore {
    *  allow-list — the caller (a publisher route) is expected to have checked that before calling this. */
   registerExternalEmbed(draft: ExternalEmbedDraft, options?: { repository_id?: string; authored_by?: string }): Promise<RegisteredExternalEmbed>;
 
-  /** Ensures every shared player package row exists (quiz, video, document, audio, LTI launch). Idempotent. */
+  /** Ensures every shared player package row exists (quiz, video, document, audio, ebook, LTI launch, external embed). Idempotent. */
   ensureSharedPlayer(): Promise<void>;
 }

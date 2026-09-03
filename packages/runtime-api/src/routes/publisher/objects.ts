@@ -27,7 +27,8 @@
 import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
-  audioDraftSchema, documentDraftSchema, externalEmbedDraftSchema, launchContextSchema, ltiToolDraftSchema, quizDraftSchema, videoDraftSchema,
+  audioDraftSchema, documentDraftSchema, ebookDraftSchema, externalEmbedDraftSchema, launchContextSchema, ltiToolDraftSchema, quizDraftSchema,
+  videoDraftSchema,
 } from "../../../../contracts/src/index.js";
 import type { CatalogueStore, LearningObjectRow, MediaKind } from "../../catalogue/index.js";
 import type { RuntimeStore } from "../../store/index.js";
@@ -472,19 +473,22 @@ export function registerPublisherRoutes(app: FastifyInstance, ctx: PublisherCont
   });
 
   /**
-   * Registering a video, document, or audio object: structured JSON content bound to that kind's
+   * Registering a video, document, audio, or ebook object: structured JSON content bound to that kind's
    * fixed, already-reviewed shared player — the same authoring shape and trust model as the quiz
    * route above, and the person-reachable counterpart to the internal service surface the agent
    * connector uses (routes/internal/media.ts). No bundle is uploaded here either.
    *
    * A document's `pages` must already be image URLs — this route does not convert a PowerPoint or
    * Word file itself; `.../documents/upload` below does that first and then registers the result.
+   * An ebook's `epub_url` likewise names a file already hosted where a learner's browser can fetch
+   * it (with CORS), or a path on the Player Shell origin — nothing here stores the book.
    */
-  const MEDIA_DRAFT_SCHEMAS = { video: videoDraftSchema, document: documentDraftSchema, audio: audioDraftSchema } as const;
+  const MEDIA_DRAFT_SCHEMAS = { video: videoDraftSchema, document: documentDraftSchema, audio: audioDraftSchema, ebook: ebookDraftSchema } as const;
   const MEDIA_ROUTE_PATHS: Record<MediaKind, string> = {
     video: "/api/v1/publisher/learning-objects/videos",
     document: "/api/v1/publisher/learning-objects/documents",
     audio: "/api/v1/publisher/learning-objects/audio",
+    ebook: "/api/v1/publisher/learning-objects/ebooks",
   };
   const registerMediaObject = async (
     kind: MediaKind, req: FastifyRequest, reply: FastifyReply, draftBody: unknown,

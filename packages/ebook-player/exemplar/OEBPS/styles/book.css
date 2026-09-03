@@ -1,0 +1,16 @@
+/* Book-supplied styles. The reader scopes every rule to its reading pane before applying it. */
+body { font-family: Georgia, "Times New Roman", serif; line-height: 1.6; }
+h1 { font-size: 1.6em; margin: 0 0 .25em; }
+h2 { font-size: 1.2em; margin: 1.5em 0 .5em; }
+p.standfirst { font-size: 1.05em; font-style: italic; margin: 0 0 1.25em; }
+.equation { font-family: "Courier New", monospace; font-size: 1.05em; text-align: center; padding: .75em; border: 1px dashed currentColor; border-radius: .4em; margin: 1em 0; }
+figure { margin: 1.25em 0; text-align: center; }
+figure img { max-width: 100%; height: auto; }
+figcaption { font-size: .9em; margin-top: .5em; }
+table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+th, td { border: 1px solid currentColor; padding: .4em .6em; text-align: left; vertical-align: top; }
+th { font-weight: 700; }
+dl dt { font-weight: 700; margin-top: .6em; }
+dl dd { margin: 0 0 .4em 1.25em; }
+ol.questions > li { margin-bottom: 1em; }
+details summary { cursor: pointer; font-weight: 700; }

@@ -9,12 +9,12 @@
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import {
-  audioContentSchema, documentContentSchema, externalEmbedContentSchema, ltiToolContentSchema, quizContentSchema, videoContentSchema,
+  audioContentSchema, documentContentSchema, ebookContentSchema, externalEmbedContentSchema, ltiToolContentSchema, quizContentSchema, videoContentSchema,
   type ExternalEmbedDraft, type LaunchContext, type LtiToolDraft, type QuizDraft,
 } from "../../../contracts/src/index.js";
 import {
   buildExternalEmbedRegistration, buildLtiToolRegistration, buildMediaRegistration, buildMediaRevision, buildQuizRegistration, buildQuizRevision,
-  DEFAULT_REPOSITORY, EXAMPLE_OBJECTS, EXTERNAL_EMBED_PLAYER, EXTERNAL_EMBED_PLAYER_PACKAGE, LTI_PLAYER, LTI_PLAYER_PACKAGE, MEDIA_PLAYERS, MEDIA_PLAYER_PACKAGES,
+  DEFAULT_REPOSITORY, EXAMPLE_EBOOK, EXAMPLE_OBJECTS, EXTERNAL_EMBED_PLAYER, EXTERNAL_EMBED_PLAYER_PACKAGE, LTI_PLAYER, LTI_PLAYER_PACKAGE, MEDIA_PLAYERS, MEDIA_PLAYER_PACKAGES,
   nextMinorSemver, QUIZ_PLAYER, QUIZ_PLAYER_PACKAGE,
 } from "./shared.js";
 import type {
@@ -23,12 +23,13 @@ import type {
   RegisteredMedia, RegisteredQuiz, Repository,
 } from "./types.js";
 
-const CONTENT_SCHEMAS = { video: videoContentSchema, document: documentContentSchema, audio: audioContentSchema } as const;
+const CONTENT_SCHEMAS = { video: videoContentSchema, document: documentContentSchema, audio: audioContentSchema, ebook: ebookContentSchema } as const;
 /** Parses a stored payload against whichever schema its content_profile names — quiz included. */
 function parseContent(contentProfile: string | null | undefined, payload: unknown): AnyContent | undefined {
   const schema = contentProfile === "video-json-v1" ? CONTENT_SCHEMAS.video
     : contentProfile === "document-json-v1" ? CONTENT_SCHEMAS.document
     : contentProfile === "audio-json-v1" ? CONTENT_SCHEMAS.audio
+    : contentProfile === "ebook-json-v1" ? CONTENT_SCHEMAS.ebook
     : contentProfile === "lti-tool-v1" ? ltiToolContentSchema
     : contentProfile === "external-embed-v1" ? externalEmbedContentSchema
     : quizContentSchema; // covers 'quiz-json-v1' and legacy rows written before content_profile was stored on this table
@@ -745,5 +746,39 @@ export class PostgresCatalogueStore implements CatalogueStore {
          example.package.package_version_id, example.package.published_at],
       );
     }
+    // The exemplar ebook: a data-authored object, so its seed is the same four rows
+    // registerMedia("ebook") writes — object, content-versioned object version, current content, and
+    // the content-version history row a pinned descriptor reads back against.
+    const ebook = EXAMPLE_EBOOK;
+    await this.pool.query(
+      `insert into learning_object (object_id, repository_id, active_object_version_id, active_package_version_id,
+         status, title, description, duration, kind, module_path, content_profile, created_at)
+       values ($1,$2,$3,$4,'PUBLISHED',$5,$6,$7,$8,$9,$10,$11)
+       on conflict (object_id) do update set
+         active_object_version_id = excluded.active_object_version_id,
+         active_package_version_id = excluded.active_package_version_id,
+         title = excluded.title, description = excluded.description, duration = excluded.duration,
+         kind = excluded.kind, module_path = excluded.module_path, content_profile = excluded.content_profile, updated_at = now()`,
+      [ebook.object.object_id, ebook.object.repository_id, ebook.object.active_object_version_id, ebook.object.active_package_version_id,
+       ebook.object.title, ebook.object.description, ebook.object.duration, ebook.object.kind, ebook.object.module_path,
+       ebook.object.content_profile, ebook.object.created_at],
+    );
+    await this.pool.query(
+      `insert into object_version (object_version_id, object_id, semver, package_version_id, status, published_at, content_version)
+       values ($1,$2,$3,$4,'PUBLISHED',$5,$6) on conflict (object_version_id) do nothing`,
+      [ebook.version.object_version_id, ebook.version.object_id, ebook.version.semver, ebook.version.package_version_id,
+       ebook.version.published_at, ebook.version.content_version],
+    );
+    await this.pool.query(
+      `insert into learning_object_content (object_id, content_profile, content_version, payload)
+       values ($1,$2,$3,$4)
+       on conflict (object_id) do update set content_profile = excluded.content_profile, content_version = excluded.content_version, payload = excluded.payload`,
+      [ebook.object.object_id, ebook.object.content_profile, ebook.content.content_version, JSON.stringify(ebook.content)],
+    );
+    await this.pool.query(
+      `insert into learning_object_content_version (object_id, content_profile, content_version, payload)
+       values ($1,$2,$3,$4) on conflict (object_id, content_version) do nothing`,
+      [ebook.object.object_id, ebook.object.content_profile, ebook.content.content_version, JSON.stringify(ebook.content)],
+    );
   }
 }

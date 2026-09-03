@@ -37,6 +37,7 @@ const BUNDLES = [
   { from: "packages/video-player/dist", to: "modules/video-player" },
   { from: "packages/document-player/dist", to: "modules/document-player" },
   { from: "packages/audio-player/dist", to: "modules/audio-player" },
+  { from: "packages/ebook-player/dist", to: "modules/ebook-player" },
 ] as const;
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -46,6 +47,7 @@ const CONTENT_TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
+  ".epub": "application/epub+zip",
 };
 
 export interface Harness {
