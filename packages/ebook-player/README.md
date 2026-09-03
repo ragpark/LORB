@@ -20,15 +20,22 @@ Instead (`src/epub.ts`):
    `audio`/`video`, `link`, `meta`, `base`, `style`-in-body, `on*` attributes, and `javascript:` /
    `data:` URLs. What survives is text, structure, images from inside the archive (handed to the DOM
    as blob URLs) and the `epub:type` semantics.
-4. The book's own stylesheets (linked, embedded, and `style` attributes) are scoped under the
-   reading pane before they are applied, so a book can style its pages and nothing of the reader
-   around them — and every `url()` in them is rewritten: an in-archive target becomes a blob URL,
-   anything else becomes `none`. CSS is the one place a book could otherwise reach the network
-   (a `background: url(https://…)` beacon), so that rewrite is part of the boundary, not a nicety.
-   `@font-face` and `@import` are dropped.
+4. The book's own CSS (linked stylesheets, embedded `<style>` blocks, and `style` attributes) is
+   read by the **browser's own parser** — a constructed stylesheet that fetches nothing and is
+   never adopted — and rebuilt declaration by declaration from the parser's canonical form, where
+   every resource reference is a plain `url("…")` and function names carry no escapes (so
+   `image-set("…")` and `u\72l(…)` are seen for what they are). Each `url()` is rewritten: an
+   in-archive target becomes a blob URL, a fragment stays, anything else becomes `none`; a
+   declaration that could still name something outside the archive (a non-blob `url()`, a `//`, a
+   `var()` or custom property, a backslash escape, an image function) is dropped whole. Only style
+   rules and `@media`/`@supports` blocks survive; `@import`, `@font-face` and every other at-rule
+   are discarded. The result is scoped under the reading pane with CSS nesting. CSS is the one place
+   a book could otherwise reach the network, so this is part of the boundary, not a nicety.
 5. Bounds are enforced before anything is inflated (`LIMITS` in `src/epub.ts`): the download
-   (64 MiB), the entry count (2,000) and the cumulative declared unpacked size (256 MiB). A book past
-   any of them is refused with an error rather than allowed to exhaust the tab.
+   (64 MiB, checked while the body streams so a server that omits or understates `Content-Length`
+   is stopped at the bound), the entry count (2,000) and the cumulative declared unpacked size
+   (256 MiB). A book past any of them is refused with an error rather than allowed to exhaust the
+   tab.
 
 Scripted EPUBs therefore run nothing here. That is the trust model, not a gap: the reader is the
 code that was reviewed; every book is data it displays.
