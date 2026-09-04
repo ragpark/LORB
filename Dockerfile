@@ -25,6 +25,14 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/packages/runtime-api/src/db/migrations ./dist/packages/runtime-api/src/db/migrations
 COPY --from=build /app/packages/runtime-api/src/db/seed.sql ./dist/packages/runtime-api/src/db/seed.sql
+# The browser applications. `pnpm build` above already builds all three, so this copies bundles the
+# build stage has produced regardless; carrying them costs a few megabytes and buys one artifact
+# that serves either topology. SERVE_WEB_APPS decides at run time whether they are actually served,
+# so the same image is what runs behind separate static origins and what serves them itself, and
+# switching between the two is a variable rather than a rebuild.
+COPY --from=build /app/packages/learner-portal/dist ./web/portal
+COPY --from=build /app/packages/admin-ui/dist ./web/admin
+COPY --from=build /app/packages/ops-console/dist ./web/console
 USER node
 EXPOSE 3000
 CMD ["node", "dist/src/server.js"]

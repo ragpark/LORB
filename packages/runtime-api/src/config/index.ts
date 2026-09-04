@@ -101,6 +101,29 @@ export interface RuntimeConfig {
   seedExampleContent: boolean;
   metricsEnabled: boolean;
   trustProxy: boolean;
+  topology: TopologyConfig;
+}
+
+/**
+ * Which surfaces this process serves besides the API.
+ *
+ * Both default to false, so a deployment that says nothing keeps the separate-service topology it
+ * already has: the web applications behind their own static origins and the agent connector as its
+ * own service. Turning them on folds those surfaces into this process without changing what any of
+ * them do, which is what makes the two topologies comparable from one build.
+ *
+ * There is deliberately no flag for the Player Shell. It has to stay a separate origin: it serves
+ * `Access-Control-Allow-Origin: *` so that modules sandboxed without `allow-same-origin` can fetch
+ * their own bundles from an opaque origin, and putting that header on this origin would put wildcard
+ * CORS on an authenticated API.
+ */
+export interface TopologyConfig {
+  /** Serve the learner portal, administration workspace and operations console from this process. */
+  serveWebApps: boolean;
+  /** Mount the agent-facing MCP connector's routes on this listener. */
+  serveMcpConnector: boolean;
+  /** Where the built web-application bundles live. Resolved against a set of known layouts when unset. */
+  webAppsRoot?: string;
 }
 
 const HEX32 = /^[0-9a-f]{64}$/i;
@@ -447,6 +470,11 @@ export function loadConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfi
     seedExampleContent,
     metricsEnabled: bool("METRICS_ENABLED", true),
     trustProxy: bool("TRUST_PROXY", production),
+    topology: {
+      serveWebApps: bool("SERVE_WEB_APPS", false),
+      serveMcpConnector: bool("SERVE_MCP_CONNECTOR", false),
+      ...(env("WEB_APPS_ROOT") ? { webAppsRoot: env("WEB_APPS_ROOT")! } : {}),
+    },
     ...overrides,
   };
 

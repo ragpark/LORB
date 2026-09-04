@@ -1,4 +1,5 @@
 import { allowsDevelopmentSignIn, OidcClient, type EnvironmentLabel } from '@lorb/web-auth';
+import { webEnv } from '../runtime-env.js';
 
 const TOKEN_KEY = 'lorb_admin_token';
 
@@ -46,15 +47,15 @@ export async function signInForDevelopment(loginUrl: string, subject: string, en
  * provider, which is the only case the development sign-in above covers.
  */
 export function adminOidcClient(): OidcClient | undefined {
-  const issuer = import.meta.env.VITE_OIDC_ISSUER;
-  const clientId = import.meta.env.VITE_OIDC_CLIENT_ID;
+  const issuer = webEnv.VITE_OIDC_ISSUER;
+  const clientId = webEnv.VITE_OIDC_CLIENT_ID;
   if (!issuer || !clientId) return undefined;
   return new OidcClient({
     issuer,
     clientId,
-    redirectUri: import.meta.env.VITE_OIDC_REDIRECT_URI ?? location.origin,
-    audience: import.meta.env.VITE_OIDC_AUDIENCE,
-    scope: import.meta.env.VITE_OIDC_SCOPE,
+    redirectUri: webEnv.VITE_OIDC_REDIRECT_URI ?? location.origin,
+    audience: webEnv.VITE_OIDC_AUDIENCE,
+    scope: webEnv.VITE_OIDC_SCOPE,
   });
 }
 

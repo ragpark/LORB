@@ -22,6 +22,43 @@ launch descriptors with the Runtime's signing key and writes to the same store, 
 would buy independent scaling at the cost of a second copy of the key ring. Both are versioned
 surfaces under `/api/v1` and can be separated later without a contract change.
 
+### The folded topology
+
+Four of those six units can run in one process instead. Two flags on the Runtime API decide, and both
+default to false, so a deployment that sets neither gets exactly the six-unit shape above:
+
+| Flag | Effect |
+| --- | --- |
+| `SERVE_WEB_APPS=true` | Serves the learner portal, administration workspace and operations console at `/portal/`, `/admin/` and `/console/` |
+| `SERVE_MCP_CONNECTOR=true` | Mounts the agent connector's `/mcp` endpoint and its RFC 9728 metadata on this listener |
+
+Nothing about those surfaces changes when they are folded in. The same built bundles are served, and
+the connector still verifies the agent's own token and still reaches the Runtime API over HTTP
+carrying its separate internal service credential. That is what makes the two shapes comparable:
+the same image, the same code paths, the same credentials, one restart apart.
+
+`Dockerfile` carries the three application bundles whether or not they are served, so switching
+topology never needs a rebuild. Where they come from, in order: `WEB_APPS_ROOT` if you set it, which
+is then the only place looked at; otherwise `web/<slug>`, which is the container layout; otherwise
+`packages/<package>/dist`, which is a workspace checkout after `pnpm build`. A flag set with no
+bundle to serve refuses to start rather than serving a 404 where a workspace should be.
+
+**The Player Shell is not on that list and cannot be.** It serves `Access-Control-Allow-Origin: *`,
+which is load-bearing rather than lazy: a module runs in an iframe sandboxed without
+`allow-same-origin`, so it fetches its own bundle from an opaque origin and the wildcard is what
+lets the bundle load at all. Serving it from the API's origin would put wildcard CORS on an
+authenticated API, and the control that forbids that reads the Fastify source rather than an nginx
+configuration, so it would not catch it. Keep it on its own origin in every topology.
+
+Front-end configuration follows the topology. Built for its own origin, an application reads the
+values compiled into it at build time. Served by the API process, the same `VITE_*` names are read
+from that process's environment and written into the page ahead of the bundle, so one image can be
+promoted between environments without a rebuild. Only names carrying the `VITE_` prefix are
+forwarded, which is the rule Vite already uses to decide what may reach a browser. The API bases
+default to the serving origin, and each application's OIDC redirect URI is derived from where it is
+mounted — so register `https://<host>/portal/`, `https://<host>/admin/` and `https://<host>/console/`
+with your identity provider, rather than one shared value.
+
 ## Standing up a new environment
 
 ### 1. Provision Postgres and apply the schema

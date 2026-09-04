@@ -144,7 +144,7 @@ describe('editing and withdrawing a learning object', () => {
   // and the workspace would post every publisher request to its own origin.
   it('treats an unset build argument that arrives as an empty string as unset', () => {
     expect(catalogueApi).toContain("value.trim() !== ''");
-    expect(catalogueApi).toContain('setting(import.meta.env.VITE_PUBLISHER_API_BASE)');
-    expect(catalogueApi).toContain('setting(import.meta.env.VITE_ADMIN_API_BASE)');
+    expect(catalogueApi).toContain('setting(webEnv.VITE_PUBLISHER_API_BASE)');
+    expect(catalogueApi).toContain('setting(webEnv.VITE_ADMIN_API_BASE)');
   });
 });

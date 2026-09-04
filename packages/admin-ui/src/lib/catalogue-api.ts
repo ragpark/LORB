@@ -9,6 +9,7 @@
  * explicitly where the two surfaces are not served together.
  */
 import { adminApiRequest, AdminApiError, type AdminRequestOptions } from './api-client.js';
+import { webEnv } from '../runtime-env.js';
 
 /**
  * Reads a build-time setting, treating an empty value as unset.
@@ -29,8 +30,8 @@ export function publisherBaseFor(adminBase: string): string {
   return adminBase.replace(/\/admin\/*$/, '/publisher');
 }
 
-export const ADMIN_API_BASE = setting(import.meta.env.VITE_ADMIN_API_BASE) ?? 'http://localhost:3000/api/v1/admin';
-export const PUBLISHER_API_BASE = setting(import.meta.env.VITE_PUBLISHER_API_BASE) ?? publisherBaseFor(ADMIN_API_BASE);
+export const ADMIN_API_BASE = setting(webEnv.VITE_ADMIN_API_BASE) ?? 'http://localhost:3000/api/v1/admin';
+export const PUBLISHER_API_BASE = setting(webEnv.VITE_PUBLISHER_API_BASE) ?? publisherBaseFor(ADMIN_API_BASE);
 
 export function admin<T>(path: string, options?: AdminRequestOptions): Promise<T> {
   return adminApiRequest<T>(ADMIN_API_BASE, path, options);

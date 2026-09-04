@@ -1,5 +1,5 @@
 // The agent-facing trust domain: a remote MCP server over the streamable HTTP transport.
-import Fastify from "fastify";
+import Fastify, { type FastifyInstance } from "fastify";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   createVerifier,
@@ -22,6 +22,13 @@ export interface ConnectorOptions {
   newId?: () => string;
   /** Overrides token validation. Tests only — production always builds one from config. */
   verifyToken?: import("./auth.js").TokenVerifier;
+  /**
+   * Whether to register the connector's own index and health routes. True standalone, where this
+   * process is the whole service. False when the connector is mounted into the LORB app process,
+   * which already serves `/` and `/health` and whose answers are the ones an operator wants.
+   * The MCP endpoint and the RFC 9728 metadata paths are registered either way.
+   */
+  serviceRoutes?: boolean;
 }
 
 declare module "fastify" {
@@ -51,10 +58,19 @@ export function startupBanner(config: ConnectorConfig): string {
   return `LORB MCP connector ${CONNECTOR_VERSION}: ${auth}.`;
 }
 
-export function buildMcpConnector(options: ConnectorOptions) {
+/**
+ * Every route, hook and piece of state the connector needs, registered onto an instance the caller
+ * owns. Fastify encapsulates a registered plugin, so the authentication hook below applies to this
+ * plugin's routes and to nothing else in a host application that mounts it.
+ *
+ * This exists so the connector can run either as its own service or inside the LORB app process
+ * without a second implementation. The trust model is identical in both: the agent-facing bearer or
+ * OIDC token is verified here, and the outbound calls to the Runtime API still carry the separate
+ * internal service credential over HTTP. Mounting changes where the code runs, never who is trusted.
+ */
+export async function mcpConnectorPlugin(app: FastifyInstance, options: ConnectorOptions) {
   const { config } = options;
   const assignIdempotency = new IdempotencyStore<Record<string, unknown>>();
-  const app = Fastify({ logger: false, bodyLimit: 262144 });
   const verifyToken = options.verifyToken ?? createVerifier(config);
 
   // Endpoint index, mirroring the Runtime API's root route. Unauthenticated, like /health: the MCP
@@ -62,6 +78,7 @@ export function buildMcpConnector(options: ConnectorOptions) {
   // returns a bare Fastify 404, which reads as "broken" rather than "alive but nothing served here".
   // It lists paths only — never the configured Runtime, Evidence, or roster addresses, which are
   // internal and none of a caller's business.
+  if (options.serviceRoutes !== false) {
   app.get("/", async () => ({
     name: "LORB MCP connector",
     status: "ok",
@@ -77,6 +94,7 @@ export function buildMcpConnector(options: ConnectorOptions) {
     transport: "streamable-http",
   }));
   app.get("/health", async () => ({ status: "ok", service: CONNECTOR_NAME, version: CONNECTOR_VERSION, auth_mode: config.authMode }));
+  }
 
   // RFC 9728 protected resource metadata. Served only in `oidc` mode: with a pre-shared token there is no
   // authorization server to name, and publishing a document that pointed nowhere would be worse
@@ -135,6 +153,15 @@ export function buildMcpConnector(options: ConnectorOptions) {
   // mode) rather than Fastify guessing.
   app.get("/mcp", handle);
   app.delete("/mcp", handle);
+}
 
+/**
+ * The connector as its own service: one Fastify instance carrying nothing but the plugin above.
+ * This is what `server.ts` and the connector's own suites build, and its behaviour is unchanged by
+ * the plugin extraction — the service routes it has always served are registered by default.
+ */
+export function buildMcpConnector(options: ConnectorOptions) {
+  const app = Fastify({ logger: false, bodyLimit: 262144 });
+  void app.register(mcpConnectorPlugin, { ...options, serviceRoutes: options.serviceRoutes ?? true });
   return app;
 }
