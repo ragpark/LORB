@@ -92,3 +92,46 @@ describe.each(dockerfiles)("%s", (filename) => {
     expect([...new Set(missing)], `${filename} builds these but installs without their manifests`).toEqual([]);
   });
 });
+
+/**
+ * The server build compiles server code.
+ *
+ * `tsconfig.build.json` emits the JavaScript the Node images run, and it excludes each package that
+ * is a browser bundle built by Vite instead. That list is another hand-written copy of something the
+ * manifests already say, and it drifts the same way: `packages/ebook-player` was added without being
+ * added to it, and because the Runtime API image installs the whole workspace, `react` and `fflate`
+ * resolved there and its build stayed green. The images that install a subset — the connector and the
+ * learning record store — had no `react` to resolve and every build failed on a wall of
+ *
+ *     packages/ebook-player/src/App.tsx(1,67): error TS2307: Cannot find module 'react'
+ *
+ * for a package neither of them has any reason to compile. Nothing local or in continuous
+ * integration noticed, because both install the whole workspace too.
+ *
+ * A package that depends on React is a browser bundle. It is Vite's to build, never tsc's.
+ */
+describe("the server build", () => {
+  const buildConfig = JSON.parse(readFileSync("tsconfig.build.json", "utf8").replace(/^\s*\/\/.*$/gm, "")) as { exclude?: string[] };
+  const excluded = new Set(buildConfig.exclude ?? []);
+  const browserPackages = packages
+    .filter((workspacePackage) => {
+      const manifest = JSON.parse(readFileSync(`packages/${workspacePackage.directory}/package.json`, "utf8")) as {
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      };
+      return "react" in { ...manifest.dependencies, ...manifest.devDependencies };
+    })
+    .map((workspacePackage) => workspacePackage.directory);
+
+  it("has browser packages to exclude, or this check is measuring nothing", () => {
+    expect(browserPackages.length).toBeGreaterThan(0);
+  });
+
+  it.each(browserPackages)("excludes packages/%s, which Vite builds and tsc must not", (directory) => {
+    expect(
+      excluded,
+      `tsconfig.build.json must exclude packages/${directory}. It depends on React, so it is a browser `
+        + "bundle; leaving it in makes every image that installs only a subset of the workspace fail to compile it.",
+    ).toContain(`packages/${directory}`);
+  });
+});
