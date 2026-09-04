@@ -19,6 +19,8 @@
  *     injected callback cannot complete a sign-in.
  */
 
+import { appBaseUrl } from "./app-base.js";
+
 export interface OidcClientConfig {
   /** Authorization server issuer, exactly as it appears in its discovery document. */
   issuer: string;
@@ -223,7 +225,7 @@ export class OidcClient {
   }
 
   /** Drops the local session and, where the provider supports it, ends the provider's session too. */
-  signOut(returnTo: string = location.origin): void {
+  signOut(returnTo: string = appBaseUrl()): void {
     session.clear();
     this.clearHandshake();
     const url = new URL(this.endpoint("logout"));

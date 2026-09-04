@@ -22,6 +22,7 @@
     "node": "20.x"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@fastify/cors": "^9.0.0",
     "@fastify/helmet": "^11.0.0",
     "@fastify/rate-limit": "^9",
@@ -36,7 +37,6 @@
     "zod": "^3.0.0"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
     "@playwright/test": "^1.45.0",
     "@types/node": "^20.0.0",
     "@types/pg": "^8.0.0",

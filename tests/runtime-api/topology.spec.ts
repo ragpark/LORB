@@ -32,6 +32,7 @@ import {
   injectRuntimeConfig, registerWebApps, resolveWebAppRoot, runtimeConfigScript, webAppContentSecurityPolicy,
   webAppEnvironment, webAppPrefix, webAppRootCandidates, WEB_APPS,
 } from "../../packages/runtime-api/src/services/web-apps.js";
+import { appBaseUrl } from "../../packages/web-auth/src/app-base.js";
 import { mcpConnectorPlugin } from "../../packages/mcp-connector/src/app.js";
 import { loadConfig as loadConnectorConfig } from "../../packages/mcp-connector/src/config.js";
 
@@ -207,6 +208,24 @@ describe("browser applications served by the API process", () => {
     // Each application gets its own configuration, not the first one's.
     expect((await app.inject({ method: "GET", url: "/admin/config.js" })).body).toContain("/admin/");
     await app.close();
+  });
+});
+
+describe("navigating back to an application that may be under a prefix", () => {
+  // Signing out and restarting an expired session both leave the page and expect to come back. The
+  // origin is the same string in both topologies and is only right in one of them.
+  it("returns to the application, not to whatever the origin root serves", () => {
+    expect(appBaseUrl("https://lorb.example/portal/", "https://lorb.example")).toBe("https://lorb.example/portal/");
+    expect(appBaseUrl("https://lorb.example/console/", "https://lorb.example")).toBe("https://lorb.example/console/");
+    // A query or fragment is not part of where the application lives.
+    expect(appBaseUrl("https://lorb.example/portal/?code=abc#/launch", "https://lorb.example")).toBe("https://lorb.example/portal/");
+  });
+
+  it("keeps the bare origin when served at an origin root, which is what providers have registered", () => {
+    // An identity provider matches a logout URL by exact string, so the trailing slash matters and a
+    // deployment that registered the bare origin has to keep working unchanged.
+    expect(appBaseUrl("https://portal.lorb.example/", "https://portal.lorb.example")).toBe("https://portal.lorb.example");
+    expect(appBaseUrl("https://portal.lorb.example/index.html", "https://portal.lorb.example")).toBe("https://portal.lorb.example");
   });
 });
 

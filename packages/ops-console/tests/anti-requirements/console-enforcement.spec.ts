@@ -33,10 +33,12 @@ describe('Operations Console enforcement controls',()=>{
  it('6 attaches an Idempotency-Key to state-changing requests',()=>expect(api).toContain("method!=='GET'&&!headers['Idempotency-Key']"));
  it('7 fixes launch mode and en-GB locale',()=>{expect(app).toContain('disabled value="embedded-iframe"');expect(app).toContain('value="en-GB" readOnly')});
  it('8 preserves statement provenance in replay contracts',()=>{const evidence=readFileSync(new URL('../../../evidence-api/src/app.ts',import.meta.url),'utf8');expect(evidence).toContain('store.requeueStatement(request.params.outboxId, statementId)')});
- // An expired session restarts sign-in at the console's own origin — never at a route this
+ // An expired session restarts sign-in where the console is actually served — never at a route this
  // application does not serve — and bounces at most once, so an unauthorised operator sees the
- // error instead of a reload loop.
- it('9 restarts sign-in on an expired session, at most once',()=>{expect(api).toContain("['AUTHENTICATION_EXPIRED','SESSION_EXPIRED']");expect(api).toContain('expireSession');expect(api).toContain("sessionStorage.getItem('lorb_auth_bounced')");expect(api).toContain('window.location.assign(window.location.origin)');expect(api).not.toContain('VITE_DEVELOPMENT_IDENTITY_LOGIN_URL')});
+ // error instead of a reload loop. The console is served either at the root of its own origin or
+ // under a path prefix by the API process, and the origin is only the right place to return to in
+ // the first of those, so the destination is derived from the served document rather than assumed.
+ it('9 restarts sign-in on an expired session, at most once',()=>{expect(api).toContain("['AUTHENTICATION_EXPIRED','SESSION_EXPIRED']");expect(api).toContain('expireSession');expect(api).toContain("sessionStorage.getItem('lorb_auth_bounced')");expect(api).toContain('window.location.assign(appBaseUrl())');expect(api).not.toContain('window.location.assign(window.location.origin)');expect(api).not.toContain('VITE_DEVELOPMENT_IDENTITY_LOGIN_URL')});
  // The provider client's in-memory session must be copied into the token every request reads, or a
  // deployed console completes sign-in and then sends every request unauthenticated.
  it('9a adopts the provider session after a completed sign-in',()=>{expect(app).toContain('providerSession');expect(app).toMatch(/await callbackCompletion\)\{const token=providerSession\.token;if\(token\)session\.set\(token\)/)});

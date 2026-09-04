@@ -59,6 +59,12 @@ default to the serving origin, and each application's OIDC redirect URI is deriv
 mounted — so register `https://<host>/portal/`, `https://<host>/admin/` and `https://<host>/console/`
 with your identity provider, rather than one shared value.
 
+Register those same three URLs as **allowed logout URLs** too. Signing out, and restarting sign-in
+after a session expires, navigate back to where the application is actually served rather than to the
+origin, which under a prefix is the API's own index. The applications derive that from the document
+they are served as, so nothing extra needs configuring on this side; the provider still has to accept
+the URL it is asked to return to.
+
 ## Standing up a new environment
 
 ### 1. Provision Postgres and apply the schema
