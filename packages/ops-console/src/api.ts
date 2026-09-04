@@ -1,13 +1,16 @@
 import { nanoid } from 'nanoid';
 import { containsSensitiveField,redactHeaders,SuspectedLeakError } from './security.js';
+import { appBaseUrl } from '@lorb/web-auth';
+import { webEnv } from './runtime-env.js';
 export type Diagnostic={direction:'outbound'|'inbound';method:string;url:string;correlationId:string;status?:number;duration?:number;headers?:Record<string,string>;errorCode?:string};
 const log:Diagnostic[]=[]; export const diagnostics=()=>[...log];
 export const session={get:()=>sessionStorage.getItem('lorb_stub_token'),set:(token:string)=>{sessionStorage.setItem('lorb_stub_token',token);sessionStorage.removeItem('lorb_auth_bounced')},clear:()=>sessionStorage.removeItem('lorb_stub_token')};
-// An expired session restarts sign-in by reloading the console at its own origin, where the sign-in
-// effect goes back to the configured provider — or the development login — rather than to a route
-// this application does not serve. The one-shot flag stops a console that comes back still
+// An expired session restarts sign-in by reloading the console where it is actually served, which
+// is the origin root on its own origin and a path prefix when the API process serves it. The sign-in
+// effect then goes back to the configured provider — or the development login — rather than to a
+// route this application does not serve. The one-shot flag stops a console that comes back still
 // unauthorised from reloading itself forever; a successful sign-in clears it.
-function expireSession(){session.clear();if(sessionStorage.getItem('lorb_auth_bounced'))return;sessionStorage.setItem('lorb_auth_bounced','1');window.location.assign(window.location.origin)}
+function expireSession(){session.clear();if(sessionStorage.getItem('lorb_auth_bounced'))return;sessionStorage.setItem('lorb_auth_bounced','1');window.location.assign(appBaseUrl())}
 export type ApiProblem={code:string;title:string;detail:string;retryable:boolean;correlation_id:string;field_errors:unknown[]};
 export function apiUrl(base:string,path:string){return new URL(path.replace(/^\/+/,''),`${base.replace(/\/+$/,'')}/`)}
 type ApiRequestOptions=RequestInit&{discardResponseFields?:string[]};
@@ -22,7 +25,7 @@ export async function apiRequest<T>(base:string,path:string,options:ApiRequestOp
  const hadToken=!!session.get();
  const headers:Record<string,string>={'X-Correlation-ID':correlationId,'Accept':'application/json',...(requestOptions.body?{'Content-Type':'application/json'}:{}),...(hadToken?{'Authorization':`Bearer ${session.get()}`}:{})};
  Object.assign(headers,requestOptions.headers); if(method!=='GET'&&!headers['Idempotency-Key']) headers['Idempotency-Key']=nanoid();
- const allowed=(import.meta.env.VITE_ALLOWED_API_ORIGINS??'http://localhost:3000,http://localhost:3100').split(',').map(origin=>origin.trim()).filter(Boolean); const url=apiUrl(base,path); if(!allowed.includes(url.origin)) throw new Error('ACCESS_DENIED');
+ const allowed=(webEnv.VITE_ALLOWED_API_ORIGINS??'http://localhost:3000,http://localhost:3100').split(',').map(origin=>origin.trim()).filter(Boolean); const url=apiUrl(base,path); if(!allowed.includes(url.origin)) throw new Error('ACCESS_DENIED');
  const start=performance.now(); log.push({direction:'outbound',method,url:url.toString(),correlationId,headers:redactHeaders(headers)});
  const response=await fetch(url,{...requestOptions,headers}); const contentType=response.headers.get('content-type')??'';let data:unknown=contentType.includes('json')?await response.json():{code:'UNEXPECTED_RESPONSE',title:'Unexpected API response',detail:await response.text(),retryable:false,correlation_id:correlationId,field_errors:[]};
  data=discardFields(data,new Set(discardResponseFields));

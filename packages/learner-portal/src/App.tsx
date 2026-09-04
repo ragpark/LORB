@@ -53,7 +53,7 @@ export function App({config}: {config:Config}){const [page,setPage]=useState<Pag
   if(!allowsDevelopmentSignIn(config.environment)){showProblem(new Error('No identity provider is configured for this environment.'),false);return}
   try{const response=await fetch(config.developmentLoginUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({subject:developmentIdentities[index]})});if(!response.ok)throw new Error('Sign-in failed');const body=await response.json() as {access_token:string};tokenStore.set(body.access_token);setPage('courses')}catch(e){showProblem(e,true)}
  };
- const signOut=()=>{tokenStore.clear();setCourses([]);setCourse(undefined);setPage('signin');oidc.current?.signOut(location.origin)};
+ const signOut=()=>{tokenStore.clear();setCourses([]);setCourse(undefined);setPage('signin');oidc.current?.signOut()};
  const adminOut=()=>{adminTokenStore.clear();adminSignInIntent.clear();setPage('signin')};
  // With a provider this navigates away and the workspace opens when the browser returns; without
  // one the session is already filled by the time the call resolves.

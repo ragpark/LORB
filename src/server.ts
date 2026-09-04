@@ -19,6 +19,7 @@ import { httpSender, startForwarder, type ForwarderHandle } from "../packages/ev
 import { PostgresCatalogueStore } from "../packages/runtime-api/src/catalogue/index.js";
 import { createCatalogue } from "../packages/runtime-api/src/catalogue/index.js";
 import { createStore } from "../packages/runtime-api/src/store/index.js";
+import { registerWebApps, webAppPrefix, WEB_APPS } from "../packages/runtime-api/src/services/web-apps.js";
 
 const log = logger();
 
@@ -49,10 +50,62 @@ registerEvidenceRoutes(app, ring, { issuer: runtimeConfig.publicIssuer, store })
 const relayEndpoints = endpointsFromEnvironment();
 registerRelayRoutes(app, ring, { issuer: runtimeConfig.publicIssuer, endpoints: relayEndpoints, perMinute: Number.parseInt(process.env.RELAY_RATE_LIMIT_PER_MINUTE ?? "30", 10) });
 
+/**
+ * Optional surfaces, folded into this process when the deployment asks for them.
+ *
+ * Both default off, so a deployment that says nothing keeps the topology it already has: the
+ * browser applications behind their own static origins and the agent connector as its own service.
+ * Neither changes what those surfaces do — the same bundles are served and the same agent token is
+ * verified — so the two topologies can be compared from one build and one image.
+ *
+ * Failures here are fatal rather than degraded. A process told to serve an application whose bundle
+ * is missing, or to mount a connector whose configuration is refused, would otherwise start and
+ * serve a 404 where an operator expects a workspace, which is a worse outcome than not starting.
+ */
+const foldedIn: string[] = [];
+
+if (runtimeConfig.topology.serveWebApps) {
+  const { mounted, missing } = await registerWebApps(app, { config: runtimeConfig });
+  if (missing.length > 0) {
+    log.fatal(
+      { applications: missing.map((entry) => entry.slug), searched: missing.flatMap((entry) => entry.searched) },
+      "refusing to start: SERVE_WEB_APPS is set but a built application bundle is missing",
+    );
+    process.exit(78); // EX_CONFIG
+  }
+  for (const mount of mounted) foldedIn.push(`web:${mount.slug}`);
+  log.info({ applications: mounted.map((mount) => `${mount.prefix} <- ${mount.root}`) }, "serving the browser applications from this process");
+}
+
+if (runtimeConfig.topology.serveMcpConnector) {
+  // Imported here rather than at the top so that a deployment which does not fold the connector in
+  // never loads it, and never evaluates its configuration.
+  const [{ mcpConnectorPlugin, startupBanner }, { loadConfig: loadConnectorConfig, ConnectorConfigError }] = await Promise.all([
+    import("../packages/mcp-connector/src/app.js"),
+    import("../packages/mcp-connector/src/config.js"),
+  ]);
+  try {
+    // The connector still reaches the Runtime API over HTTP carrying its own internal service
+    // credential, exactly as it does when it runs as its own service. Keeping that hop is what makes
+    // the two topologies comparable: the same code path, the same credential, the same authorisation.
+    const connectorConfig = loadConnectorConfig({ ...process.env, RUNTIME_API_BASE: process.env.RUNTIME_API_BASE ?? `http://127.0.0.1:${runtimeConfig.port}` });
+    await app.register(mcpConnectorPlugin, { config: connectorConfig, serviceRoutes: false });
+    foldedIn.push("mcp-connector");
+    log.info({ auth_mode: connectorConfig.authMode }, startupBanner(connectorConfig));
+  } catch (error) {
+    if (error instanceof ConnectorConfigError) {
+      log.fatal({ problem: error.message }, "refusing to start: SERVE_MCP_CONNECTOR is set but the connector's configuration is invalid");
+      process.exit(78); // EX_CONFIG
+    }
+    throw error;
+  }
+}
+
 app.get("/", async () => ({
   name: "LORB Runtime API",
   status: "ok",
   environment: runtimeConfig.environment,
+  folded_in: foldedIn,
   endpoints: {
     health: "/health",
     ready: "/ready",
@@ -65,6 +118,10 @@ app.get("/", async () => ({
     evidence_statements: "/api/v1/evidence/statements",
     coach_relay: "/api/v1/relay/coach/messages",
     activity_results: "/api/v1/evidence/activity-results",
+    ...(runtimeConfig.topology.serveMcpConnector ? { mcp: "/mcp" } : {}),
+    ...(runtimeConfig.topology.serveWebApps
+      ? Object.fromEntries(WEB_APPS.map((definition) => [`app_${definition.slug}`, `${webAppPrefix(definition)}/`]))
+      : {}),
   },
 }));
 
@@ -158,4 +215,5 @@ log.info({
   identity_issuer: runtimeConfig.identity.issuer,
   signing_kid: ring.activeKid,
   consumer_origins: runtimeConfig.allowedConsumerOrigins.length,
+  folded_in: foldedIn,
 }, "LORB Runtime API listening");

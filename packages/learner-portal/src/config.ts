@@ -1,5 +1,6 @@
 import {z} from 'zod';
 import {ENVIRONMENT_LABELS,type EnvironmentLabel} from '@lorb/web-auth';
+import { webEnv } from './runtime-env.js';
 const environmentSchema=z.enum(ENVIRONMENT_LABELS as unknown as [EnvironmentLabel,...EnvironmentLabel[]]);
 export type Environment=EnvironmentLabel;
 export interface Config {runtimeApiBase:string;adminApiBase:string;runtimeIssuer:string;jwksUrl:string;playerShellOrigin:string;
@@ -7,7 +8,7 @@ export interface Config {runtimeApiBase:string;adminApiBase:string;runtimeIssuer
  developmentLoginUrl:string;identityIssuer:string;environment:Environment;allowedShellOrigins:ReadonlySet<string>;
  /** The identity provider, where one is configured. Its absence is what enables the development path. */
  oidc?:{issuer:string;clientId:string;redirectUri:string;audience?:string;scope?:string}}
-export function readConfig(env:ImportMetaEnv=import.meta.env):Config{
+export function readConfig(env:ImportMetaEnv=webEnv):Config{
  const environment=environmentSchema.parse(env.VITE_ENVIRONMENT_LABEL??'DEVELOPMENT');
  const runtimeApiBase=env.VITE_RUNTIME_API_BASE?.trim()||'http://localhost:3000/api/v1/runtime';
  // Derived, never configured separately: an issuer that can disagree with the API it belongs to is

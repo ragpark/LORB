@@ -11,9 +11,10 @@ import { LearningObjectDetail, LearningObjectsView } from './learning-objects.js
 import { session, signInForDevelopment, adminOidcClient, adoptProviderSession, installTabCloseClear } from './lib/auth.js';
 import { allowsDevelopmentSignIn, ENVIRONMENT_LABELS, environmentNotice, isEnvironmentLabel, session as providerSession } from '@lorb/web-auth';
 import { isSelfApproval } from './lib/separation-of-duties.js';
+import { webEnv } from './runtime-env.js';
 
-const DEVELOPMENT_LOGIN_URL = import.meta.env.VITE_DEVELOPMENT_LOGIN_URL ?? import.meta.env.VITE_DEVELOPMENT_IDENTITY_LOGIN_URL ?? 'http://localhost:4000/dev-login';
-const ENVIRONMENT = import.meta.env.VITE_ENVIRONMENT_LABEL ?? 'DEVELOPMENT';
+const DEVELOPMENT_LOGIN_URL = webEnv.VITE_DEVELOPMENT_LOGIN_URL ?? webEnv.VITE_DEVELOPMENT_IDENTITY_LOGIN_URL ?? 'http://localhost:4000/dev-login';
+const ENVIRONMENT = webEnv.VITE_ENVIRONMENT_LABEL ?? 'DEVELOPMENT';
 
 /**
  * The notice a non-production workspace carries. Production shows none: an administrator needs to

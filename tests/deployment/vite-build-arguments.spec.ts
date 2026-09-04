@@ -13,6 +13,11 @@
  * in a browser, naming a host that appears nowhere in the deployment.
  *
  * So the rule is checked rather than remembered: whatever a front end reads, its image must accept.
+ *
+ * Values can now also arrive at run time, when the API process serves these applications itself and
+ * writes the environment's settings into the page ahead of the bundle. That is an additional path,
+ * not a replacement: an image built for its own static origin still has nothing but what was
+ * compiled into it, so the build-time rule below continues to hold for that topology.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -37,10 +42,15 @@ function sourceFiles(directory: string): string[] {
  * The settings the package actually reads. Deliberately taken from the source rather than from the
  * `vite-env.d.ts` declarations: the type declaration says what is allowed to exist, and what matters
  * here is what the built code will go looking for.
+ *
+ * Both accessors count. A front end reads either `webEnv`, the merged view of the build-time values
+ * and anything the serving process injected, or a parameter named `env` holding the same thing.
+ * Matching only one of them would quietly measure nothing the day a package switched, which is the
+ * failure this whole file exists to prevent.
  */
 function settingsRead(packageName: string): string[] {
   const referenced = sourceFiles(`packages/${packageName}/src`)
-    .flatMap((file) => [...readFileSync(file, "utf8").matchAll(/env\.(VITE_[A-Z0-9_]+)/g)].map((match) => match[1]!));
+    .flatMap((file) => [...readFileSync(file, "utf8").matchAll(/\b(?:webEnv|env)\.(VITE_[A-Z0-9_]+)/g)].map((match) => match[1]!));
   return [...new Set(referenced)].sort();
 }
 
