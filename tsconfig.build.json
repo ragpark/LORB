@@ -17,6 +17,7 @@
     "packages/coach-player",
     "packages/video-player",
     "packages/document-player",
-    "packages/audio-player"
+    "packages/audio-player",
+    "packages/ebook-player"
   ]
 }
