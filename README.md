@@ -210,29 +210,17 @@ The idempotency key is mandatory, and a retry replays the original response rath
 second object. The object is created `PUBLISHED` with an active object version and an active package
 version in one call — there is no separate publish action for a packaged module.
 
-### Step 4 — what the administrator can now do
+### After it is published
 
-The object appears on the publisher listing, carries an audit record for `learning_object.register`,
-and can be suspended, restored, retired or listed on the marketplace. Title, description, duration
-and kind are editable in place. `module_path`, `sha256` and `repository_id` are not: a repointed
-object is a new version, and a moved one is a launch policy's problem.
+The object is on the publisher listing, carries an audit record for `learning_object.register`, and
+is now governable: metadata is editable in place, a new bundle is a new package version, and the
+object can be suspended, restored, retired or listed on the marketplace. A signed-in learner with
+access to the repository sees it in the catalogue and launches it embedded, pinned to the version
+active at that moment.
 
-Shipping a fix is `POST /api/v1/publisher/learning-objects/:id/versions` with a new `semver` and
-digest. The object keeps its identity, so assignments and smart links still resolve, and the previous
-package version is left intact — attempts already recorded against it still name content that exists.
-
-### Step 5 — what the learner gets
-
-The object appears in `GET /api/v1/runtime/learning-objects?repository_id=…` for a signed-in learner
-with access to that repository. Launching it posts to `/api/v1/runtime/launches` with
-`requested_launch_mode: "embedded-iframe"`, which creates an attempt pinned to the object version and
-package version active at that moment and returns a short-lived signed descriptor and a Player Shell
-URL. The Shell loads `PLAYER_SHELL_ORIGIN + module_path` into a sandboxed iframe and hands the module
-the descriptor over a nonce-brokered channel; evidence flows back naming that exact package version,
-and the learner reaches the module only as a pseudonym.
-
-A launch for an unknown, unpublished, retired or cross-repository object is refused rather than
-resolved to a default package.
+That half of the story — what each change costs, the withdrawal rules, and what to check when a
+launch will not start — is in
+[docs/runbooks/packaged-module-lifecycle.md](docs/runbooks/packaged-module-lifecycle.md).
 
 ## Operations
 
@@ -246,8 +234,9 @@ resolved to a default package.
 Runbooks for [deployment](docs/runbooks/deployment.md),
 [key rotation](docs/runbooks/key-rotation.md),
 [backup and restore](docs/runbooks/backup-and-restore.md),
-[incident response](docs/runbooks/incident-response.md) and
-[observability](docs/runbooks/observability.md).
+[incident response](docs/runbooks/incident-response.md),
+[observability](docs/runbooks/observability.md) and the
+[packaged module lifecycle](docs/runbooks/packaged-module-lifecycle.md).
 
 ## Smart links
 

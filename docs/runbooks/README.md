@@ -11,6 +11,7 @@ somebody who did not write the code, so they name exact commands and exact expec
 | [backup-and-restore.md](backup-and-restore.md) | Taking backups, testing them, and restoring after data loss. |
 | [incident-response.md](incident-response.md) | Launches failing, evidence not arriving, a replica unhealthy. |
 | [observability.md](observability.md) | Working out what is happening: metrics, logs, correlation. |
+| [packaged-module-lifecycle.md](packaged-module-lifecycle.md) | Changing, versioning or withdrawing a packaged learning object; a launch that will not start. |
 
 ## The five things to know before touching production
 
