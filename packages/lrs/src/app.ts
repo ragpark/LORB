@@ -109,7 +109,10 @@ export async function buildLrs(options: LrsAppOptions): Promise<{ app: FastifyIn
   });
 
   /** The xAPI capability probe. Unauthenticated by specification: it says what, never who or what's in it. */
-  app.get("/about", async () => ({ version: [config.xapiVersion], extensions: { "https://lorb.example/lrs": { statements: true, attachments: false } } }));
+  /** The xAPI resources, at the root or under the configured prefix; the probes above stay at the root. */
+  const xapi = (path: string): string => `${config.pathPrefix}${path}`;
+
+  app.get(xapi("/about"), async () => ({ version: [config.xapiVersion], extensions: { "https://lorb.example/lrs": { statements: true, attachments: false } } }));
 
   // ---------------------------------------------------------------------------
   // Statements
@@ -119,7 +122,7 @@ export async function buildLrs(options: LrsAppOptions): Promise<{ app: FastifyIn
    * PUT is the idempotent path, and the one the evidence forwarder uses: the caller names the
    * statement id, so a redelivery after a lost response is a no-op rather than a second record.
    */
-  app.put("/statements", async (req, reply) => {
+  app.put(xapi("/statements"), async (req, reply) => {
     if (!guard(req, reply)) return;
     const statementId = (req.query as { statementId?: string }).statementId;
     if (!statementId) return fail(reply, 400, "STATEMENT_ID_REQUIRED", "PUT /statements requires a statementId parameter");
@@ -135,7 +138,7 @@ export async function buildLrs(options: LrsAppOptions): Promise<{ app: FastifyIn
   });
 
   /** POST accepts one statement or a batch, and answers with the ids it stored them under. */
-  app.post("/statements", async (req, reply) => {
+  app.post(xapi("/statements"), async (req, reply) => {
     if (!guard(req, reply)) return;
     const body = req.body;
     const batch = Array.isArray(body) ? body : [body];
@@ -162,7 +165,7 @@ export async function buildLrs(options: LrsAppOptions): Promise<{ app: FastifyIn
     return reply.code(200).send(prepared.map((entry) => entry.facets.statement_id));
   });
 
-  app.get("/statements", async (req, reply) => {
+  app.get(xapi("/statements"), async (req, reply) => {
     if (!guard(req, reply)) return;
     const query = req.query as Record<string, string | undefined>;
 
@@ -207,7 +210,7 @@ export async function buildLrs(options: LrsAppOptions): Promise<{ app: FastifyIn
       .filter(([key, value]) => key !== "cursor" && value !== undefined)
       .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
     const more = page.next
-      ? `/statements?${[...passthrough, `cursor=${encodeCursor(page.next)}`].join("&")}`
+      ? `${xapi("/statements")}?${[...passthrough, `cursor=${encodeCursor(page.next)}`].join("&")}`
       : "";
 
     return reply.send({
@@ -266,6 +269,7 @@ export function testConfig(overrides: Partial<LrsServiceConfig> = {}): LrsServic
     defaultLimit: 100,
     maxLimit: 1000,
     requirePseudonymousActor: true,
+    pathPrefix: "",
     xapiVersion: "1.0.3",
     metricsEnabled: false,
     ...overrides,

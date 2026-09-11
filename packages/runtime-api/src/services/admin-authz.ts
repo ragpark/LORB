@@ -1,7 +1,7 @@
 // Administration RBAC and repository-scoped ABAC.
 import { jwtVerify } from "jose";
 import { computePseudonym } from "./pseudonym-service.js";
-import { allowedAdminRoles, logTokenRefusal } from "./identity.js";
+import { allowedAdminRoles, logTokenRefusal, platformAdminOf } from "./identity.js";
 
 export class AdminAuthError extends Error {
   constructor(readonly code: string) {
@@ -62,7 +62,7 @@ export async function authenticateAdmin(
   const role = roleFrom(payload as Record<string, unknown>, options.roleClaim ?? process.env.OIDC_ROLE_CLAIM ?? "role", allowedAdminRoles());
   if (!role) throw new AdminAuthError("ADMIN_AUDIT_DENIED");
   const pseudonym = computePseudonym(tenantSecret, identityIssuer, sub, "admin");
-  return { pseudonym, role, platformAdmin: (payload as Record<string, unknown>)[options.platformAdminClaim ?? process.env.OIDC_PLATFORM_ADMIN_CLAIM ?? "platform_admin"] === true };
+  return { pseudonym, role, platformAdmin: platformAdminOf(payload, options.platformAdminClaim ?? process.env.OIDC_PLATFORM_ADMIN_CLAIM ?? "platform_admin") };
 }
 
 const membershipRank: Record<string, number> = { repository_reader: 1, repository_operator: 2, repository_owner: 3 };

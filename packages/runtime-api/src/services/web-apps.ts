@@ -105,6 +105,9 @@ export function webAppEnvironment(app: WebAppDefinition, config: RuntimeConfig):
     VITE_PLAYER_SHELL_ORIGIN: config.playerOrigin,
     VITE_ALLOWED_SHELL_ORIGINS: config.playerOrigin,
     VITE_ENVIRONMENT_LABEL: ENVIRONMENT_LABELS[config.environment] ?? "DEVELOPMENT",
+    // Behind an authenticating gateway the application collects the gateway's token from this
+    // route instead of running a provider round-trip of its own; see PlatformSessionClient.
+    ...(config.platformSessionEndpoint ? { VITE_PLATFORM_SESSION_URL: `${issuer}/auth/session` } : {}),
   };
   const forwarded = Object.fromEntries(
     Object.entries(process.env)

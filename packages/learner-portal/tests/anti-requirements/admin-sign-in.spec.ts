@@ -11,7 +11,7 @@ import {ApiProblem} from '../../src/api.js';
 import type {Config} from '../../src/config.js';
 import {adminTokenStore} from '../../src/security.js';
 
-const base:Omit<Config,'oidc'|'environment'>={
+const base:Omit<Config,'auth'|'environment'>={
  runtimeApiBase:'https://api.example/api/v1/runtime',
  adminApiBase:'https://api.example/api/v1/admin',
  runtimeIssuer:'https://api.example',
@@ -21,7 +21,7 @@ const base:Omit<Config,'oidc'|'environment'>={
  identityIssuer:'https://provider.example',
  allowedShellOrigins:new Set(['https://player.example']),
 };
-const withProvider:Config={...base,environment:'PRODUCTION',oidc:{issuer:'https://provider.example',clientId:'portal',redirectUri:'https://portal.example',audience:'lorb-runtime',scope:''}};
+const withProvider:Config={...base,environment:'PRODUCTION',auth:{kind:'oidc',issuer:'https://provider.example',clientId:'portal',redirectUri:'https://portal.example',audience:'lorb-runtime',scope:''}};
 const development:Config={...base,environment:'DEVELOPMENT'};
 const deployedWithoutProvider:Config={...base,environment:'STAGING'};
 

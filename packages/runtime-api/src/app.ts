@@ -92,7 +92,11 @@ function applyOverrides(base: RuntimeConfig, options: RuntimeOptions): RuntimeCo
     identity,
     ...(options.secret ? { pseudonymSecret: options.secret } : {}),
     ...(options.publicIssuer ? { publicIssuer: options.publicIssuer.replace(/\/$/, "") } : {}),
-    ...(options.playerOrigin ? { playerOrigin: options.playerOrigin.replace(/\/$/, "") } : {}),
+    // The base URL keeps whatever path prefix the configuration carried; only the origin moves.
+    ...(options.playerOrigin ? {
+      playerOrigin: options.playerOrigin.replace(/\/$/, ""),
+      playerBaseUrl: `${options.playerOrigin.replace(/\/$/, "")}${base.playerBaseUrl.slice(base.playerOrigin.length)}`,
+    } : {}),
     ...(options.evidenceEndpoint ? { evidenceEndpoint: options.evidenceEndpoint } : {}),
     ...(options.packageUrl ? { packageUrl: options.packageUrl } : {}),
     ...(options.internalServiceToken ? { internalServiceToken: options.internalServiceToken } : {}),
@@ -134,7 +138,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
 
   registerObservability(app, { metricsEnabled: runtimeConfig.metricsEnabled });
 
-  const { publicIssuer, playerOrigin, evidenceEndpoint, pseudonymSecret: secret } = runtimeConfig;
+  const { publicIssuer, playerOrigin, playerBaseUrl, evidenceEndpoint, pseudonymSecret: secret } = runtimeConfig;
   const consumerOrigins = new Set(runtimeConfig.allowedConsumerOrigins);
   const browserOrigins = new Set([...consumerOrigins, playerOrigin]);
 
@@ -238,6 +242,37 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
   // -------------------------------------------------------------------------
 
   app.get("/api/v1/runtime/jwks", async () => ring.jwks());
+
+  /**
+   * The browser application's way in behind an authenticating gateway.
+   *
+   * Some hosting platforms sign every user in at a proxy and forward `Authorization: Bearer` on the
+   * paths they protect, leaving the API paths unauthenticated for the callers that carry their own
+   * credentials. A browser application served behind such a gateway never holds a token of its own:
+   * the gateway keeps a cookie session and attaches the token on the way in. This route, which the
+   * gateway protects because it is not under /api, hands that token back to the application so it
+   * can present it on the API routes exactly as it would a token it obtained from a provider itself.
+   *
+   * It returns only a token that verifies against the configured issuer and audience, so it can
+   * echo nothing a caller did not already hold, and nothing this service would not accept anyway.
+   * Off by default; there is no gateway in the separate-origin topology and nothing to hand back.
+   */
+  if (runtimeConfig.platformSessionEndpoint) {
+    app.get("/auth/session", async (req, reply) => {
+      let principal;
+      try {
+        principal = await verifier.verify(req.headers.authorization);
+      } catch (error) {
+        const code = error instanceof IdentityError ? error.code : "AUTHENTICATION_EXPIRED";
+        return sendProblem(reply, code, correlation(req), code === "ACCESS_DENIED" ? 403 : 401);
+      }
+      const token = /^Bearer\s+(.+)$/i.exec(req.headers.authorization!.trim())![1]!;
+      const expiresAt = typeof principal.claims.exp === "number" ? new Date(principal.claims.exp * 1000).toISOString() : null;
+      return reply
+        .header("cache-control", "no-store")
+        .send({ access_token: token, token_type: "Bearer", expires_at: expiresAt, issuer: principal.issuer, correlation_id: correlation(req) });
+    });
+  }
 
   // -------------------------------------------------------------------------
   // Catalogue (read)
@@ -351,7 +386,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     const policy = await resolveLaunchPolicy({
       consumerId, repositoryId, deliveryProfile: "native-web-package", launchMode,
     }).catch(() => null);
-    const objectPackageUrl = `${playerOrigin}${object.module_path}`;
+    const objectPackageUrl = `${playerBaseUrl}${object.module_path}`;
     const activePackage = await catalogue.packageVersion(object.active_package_version_id);
     const pinned = object.repository_id.toLowerCase() === repositoryId.toLowerCase() && activePackage?.shared_player === true;
     return { packageUrl: pinned ? objectPackageUrl : (policy?.packageUrl ?? objectPackageUrl), policy, pinned };
@@ -466,7 +501,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
           launch_id: launchId,
           attempt_id: attemptId,
           signed_descriptor: descriptor,
-          player_url: `${playerOrigin}/#${hashParams.toString()}`,
+          player_url: `${playerBaseUrl}/#${hashParams.toString()}`,
           expires_at: expiresAt,
           correlation_id: correlationValue,
         };
@@ -643,7 +678,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
       locale: "en-GB",
       attempt_id: attemptId,
       state_endpoint: `${publicIssuer}/api/v1/runtime/attempts/${attemptId}/state`,
-      package_url: `${playerOrigin}${deliveredModulePath}`,
+      package_url: `${playerBaseUrl}${deliveredModulePath}`,
       session_config: { expires_at: expiresAt },
       content_profile: object.content_profile,
     }, { issuer: publicIssuer, evidenceEndpoint });
@@ -656,7 +691,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
       hashParams.set("lti_login_hint", await signLtiLoginHint(ltiRing, { sub: pseudonym, object_id: object.object_id, attempt_id: attemptId }, publicIssuer));
     }
     return (reply as { redirect: (url: string, code: number) => unknown })
-      .redirect(`${playerOrigin}/#${hashParams.toString()}`, 302);
+      .redirect(`${playerBaseUrl}/#${hashParams.toString()}`, 302);
   });
 
   // -------------------------------------------------------------------------
@@ -935,7 +970,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
   registerInternalMediaRoutes(app, internalGuard, { store, catalogue });
   registerInternalLaunchBatchRoutes(app, {
     serviceToken: internalServiceToken, ring, ltiRing, secret,
-    identityIssuer: verifier.issuer, publicIssuer, playerOrigin, evidenceEndpoint,
+    identityIssuer: verifier.issuer, publicIssuer, playerBaseUrl, evidenceEndpoint,
     store, catalogue,
   }, internalGuard);
   registerInternalRosterRoutes(app, internalGuard);

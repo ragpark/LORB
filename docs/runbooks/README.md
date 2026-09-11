@@ -6,6 +6,7 @@ somebody who did not write the code, so they name exact commands and exact expec
 | Runbook | Use it when |
 | --- | --- |
 | [deployment.md](deployment.md) | Deploying a new version, or standing an environment up from nothing. |
+| [cookie-deployment.md](cookie-deployment.md) | Running on Cookie: the three-tier shape, the sign-in gateway, and each app's configuration. |
 | [auth0-provisioning.md](auth0-provisioning.md) | Rebuilding the Auth0 tenant, or moving a surface onto the identity provider. |
 | [key-rotation.md](key-rotation.md) | Rotating the descriptor signing key or the pseudonym secret. |
 | [backup-and-restore.md](backup-and-restore.md) | Taking backups, testing them, and restoring after data loss. |

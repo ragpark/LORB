@@ -137,8 +137,10 @@ connector.
 6. Register content — through the Administration workspace, or the Publisher API directly. A new
    catalogue is empty.
 
-The included `railway.*.json` files describe one deployment on Railway; nothing in the images is
-specific to it.
+[docs/runbooks/cookie-deployment.md](docs/runbooks/cookie-deployment.md) describes the three-tier
+deployment on Cookie, Pearson's internal platform: one app for the API and the three browser
+applications, one for the Player Shell, one for the learning record store, with `deploy/cookie/`
+holding each app's image. Nothing in the code is specific to it.
 
 ## Operations
 
