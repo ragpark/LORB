@@ -67,7 +67,14 @@ function headers(file) {
 }
 
 async function resolveFile(urlPath) {
-  const decoded = decodeURIComponent(urlPath);
+  // A malformed escape such as /api/% throws here. On a public, unauthenticated path that has to be
+  // a 404, never an unhandled rejection that takes the whole server down.
+  let decoded;
+  try {
+    decoded = decodeURIComponent(urlPath);
+  } catch {
+    return undefined;
+  }
   const relative = normalize(decoded).replace(/^(\.\.(\/|\\|$))+/, "");
   const candidate = join(ROOT, relative);
   if (candidate !== ROOT && !candidate.startsWith(ROOT + sep)) return undefined;
@@ -87,7 +94,7 @@ async function resolveFile(urlPath) {
   return { file: target };
 }
 
-const server = createServer(async (req, res) => {
+async function handle(req, res) {
   const method = req.method ?? "GET";
   const url = new URL(req.url ?? "/", "http://localhost");
   if (method !== "GET" && method !== "HEAD") {
@@ -122,6 +129,15 @@ const server = createServer(async (req, res) => {
     return;
   }
   createReadStream(found.file).on("error", () => res.destroy()).pipe(res);
+}
+
+// Nothing a request can contain may end the process: an async handler that rejects would otherwise
+// surface as an unhandled rejection, and Node exits on those.
+const server = createServer((req, res) => {
+  handle(req, res).catch(() => {
+    if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
+    res.end('{"error":"INTERNAL"}');
+  });
 });
 
 server.listen(PORT, "0.0.0.0", () => {

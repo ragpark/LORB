@@ -408,4 +408,16 @@ describe("a store under a path prefix", () => {
     expect(put.statusCode).toBe(204);
     expect((await app.inject({ method: "PUT", url: `/statements?statementId=${id}`, headers: auth, payload: statement() })).statusCode).toBe(404);
   });
+
+  it("keeps the prefix on the pagination link, so a client can follow it", async () => {
+    const { app, auth } = await setup({ pathPrefix: "/api/xapi", defaultLimit: 1, maxLimit: 1 });
+    for (let index = 0; index < 2; index += 1) {
+      expect((await app.inject({ method: "POST", url: "/api/xapi/statements", headers: auth, payload: statement() })).statusCode).toBe(200);
+    }
+    const first = await app.inject({ method: "GET", url: "/api/xapi/statements", headers: auth });
+    expect(first.statusCode).toBe(200);
+    const more = (first.json() as { more: string }).more;
+    expect(more.startsWith("/api/xapi/statements?")).toBe(true);
+    expect((await app.inject({ method: "GET", url: more, headers: auth })).statusCode).toBe(200);
+  });
 });

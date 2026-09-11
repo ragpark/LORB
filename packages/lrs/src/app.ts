@@ -210,7 +210,7 @@ export async function buildLrs(options: LrsAppOptions): Promise<{ app: FastifyIn
       .filter(([key, value]) => key !== "cursor" && value !== undefined)
       .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
     const more = page.next
-      ? `/statements?${[...passthrough, `cursor=${encodeCursor(page.next)}`].join("&")}`
+      ? `${xapi("/statements")}?${[...passthrough, `cursor=${encodeCursor(page.next)}`].join("&")}`
       : "";
 
     return reply.send({
