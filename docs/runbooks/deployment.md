@@ -2,16 +2,19 @@
 
 ## What gets deployed
 
-Six independently deployable units, each with its own image:
+Four independently deployable units, each with its own image:
 
 | Unit | Image | Public? |
 | --- | --- | --- |
-| Runtime API (with the Evidence API and the evidence forwarder) | `Dockerfile` | Yes |
+| Runtime API (with the Evidence API and the evidence forwarder), serving the learner portal, administration workspace and operations console | `Dockerfile` | Yes |
 | Player Shell and bundled content packages | `Dockerfile.player-shell` | Yes |
-| Learner portal | `Dockerfile.learner-portal` | Yes |
-| Administration workspace | `Dockerfile.admin-ui` | Yes |
-| Operations console | `Dockerfile.ops-console` | Yes, restricted |
+| Learning record store | `Dockerfile.lrs` | Yes |
 | Agent connector | `Dockerfile.mcp-connector` | Yes |
+
+On Cookie the same units are three platform apps; see [cookie-deployment.md](cookie-deployment.md)
+and the images under `deploy/cookie/`. The three browser applications were once built into their
+own nginx images; they are now served by the Runtime API process (the folded topology below), which
+is the only way they are built.
 
 Plus one managed Postgres instance, which is the system of record for all of them, and one optional
 service — the document converter (`Dockerfile.document-converter`) — needed only where PowerPoint or
@@ -148,35 +151,24 @@ curl -s  https://runtime.lorb.example/api/v1/runtime/jwks | jq '.keys[].kid'
 The `kid` must be the one you configured. If it is `ephemeral-dev-key`, the process is not running
 with `NODE_ENV=production` — stop and fix that before anything else.
 
-### 6. Build and deploy the front ends
+### 6. Serve the front ends
 
-Each image takes its integration values as build arguments and refuses to build without them. Every
-one of them is public: an OIDC client id identifies a public client, which is what a browser
-application has to be.
+The learner portal, administration workspace and operations console are built into the Runtime API
+image and served by that process at `/portal/`, `/admin/` and `/console/` when `SERVE_WEB_APPS=true`
+(see "The folded topology" above). Their configuration is read from the process environment at
+request time, so one image is promoted between environments without a rebuild. Register
+`https://<host>/portal/`, `https://<host>/admin/` and `https://<host>/console/` with your identity
+provider as redirect and logout URLs, and set `VITE_OIDC_ISSUER`, `VITE_OIDC_CLIENT_ID` and
+`VITE_OIDC_AUDIENCE` on the process. Behind a gateway that signs users in itself, set
+`PLATFORM_SESSION_ENDPOINT=true` instead; see [cookie-deployment.md](cookie-deployment.md).
 
-```sh
-docker build -f Dockerfile.learner-portal \
-  --build-arg VITE_ENVIRONMENT_LABEL=PRODUCTION \
-  --build-arg VITE_RUNTIME_API_BASE=https://runtime.lorb.example/api/v1/runtime \
-  --build-arg VITE_JWKS_URL=https://runtime.lorb.example/api/v1/runtime/jwks \
-  --build-arg VITE_PLAYER_SHELL_ORIGIN=https://player.lorb.example \
-  --build-arg VITE_ALLOWED_SHELL_ORIGINS=https://player.lorb.example \
-  --build-arg VITE_OIDC_ISSUER=https://tenant.eu.auth0.com/ \
-  --build-arg VITE_OIDC_CLIENT_ID=… \
-  --build-arg VITE_OIDC_REDIRECT_URI=https://learn.lorb.example \
-  --build-arg VITE_OIDC_AUDIENCE=https://runtime.lorb.example/api \
-  .
-```
-
-The build fails if `VITE_ENVIRONMENT_LABEL` is not one of `PRODUCTION`, `STAGING`, `DEVELOPMENT`; if
-the shell origin allow-list is empty or contains a wildcard; or if the label is anything other than
-`DEVELOPMENT` and no identity provider is configured. That last check is what stops a deployed
-portal falling back to the local sign-in, which accepts any subject you name.
+An application served outside development with neither a provider nor a gateway session refuses to
+open rather than falling back to the local sign-in, which accepts any subject you name.
 
 ### 6a. Deploy the learning record store
 
 `LRS_ENDPOINT` may point at a commercial learning record store or at the one this platform ships
-(`packages/lrs`, `Dockerfile.lrs`, `railway.lrs.json`). Deploy it before the Runtime API: the Runtime
+(`packages/lrs`, `Dockerfile.lrs`). Deploy it before the Runtime API: the Runtime
 refuses to start without a reachable endpoint configured, and the forwarder will queue rather than
 lose anything if the store is briefly unavailable afterwards.
 
