@@ -24,7 +24,7 @@
  * What this cannot do is grant the teacher role: that claim comes from the provider, and a signed-in
  * account without it is refused by the API as ADMIN_AUDIT_DENIED rather than quietly admitted here.
  */
-import {allowsDevelopmentSignIn,OidcClient,session as providerSession} from '@lorb/web-auth';
+import {allowsDevelopmentSignIn,createAuthClient,type AuthClient,session as providerSession} from '@lorb/web-auth';
 import {ApiProblem} from './api.js';
 import type {Config} from './config.js';
 import {adminTokenStore} from './security.js';
@@ -49,8 +49,8 @@ export const adminSignInIntent={
 };
 
 /** The provider client for the administration area, where a provider is configured. */
-export function adminOidcClient(config:Config):OidcClient|undefined{
- return config.oidc?new OidcClient(config.oidc):undefined;
+export function adminOidcClient(config:Config):AuthClient|undefined{
+ return config.auth?createAuthClient(config.auth):undefined;
 }
 
 /** Adopts a completed provider sign-in into the administration session, which is held separately. */

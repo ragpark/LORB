@@ -26,7 +26,8 @@ export interface LaunchBatchContext {
   /** The issuer whose subjects these learner identifiers belong to. */
   identityIssuer: string;
   publicIssuer: string;
-  playerOrigin: string;
+  /** Where the Player Shell is served: origin plus any path prefix. */
+  playerBaseUrl: string;
   evidenceEndpoint: string;
   store: RuntimeStore;
   catalogue: CatalogueStore;
@@ -116,7 +117,7 @@ export function registerInternalLaunchBatchRoutes(
               locale: "en-GB",
               attempt_id: attemptId,
               state_endpoint: `${ctx.publicIssuer}/api/v1/runtime/attempts/${attemptId}/state`,
-              package_url: `${ctx.playerOrigin}${object.module_path}`,
+              package_url: `${ctx.playerBaseUrl}${object.module_path}`,
               session_config: { expires_at: expiresAt },
               content_profile: object.content_profile,
             }, { issuer: ctx.publicIssuer, evidenceEndpoint: ctx.evidenceEndpoint });
@@ -134,7 +135,7 @@ export function registerInternalLaunchBatchRoutes(
               launch_id: launchId,
               attempt_id: attemptId,
               signed_descriptor: descriptor,
-              player_url: `${ctx.playerOrigin}/#${hashParams.toString()}`,
+              player_url: `${ctx.playerBaseUrl}/#${hashParams.toString()}`,
               expires_at: expiresAt,
             });
           }

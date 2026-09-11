@@ -844,7 +844,7 @@ export function App() {
     return (
       <main className="fatal">
         <h1>Environment configuration error</h1>
-        <p>This environment requires an identity provider: set VITE_OIDC_ISSUER and VITE_OIDC_CLIENT_ID.</p>
+        <p>This environment requires an identity provider: set VITE_OIDC_ISSUER and VITE_OIDC_CLIENT_ID, or VITE_PLATFORM_SESSION_URL behind a gateway that signs in against one.</p>
       </main>
     );
   }

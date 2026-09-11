@@ -1,2 +1,3 @@
 import {defineConfig} from "vite";
-export default defineConfig({root:"src",build:{outDir:"../dist",emptyOutDir:true}});
+// Relative asset URLs, so the built shell serves under a path prefix as well as at an origin root.
+export default defineConfig({root:"src",base:"./",build:{outDir:"../dist",emptyOutDir:true}});

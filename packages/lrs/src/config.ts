@@ -38,6 +38,13 @@ export interface LrsServiceConfig {
    * genuinely receives identified statements from elsewhere can turn it off deliberately.
    */
   requirePseudonymousActor: boolean;
+  /**
+   * Path prefix the xAPI resources are served under; empty for the root. A hosting platform that
+   * signs every path in through a browser gateway except a fixed prefix needs the statements
+   * resource under that prefix, or the forwarder's bearer-authenticated PUT is answered with a
+   * sign-in redirect. `/health` and `/ready` stay at the root, where a platform probes them.
+   */
+  pathPrefix: string;
   xapiVersion: string;
   metricsEnabled: boolean;
 }
@@ -91,6 +98,19 @@ export function readCredentials(problems: string[]): LrsCredential[] {
   return credentials;
 }
 
+/** Empty, or a path that starts with a slash and ends without one; anything else is refused. */
+function readPathPrefix(name: string, problems: string[]): string {
+  const raw = env(name);
+  if (!raw) return "";
+  const trimmed = raw.replace(/\/+$/, "");
+  if (trimmed === "") return "";
+  if (!trimmed.startsWith("/") || /[?#]/.test(trimmed) || trimmed.includes("//")) {
+    problems.push(`${name} must be a path such as /api/xapi (received ${raw})`);
+    return "";
+  }
+  return trimmed;
+}
+
 function readEnvironment(problems: string[]): LrsEnvironment {
   const raw = env("NODE_ENV") ?? "development";
   if (raw === "production" || raw === "staging" || raw === "development" || raw === "test") return raw;
@@ -127,6 +147,7 @@ export function loadLrsConfig(overrides: Partial<LrsServiceConfig> = {}): LrsSer
     defaultLimit,
     maxLimit,
     requirePseudonymousActor: bool("LRS_REQUIRE_PSEUDONYMOUS_ACTOR", true),
+    pathPrefix: readPathPrefix("LRS_PATH_PREFIX", problems),
     xapiVersion: env("LRS_XAPI_VERSION") ?? "1.0.3",
     metricsEnabled: bool("METRICS_ENABLED", true),
     ...overrides,

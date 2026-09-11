@@ -20,6 +20,7 @@
  */
 
 import { appBaseUrl } from "./app-base.js";
+import type { AuthClient } from "./client.js";
 
 export interface OidcClientConfig {
   /** Authorization server issuer, exactly as it appears in its discovery document. */
@@ -117,7 +118,7 @@ class SessionHolder {
 
 export const session = new SessionHolder();
 
-export class OidcClient {
+export class OidcClient implements AuthClient {
   constructor(private readonly config: OidcClientConfig) {}
 
   private endpoint(name: "authorize" | "token" | "logout"): string {

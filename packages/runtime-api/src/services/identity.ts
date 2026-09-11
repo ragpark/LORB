@@ -78,6 +78,22 @@ function roleOf(payload: JWTPayload, claim: string, allowed: string[]): string |
   return undefined;
 }
 
+/**
+ * Reads the platform-administrator marker. `claim` names a boolean claim; `claim=value` names a
+ * claim whose value, or one of whose array members, must equal `value` — the shape for a provider
+ * that expresses everything as group membership.
+ */
+export function platformAdminOf(payload: JWTPayload, spec: string): boolean {
+  const separator = spec.indexOf("=");
+  if (separator === -1) return (payload as Record<string, unknown>)[spec] === true;
+  const claim = spec.slice(0, separator);
+  const expected = spec.slice(separator + 1);
+  const raw = (payload as Record<string, unknown>)[claim];
+  if (typeof raw === "string") return raw === expected;
+  if (Array.isArray(raw)) return raw.includes(expected);
+  return false;
+}
+
 export function allowedAdminRoles(): string[] {
   return (process.env.ADMIN_ALLOWED_ROLES ?? "admin").split(",").map((role) => role.trim()).filter(Boolean);
 }
@@ -113,7 +129,7 @@ export function createTokenVerifier(identity: IdentityProviderConfig, injectedKe
         subject: payload.sub,
         issuer: identity.issuer,
         role: roleOf(payload, identity.roleClaim, allowedAdminRoles()),
-        platformAdmin: (payload as Record<string, unknown>)[identity.platformAdminClaim] === true,
+        platformAdmin: platformAdminOf(payload, identity.platformAdminClaim),
         scopes: scopesOf(payload),
         claims: payload,
       };

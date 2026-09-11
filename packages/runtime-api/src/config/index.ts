@@ -38,7 +38,11 @@ export interface IdentityProviderConfig {
   algorithms: string[];
   /** Claim carrying the platform role, when the provider is configured to emit one. */
   roleClaim: string;
-  /** Claim carrying a platform-administrator marker. */
+  /**
+   * Claim carrying a platform-administrator marker. Either a claim whose value is `true`, or
+   * `claim=value` for a provider that only emits group memberships — `groups=lorb-platform-admins`
+   * makes membership of that group the marker.
+   */
   platformAdminClaim: string;
   /** True only for the bundled development identity provider, which production refuses. */
   synthetic: boolean;
@@ -81,7 +85,15 @@ export interface RuntimeConfig {
   /** Signs the LTI 1.3 id_token and the internal login-hint token; see `readLtiSigningKeys`. */
   ltiSigningKeys: SigningKeyConfig[];
   publicIssuer: string;
+  /** Scheme, host and port of the Player Shell: what CORS, CSP and postMessage checks compare. */
   playerOrigin: string;
+  /**
+   * Where the shell is actually served: the origin plus an optional path prefix. A hosting platform
+   * that authenticates every path except a fixed prefix has to serve the shell under that prefix,
+   * because a module sandboxed without `allow-same-origin` sends no cookies and cannot sign in.
+   * Launch and package URLs are built from this; origin comparisons keep using `playerOrigin`.
+   */
+  playerBaseUrl: string;
   evidenceEndpoint: string;
   packageUrl: string;
   /** Base origin of the document-converter service. Absent where that optional service isn't
@@ -102,6 +114,12 @@ export interface RuntimeConfig {
   metricsEnabled: boolean;
   trustProxy: boolean;
   topology: TopologyConfig;
+  /**
+   * Serve `GET /auth/session`, which hands a browser application the access token an authenticating
+   * gateway attached to its request. Off by default: it only makes sense behind a gateway that
+   * signs the user in and forwards `Authorization: Bearer` on every authenticated path.
+   */
+  platformSessionEndpoint: boolean;
 }
 
 /**
@@ -305,6 +323,30 @@ function readLtiSigningKeys(production: boolean, problems: string[]): SigningKey
   return readSigningKeyRing("LTI", "LTI", production, false, problems);
 }
 
+/**
+ * Where a provider publishes its keys when it is not told. Most providers use the well-known path;
+ * Keycloak, whose issuer names a realm, publishes them under the realm's protocol endpoint instead,
+ * and guessing the well-known path there produces a 404 that reads like a signature failure.
+ */
+export function defaultJwksUrl(issuer: string): string {
+  const base = issuer.replace(/\/$/, "");
+  if (/\/realms\/[^/]+$/.test(base)) return `${base}/protocol/openid-connect/certs`;
+  return `${base}/.well-known/jwks.json`;
+}
+
+/** A path prefix is empty or starts with a slash and ends without one; anything else is refused. */
+function readPathPrefix(name: string, problems: string[]): string {
+  const raw = env(name);
+  if (!raw) return "";
+  const trimmed = raw.replace(/\/+$/, "");
+  if (trimmed === "") return "";
+  if (!trimmed.startsWith("/") || trimmed.includes("?") || trimmed.includes("#") || trimmed.includes("//")) {
+    problems.push(`${name} must be a path such as /api (received ${raw})`);
+    return "";
+  }
+  return trimmed;
+}
+
 function readIdentity(production: boolean, publicIssuer: string, problems: string[]): IdentityProviderConfig {
   const issuer = env("OIDC_ISSUER") ?? env("IES_ISSUER");
   const synthetic = bool("ALLOW_SYNTHETIC_IDENTITY", false);
@@ -330,8 +372,11 @@ function readIdentity(production: boolean, publicIssuer: string, problems: strin
   }
   // The issuer is compared byte for byte against the token's `iss` claim, so it is never normalised
   // here: providers differ on the trailing slash and guessing would reject valid tokens.
-  const jwksUrl = env("OIDC_JWKS_URL") ?? env("IES_JWKS_URL") ?? `${issuer.replace(/\/$/, "")}/.well-known/jwks.json`;
-  const audience = env("OIDC_AUDIENCE") ?? "lorb-runtime";
+  const jwksUrl = env("OIDC_JWKS_URL") ?? env("IES_JWKS_URL") ?? defaultJwksUrl(issuer);
+  // A platform that fronts the service with its own OpenID Connect gateway injects the client id it
+  // registered; the tokens it forwards are minted for that client, so it is the audience unless an
+  // operator names another.
+  const audience = env("OIDC_AUDIENCE") ?? env("OIDC_CLIENT_ID") ?? "lorb-runtime";
   if (production && audience === publicIssuer) {
     problems.push("OIDC_AUDIENCE must identify the Runtime API audience, not its issuer origin");
   }
@@ -398,6 +443,7 @@ export function loadConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfi
 
   const publicIssuer = normaliseOrigin(env("RUNTIME_PUBLIC_ISSUER") ?? "http://localhost:3000");
   const playerOrigin = normaliseOrigin(env("PLAYER_SHELL_ORIGIN") ?? "http://localhost:3200");
+  const playerBaseUrl = `${playerOrigin}${readPathPrefix("PLAYER_SHELL_BASE_PATH", problems)}`;
   if (production) {
     for (const [name, value] of [["RUNTIME_PUBLIC_ISSUER", publicIssuer], ["PLAYER_SHELL_ORIGIN", playerOrigin]] as const) {
       if (!value.startsWith("https://")) problems.push(`${name} must be an https origin in production`);
@@ -444,8 +490,9 @@ export function loadConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfi
     ltiSigningKeys: readLtiSigningKeys(production, problems),
     publicIssuer,
     playerOrigin,
+    playerBaseUrl,
     evidenceEndpoint: env("EVIDENCE_API_ENDPOINT") ?? `${publicIssuer}/api/v1/evidence/statements`,
-    packageUrl: env("PACKAGE_PUBLIC_URL") ?? `${playerOrigin}/module/index.html`,
+    packageUrl: env("PACKAGE_PUBLIC_URL") ?? `${playerBaseUrl}/module/index.html`,
     documentConverterUrl: readDocumentConverterUrl(production, problems),
     allowedConsumerOrigins,
     allowedExternalEmbedOrigins,
@@ -475,6 +522,7 @@ export function loadConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfi
       serveMcpConnector: bool("SERVE_MCP_CONNECTOR", false),
       ...(env("WEB_APPS_ROOT") ? { webAppsRoot: env("WEB_APPS_ROOT")! } : {}),
     },
+    platformSessionEndpoint: bool("PLATFORM_SESSION_ENDPOINT", false),
     ...overrides,
   };
 

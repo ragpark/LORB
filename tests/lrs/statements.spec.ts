@@ -396,3 +396,16 @@ describe("learning record store", () => {
     expect(second.statusCode).toBe(409);
   });
 });
+
+describe("a store under a path prefix", () => {
+  it("serves the xAPI resources under the prefix and keeps the probes at the root", async () => {
+    const { app, auth } = await setup({ pathPrefix: "/api/xapi" });
+    expect((await app.inject({ method: "GET", url: "/health" })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: "/api/xapi/about" })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: "/about" })).statusCode).toBe(404);
+    const id = randomUUID();
+    const put = await app.inject({ method: "PUT", url: `/api/xapi/statements?statementId=${id}`, headers: auth, payload: statement() });
+    expect(put.statusCode).toBe(204);
+    expect((await app.inject({ method: "PUT", url: `/statements?statementId=${id}`, headers: auth, payload: statement() })).statusCode).toBe(404);
+  });
+});
