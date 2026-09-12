@@ -10,7 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@lorb/web-auth": "workspace:*",
+    "@lorb/web-auth": "file:../web-auth",
     "@radix-ui/react-dialog": "^1.0.0",
     "@tanstack/react-query": "^5.0.0",
     "@tanstack/react-router": "^1.0.0",

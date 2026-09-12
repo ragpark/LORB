@@ -10,7 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@lorb/web-auth": "workspace:*",
+    "@lorb/web-auth": "file:../web-auth",
     "@radix-ui/react-dialog": "^1.0.0",
     "@radix-ui/react-toast": "^1.0.0",
     "@radix-ui/react-tooltip": "^1.0.0",
