@@ -43,7 +43,6 @@ export async function buildLrs(options: LrsAppOptions): Promise<{ app: FastifyIn
   const app = Fastify({
     logger: false,
     bodyLimit: Number.parseInt(process.env.LRS_BODY_LIMIT_BYTES ?? "1048576", 10),
-    disableRequestLogging: true,
   });
 
   app.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => {
