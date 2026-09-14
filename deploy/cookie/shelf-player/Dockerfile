@@ -30,6 +30,7 @@ COPY --from=build --chown=node:node /app/packages/player-shell/external-embed-fa
 COPY --from=build --chown=node:node /app/packages/example-module/src ./www/module
 COPY --from=build --chown=node:node /app/packages/example-react-xapi-experience/dist ./www/modules/reflective-practice-studio
 COPY --from=build --chown=node:node /app/packages/example-coaching-chatbot/src ./www/modules/career-coach-chat
+COPY --from=build --chown=node:node /app/packages/example-context-coach/src ./www/modules/context-coach
 COPY --from=build --chown=node:node /app/packages/quiz-player/dist ./www/modules/quiz-player
 COPY --from=build --chown=node:node /app/packages/coach-player/src ./www/modules/coach-player
 COPY --from=build --chown=node:node /app/packages/video-player/dist ./www/modules/video-player

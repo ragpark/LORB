@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Context-routed coach</title>
+<style>
+  /* Themes are launch-context tokens, never CSS the publisher supplies: `theme` is validated as
+     ^[a-z][a-z\d-]{0,31}$ precisely so it can never be a URL or a style fragment. The module maps a
+     known token to a palette it already ships, and falls back to the default for anything it does
+     not recognise — an unknown theme degrades to plain, never to broken. */
+  :root{color-scheme:light;--bg:#f7f7f5;--fg:#1f2933;--muted:#52606d;--accent:#3b5b92;--coach:#eef2f6;--panel:#fff;--line:#d9e2ec}
+  [data-theme="high-contrast"]{--bg:#fff;--fg:#000;--muted:#222;--accent:#00306e;--coach:#f0f0f0;--panel:#fff;--line:#000}
+  [data-theme="calm"]{--bg:#f4f7f5;--fg:#1d2b26;--muted:#4a5f57;--accent:#2f6b52;--coach:#e7efea;--panel:#fff;--line:#cfe0d6}
+  *{box-sizing:border-box}
+  body{margin:0;font:16px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+  main{max-width:660px;margin:0 auto;padding:1.5rem;display:flex;flex-direction:column;min-height:100vh}
+  h1{font-size:1.1rem;margin:0 0 .25rem}
+  p.lede{margin:0 0 1rem;color:var(--muted);font-size:.9rem}
+  #trace{background:var(--panel);border:1px solid var(--line);border-radius:.6rem;padding:.75rem .9rem;margin-bottom:1rem;font-size:.85rem}
+  #trace h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 .5rem}
+  #trace dl{display:grid;grid-template-columns:auto 1fr;gap:.25rem .75rem;margin:0}
+  #trace dt{color:var(--muted)}
+  #trace dd{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}
+  #transcript{flex:1;display:flex;flex-direction:column;gap:.6rem;overflow-y:auto;padding-bottom:1rem}
+  .bubble{max-width:80%;padding:.6rem .85rem;border-radius:.9rem;font-size:.95rem;white-space:pre-wrap}
+  .coach{align-self:flex-start;background:var(--coach);border-bottom-left-radius:.2rem}
+  .learner{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:.2rem}
+  #choices{display:flex;flex-wrap:wrap;gap:.5rem;padding:.75rem 0}
+  #choices button{border:1px solid var(--accent);background:var(--panel);color:var(--accent);border-radius:999px;padding:.5rem 1rem;font:inherit;cursor:pointer}
+  #choices button:hover,#choices button:focus-visible{background:var(--accent);color:#fff}
+  #finish{margin-top:.5rem;padding:.75rem 1.25rem;border:0;border-radius:.5rem;background:#1f6f4a;color:#fff;font:inherit;font-weight:600;cursor:pointer;align-self:flex-start}
+  #finish:disabled{background:#9aa5b1;cursor:not-allowed}
+  .status{font-size:.8rem;color:var(--muted);margin-top:.75rem}
+</style>
+</head>
+<body>
+<main>
+  <h1>Context-routed coach</h1>
+  <p class="lede">Demonstrates the whole launch-context path: the publisher versions a theme and
+  settings on the object, this module reads them from its content fetch, styles itself accordingly,
+  and names a relay endpoint derived from the course. The relay chooses the concrete provider.</p>
+
+  <section id="trace">
+    <h2>What this module was told</h2>
+    <dl id="trace-rows"></dl>
+  </section>
+
+  <div id="transcript" aria-live="polite"></div>
+  <div id="choices"></div>
+  <button id="finish" type="button" disabled>Finish session</button>
+  <p class="status" id="status"></p>
+</main>
+<script>
+(function () {
+  "use strict";
+
+  // "*" only when the shell has no origin to name: the module iframe is sandboxed without
+  // allow-same-origin, so it sends no referrer and there is no concrete origin to address. The
+  // shell still accepts a hello only from its own iframe window carrying the launch nonce.
+  var shellOrigin = document.referrer ? new URL(document.referrer).origin : "*";
+  var handshakeNonce = (/(?:^#|&)lorb_handshake=([^&]+)/.exec(location.hash) || [])[1];
+
+  var statusEl = document.getElementById("status");
+  var traceRows = document.getElementById("trace-rows");
+  var transcript = document.getElementById("transcript");
+  var choicesEl = document.getElementById("choices");
+  var finishButton = document.getElementById("finish");
+
+  var port = null;
+  var shellContext = null;
+  var correlationId = null;
+  var endpointName = "demo";
+  var relayContext = {};
+  // relay.reply arrives on the port with reply_to set to the request's message_id; several turns
+  // can be in flight in principle, so replies are matched by id rather than assumed to be in order.
+  var pendingRelay = Object.create(null);
+
+  var KNOWN_THEMES = { "high-contrast": true, "calm": true };
+  var ENDPOINT_NAME = /^[a-z][a-z\d-]{0,63}$/;
+
+  function envelope(type, payload) {
+    return {
+      protocol: "lorb-player",
+      version: "1.0",
+      type: type,
+      message_id: crypto.randomUUID(),
+      // Once the shell has named the launch correlation, every message carries it, so a turn can be
+      // followed across the module, the shell, the relay and the provider in one trace.
+      correlation_id: correlationId || crypto.randomUUID(),
+      reply_to: null,
+      sent_at: new Date().toISOString(),
+      payload: payload
+    };
+  }
+
+  function emit(type, payload) {
+    if (!port) {
+      statusEl.textContent = "This activity must be opened inside the LORB Player Shell.";
+      return null;
+    }
+    var message = envelope(type, payload);
+    port.postMessage(message);
+    return message.message_id;
+  }
+
+  function row(label, value) {
+    var dt = document.createElement("dt");
+    dt.textContent = label;
+    var dd = document.createElement("dd");
+    dd.textContent = value;
+    traceRows.appendChild(dt);
+    traceRows.appendChild(dd);
+  }
+
+  function say(who, text) {
+    var bubble = document.createElement("p");
+    bubble.className = "bubble " + who;
+    bubble.textContent = text;
+    transcript.appendChild(bubble);
+    transcript.scrollTop = transcript.scrollHeight;
+  }
+
+  // ---------------------------------------------------------------------
+  // Handshake
+  // ---------------------------------------------------------------------
+  if (handshakeNonce) {
+    var channel = new MessageChannel();
+    port = channel.port1;
+    port.onmessage = onPortMessage;
+    port.start();
+    parent.postMessage(envelope("module.hello", { lorb_handshake: handshakeNonce }), shellOrigin, [channel.port2]);
+  } else {
+    statusEl.textContent = "This activity must be opened inside the LORB Player Shell.";
+  }
+
+  function onPortMessage(event) {
+    var data = event.data;
+    if (!data || data.protocol !== "lorb-player" || !data.payload) return;
+    if (data.type === "shell.context") { onShellContext(data.payload); return; }
+    if (data.type === "relay.reply") { onRelayReply(data); return; }
+  }
+
+  // ---------------------------------------------------------------------
+  // Launch context
+  // ---------------------------------------------------------------------
+  function onShellContext(context) {
+    shellContext = context;
+    correlationId = context.correlation_id;
+    // The shell hands over a content URL already pinned to the object version the descriptor named,
+    // so the theme and settings read here cannot change under a learner mid-attempt.
+    fetch(context.content_url)
+      .then(function (response) {
+        if (!response.ok) throw new Error("content " + response.status);
+        return response.json();
+      })
+      .then(function (body) { applyLaunchContext(body && body.launch_context); })
+      .catch(function () {
+        // A module that cannot read its context is still a usable module: it runs with defaults and
+        // says so, rather than presenting an error page for a styling signal.
+        row("launch context", "unavailable — running with defaults");
+        applyLaunchContext(null);
+      });
+  }
+
+  function applyLaunchContext(launchContext) {
+    var theme = launchContext && launchContext.theme;
+    var settings = (launchContext && launchContext.settings) || {};
+
+    if (theme && KNOWN_THEMES[theme]) {
+      document.documentElement.setAttribute("data-theme", theme);
+      row("theme", theme);
+    } else if (theme) {
+      row("theme", theme + " (unknown to this module — using default)");
+    } else {
+      row("theme", "not set — using default");
+    }
+
+    // The backend choice. The course names a family of providers; the relay appends the learner's
+    // performance tier to pick the concrete one, so the module never knows — and never needs to
+    // know — which model actually answers.
+    var course = typeof settings.course === "string" ? settings.course : null;
+    var candidate = course ? "coach-" + course : "demo";
+    endpointName = ENDPOINT_NAME.test(candidate) ? candidate : "demo";
+    row("course", course || "not set");
+    row("endpoint requested", endpointName + (endpointName === "demo" ? " (no course configured)" : ""));
+
+    // Small named scalars pass through to the provider. The relay caps this at 16 entries and
+    // string/number/boolean values; anything larger belongs in the object's content, not its context.
+    relayContext = {};
+    Object.keys(settings).slice(0, 16).forEach(function (key) {
+      var value = settings[key];
+      var type = typeof value;
+      if (type === "string" ? value.length <= 256 : (type === "number" && isFinite(value)) || type === "boolean") {
+        relayContext[key] = value;
+      }
+    });
+
+    start();
+  }
+
+  // ---------------------------------------------------------------------
+  // Conversation
+  // ---------------------------------------------------------------------
+  var OPENERS = [
+    { id: "workload", label: "Managing my workload" },
+    { id: "feedback", label: "Preparing for a difficult conversation" },
+    { id: "confidence", label: "Building confidence in a new skill" }
+  ];
+
+  var history = [];
+  var answeredWith = null;
+
+  function start() {
+    var opening = "What would you like to work on today?";
+    history.push({ role: "coach", content: opening });
+    say("coach", opening);
+    OPENERS.forEach(function (choice) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.textContent = choice.label;
+      button.addEventListener("click", function () { choose(choice); });
+      choicesEl.appendChild(button);
+    });
+  }
+
+  function choose(choice) {
+    choicesEl.innerHTML = "";
+    answeredWith = choice.id;
+    say("learner", choice.label);
+    history.push({ role: "learner", content: choice.label });
+    statusEl.textContent = "Asking the coach…";
+
+    // The module never holds the launch descriptor. It asks the shell to make one authenticated
+    // call; the shell holds the credential and the relay holds the provider's URL and key.
+    var id = emit("relay.request", {
+      endpoint: endpointName,
+      messages: history.slice(-32),
+      context: relayContext
+    });
+    if (id) pendingRelay[id] = true;
+  }
+
+  function onRelayReply(message) {
+    if (!message.reply_to || !pendingRelay[message.reply_to]) return;
+    delete pendingRelay[message.reply_to];
+    statusEl.textContent = "";
+
+    if (message.payload.error) {
+      // A failed turn is a failed turn. The shell deliberately does not escalate this to
+      // experience.error, and neither does the module: losing one reply must not read as the
+      // activity breaking, and the learner can still finish.
+      say("coach", "I couldn't reach the coaching service just now — but your session is still recorded. You can finish below.");
+      row("endpoint answered", "call failed (" + message.payload.error + ")");
+    } else {
+      say("coach", String(message.payload.reply || ""));
+      history.push({ role: "coach", content: String(message.payload.reply || "") });
+      // The resolved name is the interesting part: "coach-maths-support" rather than "coach-maths"
+      // shows the relay appended a performance tier and picked a different provider.
+      row("endpoint answered", String(message.payload.endpoint || "unknown"));
+    }
+
+    finishButton.disabled = false;
+    finishButton.focus();
+  }
+
+  // ---------------------------------------------------------------------
+  // Evidence and completion
+  // ---------------------------------------------------------------------
+  function statement(verb, objectId, result) {
+    return {
+      id: crypto.randomUUID(),
+      actor: { objectType: "Agent", account: { homePage: "https://lorb.example/pseudonym", name: shellContext.pseudonym } },
+      verb: { id: "http://adlnet.gov/expapi/verbs/" + verb, display: { "en-GB": verb } },
+      object: { id: objectId, objectType: "Activity" },
+      result: result,
+      context: {
+        extensions: {
+          "https://lorb.example/xapi/repository_id": shellContext.repository_id,
+          "https://lorb.example/xapi/attempt_id": shellContext.attempt_id,
+          "https://lorb.example/xapi/package_version_id": shellContext.package_version_id,
+          "https://lorb.example/xapi/correlation_id": shellContext.correlation_id,
+          "https://lorb.example/xapi/completion_authority": "PACKAGE"
+        }
+      },
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  finishButton.addEventListener("click", function () {
+    finishButton.disabled = true;
+    var activity = "https://lorb.example/objects/" + shellContext.object_id + "/versions/" + shellContext.object_version_id;
+
+    // The chosen topic is emitted as an option identifier, never as free text: the statement
+    // contract constrains `response` so a result can never become a channel for learner-authored
+    // personal data. The conversation itself is deliberately not evidence.
+    if (answeredWith) {
+      emit("evidence.emit", { statement: statement("answered", activity, { response: answeredWith }) });
+    }
+    // state.put first: it is what moves the attempt CREATED -> STARTED, and the Runtime only
+    // accepts a completion from STARTED.
+    emit("state.put", { state: { conversation_finished: true } });
+    emit("evidence.emit", { statement: statement("completed", activity, { completion: true }) });
+    emit("experience.complete", {});
+    statusEl.textContent = "Session complete.";
+  });
+})();
+</script>
+</body>
+</html>
