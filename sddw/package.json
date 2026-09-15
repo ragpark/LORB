@@ -1,7 +1,7 @@
 {
   "name": "sdd-workbench",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Spec Driven Development Workbench (SDDW) — collaborative front-end and system of record for Spec Driven Development, backed by the SDD Companion agent.",
   "scripts": {
