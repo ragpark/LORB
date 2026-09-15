@@ -1,0 +1,18 @@
+# Railway build: identical to Dockerfile but on the public Node image
+# (the Cookie Dockerfile uses a Pearson-internal ECR base that Railway cannot pull).
+FROM node:22-alpine AS builder
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+COPY . .
+RUN npm run build
+
+FROM node:22-alpine
+WORKDIR /app
+ENV NODE_ENV=production PORT=8080
+COPY --from=builder /app/dist ./dist
+COPY server ./server
+COPY package.json ./
+EXPOSE 8080
+USER 1000
+CMD ["node", "server/index.mjs"]
