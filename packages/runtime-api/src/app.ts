@@ -157,7 +157,11 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     return path === "/api/v1/runtime/jwks"
       || path === "/api/v1/evidence/statements"
       || path === "/api/v1/relay/coach/messages"
-      || /^\/api\/v1\/runtime\/attempts\/[^/]+\/(state|complete)$/.test(path)
+      // launch-parameters belongs here for the same reason state and complete do: a module sandboxed
+      // without allow-same-origin sends `Origin: null`, and the Player Shell reads this route on its
+      // behalf during an external-embed launch. Omitted, the browser blocks it and every
+      // parameterised embed fails in exactly the topology the sandbox exists to support.
+      || /^\/api\/v1\/runtime\/attempts\/[^/]+\/(state|complete|launch-parameters)$/.test(path)
       || /^\/api\/v1\/runtime\/learning-objects\/[^/]+\/content$/.test(path);
   };
 
@@ -414,14 +418,19 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
       return Object.keys(asked).length === 0 ? { parameters: {} } : { error: "this activity declares no launch parameters" };
     }
     const byName = new Map(declared.map((declaration) => [declaration.name, declaration]));
-    for (const [name, value] of Object.entries(asked)) {
+    // Both sides are read through Maps rather than by property access. A declared name is a plain
+    // identifier, so `constructor` and `toString` are legal ones — and indexing an object with those
+    // returns something inherited from Object.prototype rather than undefined, which would make an
+    // omitted choice resolve to a function instead of falling back to the declared default.
+    const chosenByName = new Map(Object.entries(asked));
+    for (const [name, value] of chosenByName) {
       const declaration = byName.get(name);
       if (!declaration) return { error: `${name} is not a declared launch parameter` };
       if (!declaration.values.includes(value)) return { error: `${value} is not a declared value for ${name}` };
     }
     const parameters: Record<string, string> = {};
     for (const declaration of declared) {
-      const chosen = asked[declaration.name] ?? declaration.default;
+      const chosen = chosenByName.get(declaration.name) ?? declaration.default;
       if (chosen !== undefined) parameters[declaration.name] = chosen;
     }
     return { parameters };

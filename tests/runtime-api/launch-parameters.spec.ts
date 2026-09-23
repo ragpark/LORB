@@ -181,6 +181,45 @@ describe("a launch against a declared parameter", () => {
   });
 });
 
+describe("a declared name that collides with Object.prototype", () => {
+  // `constructor`, `toString` and `valueOf` are legal parameter names: the declaration only requires
+  // a plain identifier. Reading the caller's choices by property access rather than as own entries
+  // makes an omitted choice resolve to the inherited function instead of the declared default, and
+  // the attempt then stores a function where a token belongs.
+  const COLLIDING = [
+    { name: "constructor", label: "Constructor", values: ["a", "b"], default: "a" },
+    { name: "toString", label: "To string", values: ["x", "y"], default: "x" },
+  ];
+
+  it("falls back to the declared default when the caller omits it", async () => {
+    const h = await setup();
+    const objectId = await h.register(COLLIDING);
+    const launched = await h.launch(objectId, {});
+
+    expect(launched.statusCode).toBe(201);
+    const attempt = await h.store.getAttempt(launched.json().attempt_id);
+    expect(attempt?.launch_parameters).toEqual({ constructor: "a", toString: "x" });
+  });
+
+  it("still honours an explicit choice for such a name", async () => {
+    const h = await setup();
+    const objectId = await h.register(COLLIDING);
+    const launched = await h.launch(objectId, { constructor: "b" });
+
+    const attempt = await h.store.getAttempt(launched.json().attempt_id);
+    expect(attempt?.launch_parameters).toEqual({ constructor: "b", toString: "x" });
+  });
+
+  it("still refuses an undeclared value for such a name", async () => {
+    const h = await setup();
+    const objectId = await h.register(COLLIDING);
+    const launched = await h.launch(objectId, { constructor: "z" });
+
+    expect(launched.statusCode).toBe(400);
+    expect(launched.json().code).toBe("LAUNCH_PARAMETERS_INVALID");
+  });
+});
+
 describe("the allow-list, which is the control", () => {
   it("refuses a value the object does not declare", async () => {
     const h = await setup();

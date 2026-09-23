@@ -20,6 +20,18 @@ describe('learner portal enforcement',()=>{beforeEach(()=>{vi.restoreAllMocks()}
   expect(sanitise({repository_id:'r1',display_name:'Default repository',name:'hidden'},leak,new Set(['display_name']))).toEqual({repository_id:'r1',display_name:'Default repository'});
   expect(source('src/catalogue.ts')).toContain("new Set(['display_name'])");
  });
+ // A launch option's `name` is the query parameter it sets, not a person's. The default guard
+ // withholds it like every other name-shaped key, and an option that arrives without one leaves the
+ // chooser sending "undefined" — a launch the Runtime correctly refuses. So the external-embed
+ // content fetch approves that one key for that one call, and nothing else does.
+ it('approves the launch option name for the embed content fetch, and only there',()=>{const leak=vi.fn();
+  expect(sanitise({name:'keyStage',label:'Key stage'},leak)).toEqual({label:'Key stage'});
+  expect(sanitise({name:'keyStage',label:'Key stage'},leak,new Set(['name']))).toEqual({name:'keyStage',label:'Key stage'});
+  const app=source('src/App.tsx');
+  expect(app).toContain("new Set(['name'])");
+  // Approved for the embed's own content fetch, not widened to the catalogue or the launch call.
+  expect(app).toMatch(/learning-objects\/\$\{object\.object_id\}\/content`,\{\},\(\)=>setLeak\(true\),new Set\(\['name'\]\)/);
+ });
  // Every kind but lti-tool and external-embed gets the fully restrictive sandbox. Those two are the
  // deliberate, narrowly-scoped exceptions — real third-party content needs cookies and same-origin
  // fetches to function at all, which allow-same-origin grants only inside that one ternary branch —

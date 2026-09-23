@@ -69,10 +69,20 @@ describe("Runtime API CORS", () => {
       url: "/api/v1/evidence/statements",
       headers: { origin: "null", "access-control-request-method": "POST" },
     });
+    // The shell reads an external embed's launch parameters on the module's behalf, from inside that
+    // same opaque origin. Left off this list the browser blocks it, and because a missing parameter
+    // set fails the launch rather than rendering an unconfigured page, every parameterised embed
+    // breaks in precisely the topology the sandbox exists to support.
+    const parametersRoute = await app.inject({
+      method: "OPTIONS",
+      url: "/api/v1/runtime/attempts/00000000-0000-4000-8000-000000000001/launch-parameters",
+      headers: { origin: "null", "access-control-request-method": "GET" },
+    });
     const catalogueRoute = await preflight(app, "null");
 
     expect(stateRoute.headers["access-control-allow-origin"]).toBe("null");
     expect(evidenceRoute.headers["access-control-allow-origin"]).toBe("null");
+    expect(parametersRoute.headers["access-control-allow-origin"]).toBe("null");
     expect(catalogueRoute.headers["access-control-allow-origin"]).toBeUndefined();
     await app.close();
   });
