@@ -135,12 +135,94 @@ connector.
 5. Build the front ends. Each image refuses to build for a deployed environment with no identity
    provider configured, which is what stops one falling back to the local sign-in.
 6. Register content — through the Administration workspace, or the Publisher API directly. A new
-   catalogue is empty.
+   catalogue is empty. See [Publishing a packaged module](#publishing-a-packaged-module).
 
 [docs/runbooks/cookie-deployment.md](docs/runbooks/cookie-deployment.md) describes the three-tier
 deployment on Cookie, Pearson's internal platform: one app for the API and the three browser
 applications, one for the Player Shell, one for the learning record store, with `deploy/cookie/`
 holding each app's image. Nothing in the code is specific to it.
+
+## Publishing a packaged module
+
+How a web tool you have built becomes a learning object an administrator can govern and a learner can
+launch. A packaged module is a `native-web-package`: code, as opposed to the data-authored kinds
+(quiz, video, document, audio, ebook, LTI tool, external embed) which are authored through their own
+routes and need none of this.
+
+### Step 1 — make the bundle reachable under the Player Shell origin
+
+This is the step people expect to be able to skip, and cannot. A learning object names its code with
+`module_path`, and at launch the Runtime API resolves it as `PLAYER_SHELL_ORIGIN + module_path` —
+nothing else. Registration enforces that: `module_path` must begin with `/`, must not be
+protocol-relative, must not contain `..`, and cannot be an absolute URL. A publisher who could name
+an arbitrary origin could point a learner's browser at code nobody reviewed, so the origin is the
+platform's decision and not the publisher's.
+
+A tool deployed elsewhere is therefore not reachable by registering a path to it. One of three things
+has to happen first.
+
+**Ship it into the Player Shell image.** Two lines in `Dockerfile.player-shell` — build the package,
+copy its `dist` to `/usr/share/nginx/html/modules/<slug>` — and after the next Player Shell deploy
+`/modules/<slug>/index.html` is a valid `module_path`. This is how every bundled player gets there.
+Use it when the tool lives in this repo and versions with the platform.
+
+**Mount an existing deployment under that origin.** Proxy `/modules/<slug>/` from the Player Shell to
+wherever the tool already runs. The URL contract holds and the bundle never moves. Use it when the
+tool has its own team or release cadence. Note that the Player Shell serves
+`Access-Control-Allow-Origin: *`, because modules are sandboxed without `allow-same-origin` and fetch
+their own bundles from an opaque origin — whatever is proxied has to be safe under that header and
+must not rely on cookies or credentialed requests.
+
+**Register it as a player version and route to it.** The only sanctioned route for an absolute URL to
+another origin, and deliberately the heaviest: `POST /api/v1/admin/players`, then
+`POST /api/v1/admin/players/:id/versions` with an SRI hash whose `module_origin` is on the allow-list
+and matches `module_url`, then promote `TESTING → APPROVED → ACTIVE`, then a launch policy rule that
+routes matching launches to that version. Use it when a third party hosts the player, or when you
+need to change which player renders a whole class of content without touching any catalogue entry.
+An object whose package version is marked `shared_player` keeps its own `module_path` regardless, so
+pinned content is never repointed underneath its publisher.
+
+### Step 2 — have somewhere to publish into
+
+The target repository must exist and be `ACTIVE`, and the publisher must hold `repository_operator`
+membership of it. Neither is a formality: registration is refused with `REPOSITORY_NOT_FOUND` or
+`REPOSITORY_STATE_INVALID`, or as unauthorised, and the refusal is audited.
+
+### Step 3 — describe the object
+
+Through the Administration workspace, or `POST /api/v1/publisher/learning-objects` directly:
+
+```sh
+curl -X POST "$RUNTIME/api/v1/publisher/learning-objects" \
+  -H "authorization: Bearer $TOKEN" \
+  -H "idempotency-key: $(uuidgen)" \
+  -H "content-type: application/json" \
+  -d '{
+    "repository_id": "…",
+    "title": "Photosynthesis Explorer",
+    "description": "An interactive model of the light-dependent reactions.",
+    "duration": "20 minutes",
+    "module_path": "/modules/photosynthesis-explorer/index.html",
+    "semver": "1.0.0",
+    "sha256": "…"
+  }'
+```
+
+The idempotency key is mandatory, and a retry replays the original response rather than publishing a
+second object. The object is created `PUBLISHED` with an active object version and an active package
+version in one call — there is no separate publish action for a packaged module.
+
+### After it is published
+
+The object is on the publisher listing, carries an audit record for `learning_object.register`, and
+is now governable: metadata is editable in place, a new bundle is a new package version, and the
+object can be suspended, restored, retired or listed on the marketplace. A signed-in learner with
+access to the repository sees it in the catalogue and launches it embedded, pinned to the version
+active at that moment.
+
+That half of the story — what each change costs, the withdrawal rules, and what to check when a
+launch will not start — is in
+[docs/runbooks/packaged-module-lifecycle.md](docs/runbooks/packaged-module-lifecycle.md).
 
 ## Operations
 
@@ -154,8 +236,9 @@ holding each app's image. Nothing in the code is specific to it.
 Runbooks for [deployment](docs/runbooks/deployment.md),
 [key rotation](docs/runbooks/key-rotation.md),
 [backup and restore](docs/runbooks/backup-and-restore.md),
-[incident response](docs/runbooks/incident-response.md) and
-[observability](docs/runbooks/observability.md).
+[incident response](docs/runbooks/incident-response.md),
+[observability](docs/runbooks/observability.md) and the
+[packaged module lifecycle](docs/runbooks/packaged-module-lifecycle.md).
 
 ## Smart links
 

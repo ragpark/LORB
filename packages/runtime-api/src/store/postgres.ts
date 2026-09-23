@@ -21,7 +21,7 @@ import type {
 const ATTEMPT_COLUMNS = `attempt_id, repository_id, object_id, object_version_id, package_version_id,
   pseudonymous_subject_id, consumer_id, status, revision, state_payload, correlation_id, created_at,
   started_at, completed_at, terminated_at, expires_at, governed_by_launch_policy,
-  package_pinned_by_object, source`;
+  package_pinned_by_object, source, launch_parameters`;
 
 const OUTBOX_COLUMNS = `outbox_id, statement_id, repository_id, attempt_id, package_version_id, object_id,
   actor_pseudonym, verb_id, payload, status, attempts, last_error, created_at, forwarded_at,
@@ -50,6 +50,7 @@ function toAttempt(row: Record<string, any>): Attempt {
     expires_at: iso(row.expires_at),
     governed_by_launch_policy: row.governed_by_launch_policy ?? undefined,
     package_pinned_by_object: row.package_pinned_by_object === true ? true : undefined,
+    launch_parameters: row.launch_parameters ?? undefined,
     source: row.source,
   };
 }
@@ -107,8 +108,9 @@ export class PostgresRuntimeStore implements RuntimeStore {
     await this.pool.query(
       `insert into attempt (attempt_id, repository_id, object_id, object_version_id, package_version_id,
          pseudonymous_subject_id, consumer_id, status, revision, state_payload, correlation_id,
-         created_at, started_at, expires_at, governed_by_launch_policy, package_pinned_by_object, source)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, coalesce($12::timestamptz, now()), $13, $14, $15, $16, $17)
+         created_at, started_at, expires_at, governed_by_launch_policy, package_pinned_by_object, source,
+         launch_parameters)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, coalesce($12::timestamptz, now()), $13, $14, $15, $16, $17, $18)
        on conflict (attempt_id) do nothing`,
       [
         attempt.attempt_id, attempt.repository_id, attempt.object_id, attempt.object_version_id,
@@ -118,6 +120,7 @@ export class PostgresRuntimeStore implements RuntimeStore {
         attempt.expires_at ?? null,
         attempt.governed_by_launch_policy ? JSON.stringify(attempt.governed_by_launch_policy) : null,
         attempt.package_pinned_by_object === true, attempt.source,
+        attempt.launch_parameters ? JSON.stringify(attempt.launch_parameters) : null,
       ],
     );
   }

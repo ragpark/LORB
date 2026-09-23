@@ -1,5 +1,5 @@
 import {createRemoteJWKSet,jwtVerify} from "jose";
-import {postMessageSchema} from "../../contracts/src/index.js";
+import {embedUrlWithParameters,postMessageSchema} from "../../contracts/src/index.js";
 import {HANDSHAKE_FRAGMENT_KEY,handshakeAllowed} from "./postmessage.js";
 
 type Descriptor={iss:string;aud:string;attempt_id:string;correlation_id:string;state_endpoint:string;evidence_endpoint:string;package_url:string;sub:string;object_id:string;object_version_id:string;repository_id:string;package_version_id:string;session_config:{expires_at:string};content_profile?:string};
@@ -91,7 +91,7 @@ async function startLtiLaunch(d:Descriptor){
   });
  }catch(error){status.textContent="This activity could not be opened.";emit("experience.error",{code:"LAUNCH_INVALID",recoverable:false,detail:error instanceof Error?error.message:"Unknown error"})}
 }
-interface ExternalEmbedContent{title:string;description?:string;embed_url:string}
+interface ExternalEmbedContent{title:string;description?:string;embed_url:string;parameters?:{name:string}[]}
 /**
  * An external-embed launch, like lti-tool, never speaks the module postMessage protocol — the
  * embedded page is somebody else's, unmodified, and cannot be expected to send `module.hello`. Unlike
@@ -108,9 +108,23 @@ async function startExternalEmbed(d:Descriptor){
   const response=await fetch(contentUrl);
   if(!response.ok)throw new Error(`Could not load embed details (${response.status})`);
   const content=await response.json() as ExternalEmbedContent;
+  // The choices this launch was issued with. Attempt-scoped and descriptor-authenticated, so the
+  // page is configured by what the consumer actually asked for rather than by anything readable
+  // from this URL. A launch that carries none answers with an empty set and the registered address
+  // is used unchanged, which is every embed published before parameters existed.
+  // An object that declares no parameters is every embed published before they existed, and asking
+  // for them is pointless — so the call is skipped rather than tolerated as a failure. Where the
+  // object does declare them, a failure to read them is fatal to the launch: rendering the
+  // registered address unconfigured would silently hand back a different activity from the one the
+  // teacher chose, which is the failure mode this whole feature exists to avoid.
+  let parameters:Record<string,string>={};
+  if(content.parameters?.length){
+   const resolved=await request(`${d.iss.replace(/\/$/,"")}/api/v1/runtime/attempts/${d.attempt_id}/launch-parameters`,"GET") as {parameters?:Record<string,string>};
+   parameters=resolved.parameters??{};
+  }
   frame.setAttribute("sandbox","allow-scripts allow-forms allow-same-origin");
   awaitingInitialLoad=true;
-  frame.src=content.embed_url;
+  frame.src=embedUrlWithParameters(content.embed_url,parameters);
   status.textContent="Learning activity loaded";
   const completeBtn=document.querySelector<HTMLButtonElement>("#mark-complete")!;
   completeBtn.hidden=false;

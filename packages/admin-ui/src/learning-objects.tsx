@@ -307,12 +307,25 @@ function NewExternalEmbedForm({ repositories, onCreated }: { repositories: Row[]
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [embedUrl, setEmbedUrl] = useState('');
+  // Each row is one parameter a teacher may choose at launch. `values` is typed as a comma-separated
+  // list because that is how a publisher thinks about a short closed list, and is split on submit.
+  const [parameters, setParameters] = useState<{ name: string; label: string; values: string; default: string }[]>([]);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const setParameter = (index: number, key: 'name' | 'label' | 'values' | 'default') => (e: { target: { value: string } }) =>
+    setParameters(parameters.map((row, i) => (i === index ? { ...row, [key]: e.target.value } : row)));
   const submit = async () => {
     setError('');
     setSaving(true);
     try {
+      const declared = parameters
+        .filter((row) => row.name.trim() !== '')
+        .map((row) => ({
+          name: row.name.trim(),
+          label: row.label.trim() || row.name.trim(),
+          values: row.values.split(',').map((value) => value.trim()).filter(Boolean),
+          ...(row.default.trim() ? { default: row.default.trim() } : {}),
+        }));
       const created = await publisher<{ object_id: string }>('learning-objects/external-embeds', {
         method: 'POST',
         body: {
@@ -320,9 +333,10 @@ function NewExternalEmbedForm({ repositories, onCreated }: { repositories: Row[]
           title,
           ...(description ? { description } : {}),
           embed_url: embedUrl,
+          ...(declared.length ? { parameters: declared } : {}),
         },
       });
-      setTitle(''); setDescription(''); setEmbedUrl('');
+      setTitle(''); setDescription(''); setEmbedUrl(''); setParameters([]);
       onCreated(created.object_id);
     } catch (e) {
       setError(errorMessage(e));
@@ -346,6 +360,40 @@ function NewExternalEmbedForm({ repositories, onCreated }: { repositories: Row[]
         Embed URL
         <input type="url" value={embedUrl} onChange={(e) => setEmbedUrl(e.target.value)} placeholder="https://example.com/activity" pattern="https://.*" required />
       </label>
+      <fieldset className="stacked">
+        <legend>Launch options (optional)</legend>
+        <p className="governance-note">
+          Each option becomes a query parameter on the embedded page, chosen by whoever launches it rather than fixed here. List every value it may take:
+          a launch can only pick from that list, and a value you have not listed is refused rather than passed on. Leave this empty to always open the
+          address exactly as entered above.
+        </p>
+        {parameters.map((row, index) => (
+          <div className="parameter-row" key={index}>
+            <label className="stacked">
+              Name
+              <input value={row.name} onChange={setParameter(index, 'name')} placeholder="keyStage" pattern="[A-Za-z][A-Za-z0-9_]*" />
+            </label>
+            <label className="stacked">
+              Label
+              <input value={row.label} onChange={setParameter(index, 'label')} placeholder="Key stage" />
+            </label>
+            <label className="stacked">
+              Permitted values
+              <input value={row.values} onChange={setParameter(index, 'values')} placeholder="KS3, KS4, KS5" />
+            </label>
+            <label className="stacked">
+              Default
+              <input value={row.default} onChange={setParameter(index, 'default')} placeholder="KS3" />
+            </label>
+            <button type="button" onClick={() => setParameters(parameters.filter((_, i) => i !== index))}>Remove</button>
+          </div>
+        ))}
+        {parameters.length < 8 && (
+          <button type="button" onClick={() => setParameters([...parameters, { name: '', label: '', values: '', default: '' }])}>
+            Add a launch option
+          </button>
+        )}
+      </fieldset>
       {error && <p role="alert" className="error-text">{error}</p>}
       <div className="dialog-actions">
         <button type="submit" disabled={saving}>{saving ? 'Registering…' : 'Register external embed'}</button>

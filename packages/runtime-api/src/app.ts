@@ -17,7 +17,7 @@ import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import type { KeyLike } from "jose";
 import {
-  launchRequestSchema, type AudioContent, type EbookContent, type ExternalEmbedContent, type LtiToolContent, type VideoContent,
+  launchRequestSchema, type AudioContent, type EbookContent, type ExternalEmbedContent, type LaunchParameterDeclaration, type LtiToolContent, type VideoContent,
 } from "../../contracts/src/index.js";
 import { config as loadRuntimeConfig, loadConfig, type RuntimeConfig } from "./config/index.js";
 import { catalogue as defaultCatalogue, createCatalogue, type CatalogueStore, type LearningObjectRow } from "./catalogue/index.js";
@@ -157,7 +157,11 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     return path === "/api/v1/runtime/jwks"
       || path === "/api/v1/evidence/statements"
       || path === "/api/v1/relay/coach/messages"
-      || /^\/api\/v1\/runtime\/attempts\/[^/]+\/(state|complete)$/.test(path)
+      // launch-parameters belongs here for the same reason state and complete do: a module sandboxed
+      // without allow-same-origin sends `Origin: null`, and the Player Shell reads this route on its
+      // behalf during an external-embed launch. Omitted, the browser blocks it and every
+      // parameterised embed fails in exactly the topology the sandbox exists to support.
+      || /^\/api\/v1\/runtime\/attempts\/[^/]+\/(state|complete|launch-parameters)$/.test(path)
       || /^\/api\/v1\/runtime\/learning-objects\/[^/]+\/content$/.test(path);
   };
 
@@ -392,6 +396,46 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     return { packageUrl: pinned ? objectPackageUrl : (policy?.packageUrl ?? objectPackageUrl), policy, pinned };
   }
 
+  /**
+   * Resolves the parameters a launch runs with, against what the object declares.
+   *
+   * The declaration is the whole control. A parameter's value ends up in a third party's URL, so a
+   * name the object does not declare, or a value outside that name's declared list, is refused
+   * rather than dropped: silently ignoring a choice would hand a teacher an activity configured
+   * differently from the one they asked for, and silently accepting one would let any caller who can
+   * request a launch append what they liked to an origin the deployment agreed to trust.
+   *
+   * Declared defaults fill in what the caller did not choose, so a consumer that knows nothing about
+   * parameters still launches the object the publisher intended.
+   */
+  function resolveLaunchParameters(
+    declarations: LaunchParameterDeclaration[] | undefined,
+    requested: Record<string, string> | undefined,
+  ): { parameters: Record<string, string> } | { error: string } {
+    const declared = declarations ?? [];
+    const asked = requested ?? {};
+    if (declared.length === 0) {
+      return Object.keys(asked).length === 0 ? { parameters: {} } : { error: "this activity declares no launch parameters" };
+    }
+    const byName = new Map(declared.map((declaration) => [declaration.name, declaration]));
+    // Both sides are read through Maps rather than by property access. A declared name is a plain
+    // identifier, so `constructor` and `toString` are legal ones — and indexing an object with those
+    // returns something inherited from Object.prototype rather than undefined, which would make an
+    // omitted choice resolve to a function instead of falling back to the declared default.
+    const chosenByName = new Map(Object.entries(asked));
+    for (const [name, value] of chosenByName) {
+      const declaration = byName.get(name);
+      if (!declaration) return { error: `${name} is not a declared launch parameter` };
+      if (!declaration.values.includes(value)) return { error: `${value} is not a declared value for ${name}` };
+    }
+    const parameters: Record<string, string> = {};
+    for (const declaration of declared) {
+      const chosen = chosenByName.get(declaration.name) ?? declaration.default;
+      if (chosen !== undefined) parameters[declaration.name] = chosen;
+    }
+    return { parameters };
+  }
+
   app.post("/api/v1/runtime/launches", { ...limit(runtimeConfig.rateLimit.launchesPerMinute) } as RouteShorthandOptions, async (req, reply) => {
     const correlationValue = correlation(req);
     const idempotencyKey = req.headers["idempotency-key"];
@@ -444,6 +488,23 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
           return sendProblem(reply, "OBJECT_NOT_FOUND", correlationValue);
         }
 
+        // Declared by the publisher on the object's content, chosen per launch by the caller. Read
+        // from the object's current content rather than the descriptor's pinned version, because the
+        // choice is being made now and must be checked against the declaration in force now.
+        //
+        // Only an external embed can declare them, so only an external embed pays for the read —
+        // this is the hottest path in the service and every other kind would be fetching content it
+        // has no use for. A caller that sends parameters to any other kind is still refused, because
+        // an object with no declaration admits nothing.
+        const declarations = object.content_profile === "external-embed-v1"
+          ? ((await catalogue.content(object.object_id)) as ExternalEmbedContent | undefined)?.parameters
+          : undefined;
+        const resolved = resolveLaunchParameters(declarations, body.launch_parameters);
+        if ("error" in resolved) {
+          metrics.launches.inc({ outcome: "rejected", source: "consumer" });
+          return sendProblem(reply, "LAUNCH_PARAMETERS_INVALID", correlationValue, 400);
+        }
+
         const pseudonym = computePseudonym(secret, verifier.issuer, subject, "launch");
         const { packageUrl, policy, pinned } = await resolvePackageUrl(object, body.repository_id, body.consumer_id, body.requested_launch_mode);
 
@@ -474,6 +535,9 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
             },
           } : {}),
           ...(pinned ? { package_pinned_by_object: true } : {}),
+          // Recorded on the attempt, not the descriptor: this is what the activity was configured
+          // with, so the evidence trail can say which variant a learner actually saw.
+          ...(Object.keys(resolved.parameters).length > 0 ? { launch_parameters: resolved.parameters } : {}),
         });
 
         const descriptor = await issueDescriptor(ring, {
@@ -561,6 +625,29 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<BuiltR
     if (result.outcome === "CONFLICT") return sendProblem(reply, "ATTEMPT_CONFLICT", descriptor.correlation_id, 409);
     metrics.attemptTransitions.inc({ to: result.status ?? "STARTED", outcome: "applied" });
     return reply.send({ revision: result.revision, status: result.status, correlation_id: descriptor.correlation_id });
+  });
+
+  /**
+   * The parameters this attempt was launched with, for the surface that renders it.
+   *
+   * Authenticated by the descriptor and scoped to its own attempt, like every other player-surface
+   * route: the values are a teacher's configuration choice rather than a secret, but they belong to
+   * one launch and nothing else should be able to enumerate them. Serving them here rather than as a
+   * descriptor claim keeps the descriptor — which a third party's page can observe being used — free
+   * of anything the launch does not strictly need to carry.
+   */
+  app.get("/api/v1/runtime/attempts/:attemptId/launch-parameters", async (req, reply) => {
+    const request = req as { headers: Record<string, unknown>; params: { attemptId: string } };
+    const descriptor = await authenticatePlayer(request, reply);
+    if (!descriptor) return;
+    if (descriptor.attempt_id !== request.params.attemptId) return sendProblem(reply, "ACCESS_DENIED", descriptor.correlation_id, 403);
+    const attempt = await store.getAttempt(request.params.attemptId);
+    if (!attempt) return sendProblem(reply, "OBJECT_NOT_FOUND", descriptor.correlation_id);
+    return reply.header("cache-control", "no-store").send({
+      attempt_id: attempt.attempt_id,
+      parameters: attempt.launch_parameters ?? {},
+      correlation_id: descriptor.correlation_id,
+    });
   });
 
   app.post("/api/v1/runtime/attempts/:attemptId/complete", async (req, reply) => {
