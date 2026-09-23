@@ -1,6 +1,9 @@
 import { z } from "zod";
 const uuid = z.string().uuid();
-export const launchRequestSchema = z.object({contract_version:z.literal("1.0"),consumer_id:z.string().min(1),repository_id:uuid,object_id:uuid,requested_launch_mode:z.literal("embedded-iframe"),locale:z.literal("en-GB")}).strict();
+export const launchRequestSchema = z.object({contract_version:z.literal("1.0"),consumer_id:z.string().min(1),repository_id:uuid,object_id:uuid,requested_launch_mode:z.literal("embedded-iframe"),locale:z.literal("en-GB"),
+  /** Per-launch choices, admitted only where the object declares them. Optional and additive: a
+   *  request that names none is exactly the request this schema accepted before they existed. */
+  launch_parameters:z.lazy(()=>launchParametersSchema).optional()}).strict();
 export const descriptorSchema = z.object({iss:z.string().url(),aud:z.literal("lorb-player"),iat:z.number().int(),nbf:z.number().int(),exp:z.number().int(),jti:uuid,sub:z.string().regex(/^[a-f\d]{64}$/),tenant_id:z.string().regex(/^[a-z\d][a-z\d-]{1,62}$/),repository_id:uuid,consumer_id:z.string().min(1),object_id:uuid,object_version_id:uuid,package_version_id:uuid,delivery_profile:z.literal("native-web-package"),launch_mode:z.literal("embedded-iframe"),player_ref:z.string().regex(/^[a-z][a-z\d-]*-v\d+$/),correlation_id:uuid,locale:z.literal("en-GB"),attempt_id:uuid,state_endpoint:z.string().url(),evidence_endpoint:z.string().url(),package_url:z.string().url(),session_config:z.object({expires_at:z.string().datetime()}),telemetry_config:z.object({correlation_header:z.literal("X-Correlation-ID")}),contract_version:z.literal("1.0"),
   /** The launched object's content profile, so the Player Shell can recognise an LTI tool launch
    *  before ever creating the sandboxed module iframe every other kind uses. Optional and additive —
@@ -194,12 +197,66 @@ export type LtiToolContent = z.infer<typeof ltiToolContentSchema>;
 // admin cannot point a launch at an origin nobody at the deployment level agreed to trust. Weaker
 // than an lti-tool launch by design — reach for lti-tool instead whenever the third party can do LTI.
 // ---------------------------------------------------------------------------
+// Launch parameters: the publisher declares, the consumer chooses, per launch.
+//
+// This is the one place a value chosen outside LORB reaches a third party's URL, so the declaration
+// is an allow-list and not a schema: the publisher names each parameter and enumerates every value
+// it may take, and a launch may only pick from that list. A free-text parameter would make this an
+// open redirect wearing a feature's clothes — whoever can request a launch could append anything to
+// an origin the deployment has already agreed to trust.
+//
+// Unlike launch context, which is publisher-authored and pinned to an object version, these are
+// per-launch: two teachers launching the same object may legitimately choose differently, and
+// neither choice publishes a version. `name` admits camelCase because it becomes a query parameter
+// name in somebody else's application, where `keyStage` and `key_stage` are different parameters.
+const launchParameterName = z.string().regex(/^[A-Za-z][A-Za-z\d_]{0,31}$/, "a parameter name is a short identifier");
+const launchParameterValue = z.string().regex(/^[A-Za-z\d][A-Za-z\d._-]{0,63}$/, "a parameter value is a short token from the declared list");
+export const launchParameterDeclarationSchema = z.object({
+  name: launchParameterName,
+  /** What a teacher sees beside the choice. */
+  label: z.string().min(1).max(60),
+  values: z.array(launchParameterValue).min(1).max(24),
+  default: launchParameterValue.optional(),
+}).strict()
+  .refine((value) => new Set(value.values).size === value.values.length, { message: "values must be distinct" })
+  .refine((value) => value.default === undefined || value.values.includes(value.default), { message: "default must be one of values" });
+export type LaunchParameterDeclaration = z.infer<typeof launchParameterDeclarationSchema>;
+
+/**
+ * Applies a launch's parameters to the embedded page's URL.
+ *
+ * They go in the query string, replacing any value the registered URL already carried for the same
+ * name — a publisher's default belongs in the declaration, not baked into the address where nothing
+ * can override it. The fragment is left exactly where it was, which is the part that is easy to get
+ * wrong: a hash-routed application is addressed `…/curriculum?subject=biology#/`, and appending to
+ * the end of that string puts the parameters inside the route where the router never looks for them.
+ * Parsing rather than concatenating is what keeps that correct for both shapes.
+ */
+export function embedUrlWithParameters(embedUrl: string, parameters: Record<string, string>): string {
+  const url = new URL(embedUrl);
+  for (const [name, value] of Object.entries(parameters)) url.searchParams.set(name, value);
+  return url.toString();
+}
+
+/** The choices a launch carries: names and values the object's declaration must already admit. */
+export const launchParametersSchema = z.record(launchParameterName, launchParameterValue)
+  .refine((value) => Object.keys(value).length <= 8, { message: "at most 8 launch parameters" });
+
 export const externalEmbedDraftSchema = z.object({
   title: z.string().min(1).max(200),
   description: z.string().max(600).optional(),
   embed_url: httpsUrl,
-}).strict();
-export const externalEmbedContentSchema = externalEmbedDraftSchema.extend({
+  parameters: z.array(launchParameterDeclarationSchema).max(8).optional(),
+}).strict()
+  .refine(
+    (value) => new Set((value.parameters ?? []).map((parameter) => parameter.name)).size === (value.parameters ?? []).length,
+    { message: "parameter names must be distinct" },
+  );
+export const externalEmbedContentSchema = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().max(600).optional(),
+  embed_url: httpsUrl,
+  parameters: z.array(launchParameterDeclarationSchema).max(8).optional(),
   object_id: uuid,
   content_version: z.string().regex(/^\d+$/),
   created_at: z.string().datetime(),

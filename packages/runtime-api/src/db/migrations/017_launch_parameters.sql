@@ -1,0 +1,12 @@
+-- Launch parameters: the choices one launch was issued with.
+--
+-- Distinct from `object_version.launch_context` (migration 009), and deliberately so. Launch context
+-- is the publisher's decision, pinned to a version so an edit cannot reconfigure an experience under
+-- a learner already inside it. These are the consumer's decision, made per launch from a list the
+-- publisher declared on the object's content — two teachers launching the same object may choose
+-- differently, and neither choice publishes a version.
+--
+-- They live on `attempt` because the attempt is what a launch produces and what evidence names, so
+-- the record of which variant a learner actually saw stays readable for as long as their evidence
+-- does. Nullable: most attempts carry none.
+alter table attempt add column if not exists launch_parameters jsonb;

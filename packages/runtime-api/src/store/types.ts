@@ -37,6 +37,8 @@ export interface Attempt {
   expires_at?: string | null;
   governed_by_launch_policy?: GoverningLaunchPolicy;
   package_pinned_by_object?: boolean;
+  /** The per-launch choices this attempt was issued with, from the object's declared list. */
+  launch_parameters?: Record<string, string>;
   source: "consumer" | "smart-link" | "assignment";
 }
 

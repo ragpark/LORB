@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { decodeJwt, generateKeyPair } from "jose";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import { descriptorSchema } from "../../packages/contracts/src/index.js";
+import { descriptorSchema, externalEmbedDraftSchema, launchRequestSchema } from "../../packages/contracts/src/index.js";
 import { buildRuntime } from "../../packages/runtime-api/src/app.js";
 import { buildEvidence } from "../../packages/evidence-api/src/app.js";
 import { issueIesToken } from "../../packages/dev-identity/src/issuer.js";
@@ -198,6 +198,40 @@ describe("enforced anti-requirements", () => {
     expect(() => transition(attempt, "STARTED")).toThrow("ATTEMPT_CONFLICT");
     const completed = { status: "COMPLETED" as const };
     expect(() => transition(completed, "STARTED")).toThrow("ATTEMPT_CONFLICT");
+  });
+
+  /**
+   * A launch parameter reaches a third party's URL, so its value must come from a list the publisher
+   * declared on the object — never from free text supplied by whoever requested the launch. Lose this
+   * and an external embed becomes an open redirect: the origin is still allow-listed, but anything
+   * after it is the caller's to write. The declaration is the control, and these pin both halves of
+   * it — that values are enumerated, and that a value outside the enumeration cannot be declared.
+   */
+  it("admits a launch parameter only as an enumerated value, never as free text", () => {
+    const declare = (parameter: unknown) => externalEmbedDraftSchema.safeParse({
+      title: "Planner", embed_url: "https://partner.example/plan", parameters: [parameter],
+    }).success;
+
+    // A declaration must enumerate what it permits.
+    expect(declare({ name: "subject", label: "Subject", values: ["biology"] })).toBe(true);
+    expect(declare({ name: "subject", label: "Subject", values: [] })).toBe(false);
+    expect(declare({ name: "subject", label: "Subject" })).toBe(false);
+    // And no enumerated value may carry the punctuation that would restructure the address.
+    for (const hostile of ["a&b=c", "a#/b", "a/../b", "https://elsewhere.example", "a b"]) {
+      expect(declare({ name: "subject", label: "Subject", values: [hostile] })).toBe(false);
+    }
+  });
+
+  it("keeps the same restriction on the value a launch may request", () => {
+    const request = (launch_parameters: unknown) => launchRequestSchema.safeParse({
+      contract_version: "1.0", consumer_id: "c", repository_id: randomUUID(), object_id: randomUUID(),
+      requested_launch_mode: "embedded-iframe", locale: "en-GB", launch_parameters,
+    }).success;
+
+    expect(request({ subject: "biology" })).toBe(true);
+    for (const hostile of ["biology&admin=1", "biology#/elsewhere", "https://elsewhere.example", "../../etc"]) {
+      expect(request({ subject: hostile })).toBe(false);
+    }
   });
 
   it("refuses in-memory persistence and an ephemeral key in production", async () => {

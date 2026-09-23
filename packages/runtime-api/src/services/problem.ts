@@ -11,6 +11,7 @@ export const PROBLEM_TYPE_BASE = process.env.PROBLEM_TYPE_BASE ?? "https://lorb.
 
 const STATUS_BY_CODE: Record<string, number> = {
   LAUNCH_CONTEXT_INVALID: 400,
+  LAUNCH_PARAMETERS_INVALID: 400,
   AUTHENTICATION_EXPIRED: 401,
   ACCESS_DENIED: 403,
   ENTITLEMENT_UNAVAILABLE: 403,
@@ -48,6 +49,7 @@ const TITLE_BY_CODE: Record<string, string> = {
   OBJECT_NOT_PUBLISHED: "That learning object is not published",
   OBJECT_RETIRED: "That learning object has been retired",
   ATTEMPT_CONFLICT: "That attempt has already moved on",
+  LAUNCH_PARAMETERS_INVALID: "Those launch options are not available for this activity",
   IDEMPOTENCY_KEY_REQUIRED: "An idempotency key is required",
   IDEMPOTENCY_KEY_REUSED: "That idempotency key was used for a different request",
   IDEMPOTENCY_KEY_IN_FLIGHT: "That idempotency key is still being processed",
@@ -64,6 +66,7 @@ const DETAIL_BY_CODE: Record<string, string> = {
   IDEMPOTENCY_KEY_REUSED: "Use a new idempotency key, or repeat the original request unchanged.",
   IDEMPOTENCY_KEY_IN_FLIGHT: "The first request with this key has not finished. Retry the identical request shortly to receive its response.",
   RATE_LIMITED: "Wait a moment and try again.",
+  LAUNCH_PARAMETERS_INVALID: "Choose from the options this activity declares. A value it does not declare is never passed on.",
   SERVICE_UNAVAILABLE: "Try again shortly.",
 };
 
